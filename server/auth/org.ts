@@ -39,8 +39,3 @@ export async function getOrganizationId(): Promise<string> {
   cached = rows[0].id
   return cached
 }
-
-/** Test-only: clears the memoized id between fixtures. */
-export function resetOrganizationCache(): void {
-  cached = null
-}

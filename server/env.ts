@@ -38,6 +38,15 @@ if (!parsed.success) {
 
 export const env = parsed.data
 
+if (env.NODE_ENV === 'production' && !env.BETTER_AUTH_SECRET) {
+  // Without an explicit secret Better Auth derives one, which changes between
+  // deploys — silently logging everyone out — and is not a value anyone chose.
+  throw new Error(
+    'BETTER_AUTH_SECRET is required in production. Generate one with:\n' +
+      '  openssl rand -base64 48'
+  )
+}
+
 if (env.NODE_ENV === 'production' && !env.COOKIE_SECURE) {
   // Not fatal — the bare-IP fallback in the deploy plan is a legitimate,
   // temporary configuration. But it should never pass unnoticed.

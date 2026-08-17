@@ -15,19 +15,4 @@ export const authClient = createAuthClient({
   plugins: [organizationClient()],
 })
 
-export const { signIn, signOut, useSession } = authClient
-
-const STAFF_ROLES = new Set(['owner', 'admin', 'member'])
-
-/**
- * Mirrors `isStaffRole` on the server. Presentation only — hiding agency nav
- * from a client is courtesy; the RLS policies are what actually stop them
- * reading it.
- */
-export function isStaffRole(role: string | null | undefined): boolean {
-  if (!role) return false
-  return role
-    .split(',')
-    .map((r) => r.trim())
-    .some((r) => STAFF_ROLES.has(r))
-}
+export const { signIn, signOut } = authClient

@@ -6,6 +6,7 @@ import { getOrganizationId } from '../auth/org.js'
 import { db } from '../db/index.js'
 import { invitation, member, user } from '../db/auth-schema.js'
 import { logger } from '../logger.js'
+import { rateLimit } from '../middleware/rate-limit.js'
 
 /**
  * Invitation acceptance.
@@ -21,6 +22,11 @@ import { logger } from '../logger.js'
  * 32-character random token and why this route is rate limited.
  */
 export const invitationRoutes = new Hono()
+
+// The only unauthenticated surface we own. 20 lookups and 5 acceptances per
+// 15 minutes per IP is far above any honest use and far below useful scanning.
+invitationRoutes.use('*', rateLimit({ windowMs: 15 * 60_000, max: 20, name: 'invitation-read' }))
+invitationRoutes.use('/:id/accept', rateLimit({ windowMs: 15 * 60_000, max: 5, name: 'invitation-accept' }))
 
 /** Enough to render "You've been invited as…" without leaking anything else. */
 invitationRoutes.get('/:id', async (c) => {

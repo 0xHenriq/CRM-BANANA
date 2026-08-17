@@ -5,6 +5,7 @@ import {
   COLUMN_GATED_TABLES,
   STAFF_ONLY_TABLES,
   asActor,
+  asActorRaw,
   closePools,
   ownerPool,
   resetAndSeed,
@@ -204,6 +205,37 @@ describe('2 — class confusion (same tenant, wrong audience)', () => {
     expect(rows[0].visible_to_client).toBe(false)
   })
 
+  it('children of a hidden content item are hidden too', async () => {
+    // Regression: the original policies checked only client_id, so a client
+    // who could not see an item could still read its assets and comments.
+    const assets = await asActor<{ storage_key: string }>(
+      { kind: 'client', userId: f.clientUserA },
+      'select storage_key from content_assets'
+    )
+    const comments = await asActor<{ body: string }>(
+      { kind: 'client', userId: f.clientUserA },
+      'select body from content_comments'
+    )
+
+    expect(assets.map((a) => a.storage_key)).toEqual(['september-grid-01.jpg'])
+    expect(comments).toHaveLength(0)
+  })
+
+  it('a client cannot approve content they were never shown', async () => {
+    await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      `insert into content_approvals(client_id, content_item_id, decision, actor_id)
+       values ($1,$2,'approved',$3)`,
+      [f.clientA, f.contentAHidden, f.clientUserA]
+    ).catch(() => [])
+
+    const { rows } = await ownerPool.query(
+      'select count(*)::int as n from content_approvals where content_item_id = $1',
+      [f.contentAHidden]
+    )
+    expect(rows[0].n).toBe(0)
+  })
+
   it('staff do see internal tasks and the full backlog', async () => {
     const tasks = await asActor(
       { kind: 'staff', userId: f.staffUser },
@@ -237,14 +269,39 @@ describe('3 — fail closed', () => {
     expect(rows).toHaveLength(0)
   })
 
-  it('a malformed is_staff value is not treated as staff', async () => {
-    // coalesce(nullif(...,'')::boolean, false) — anything unparseable must
-    // degrade to the less privileged side.
-    const rows = await asActor(
-      { kind: 'client', userId: f.clientUserA },
+  it('an empty is_staff string is not treated as staff', async () => {
+    // This previously set is_staff='false' and asserted deals was empty, which
+    // the test above already covered — the name promised something the body
+    // never did. Set the value the helper actually has to defend against.
+    const rows = await asActorRaw(
+      { 'app.user_id': f.clientUserA, 'app.is_staff': '' },
       'select id from deals'
     )
     expect(rows).toHaveLength(0)
+  })
+
+  it.each(['yes', 'y', 'on', 't', '1', 'TRUE', 'True', 'anything'])(
+    'is_staff=%s does not grant staff access',
+    async (value) => {
+      // Postgres's boolean input accepts yes/y/on/t/1, so the original
+      // `::boolean` cast escalated a client to staff on any of them —
+      // confirmed by reading the agency's deal row. app_is_staff() now
+      // compares against the literal 'true' and nothing else.
+      const rows = await asActorRaw(
+        { 'app.user_id': f.clientUserA, 'app.is_staff': value },
+        'select id from deals'
+      )
+      expect(rows).toHaveLength(0)
+    }
+  )
+
+  it("is_staff='true' still grants staff access", async () => {
+    // The tightening must not break the one value that is supposed to work.
+    const rows = await asActorRaw(
+      { 'app.user_id': f.staffUser, 'app.is_staff': 'true' },
+      'select id from deals'
+    )
+    expect(rows.length).toBeGreaterThan(0)
   })
 })
 

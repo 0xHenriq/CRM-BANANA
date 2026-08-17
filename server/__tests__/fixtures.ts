@@ -153,6 +153,27 @@ export async function resetAndSeed(): Promise<Fixture> {
       [clientA]
     )
 
+    // Children of the HIDDEN content item. These are what leaked before
+    // migration 0006: the client could not see the item, but could read its
+    // asset key and the internal comment attached to it.
+    await c.query(
+      `insert into content_assets(client_id, content_item_id, kind, storage_key)
+       values ($1,$2,'image','secret-pitch-deck.png')`,
+      [clientA, ids.contentAHidden]
+    )
+    await c.query(
+      `insert into content_comments(client_id, content_item_id, author_id, body)
+       values ($1,$2,$3,'Internal: client rejected this angle')`,
+      [clientA, ids.contentAHidden, staffUser]
+    )
+    // And a visible one, so the tests prove the rule is selective rather than
+    // simply hiding everything.
+    await c.query(
+      `insert into content_assets(client_id, content_item_id, kind, storage_key)
+       values ($1,$2,'image','september-grid-01.jpg')`,
+      [clientA, ids.contentAVisible]
+    )
+
     await c.query('commit')
     return { clientA, clientB, staffUser, clientUserA, ...ids }
   } catch (err) {
@@ -268,3 +289,32 @@ export const ALL_TENANT_TABLES = [
   'clients',
   'client_access',
 ] as const
+
+/**
+ * Runs a query with session variables set to exact literal values.
+ *
+ * `asActor` always writes well-formed values, so it cannot exercise what the
+ * SQL helpers do with a malformed one — an empty string, or something that is
+ * not a boolean at all. Those are the inputs a bug would actually produce.
+ */
+export async function asActorRaw<T = unknown>(
+  settings: Record<string, string>,
+  sql: string,
+  params: unknown[] = []
+): Promise<T[]> {
+  const c: PoolClient = await appPool.connect()
+  try {
+    await c.query('begin')
+    for (const [name, value] of Object.entries(settings)) {
+      await c.query('select set_config($1, $2, true)', [name, value])
+    }
+    const res = await c.query(sql, params)
+    await c.query('commit')
+    return res.rows as T[]
+  } catch (err) {
+    await c.query('rollback').catch(() => {})
+    throw err
+  } finally {
+    c.release()
+  }
+}

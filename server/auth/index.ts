@@ -88,10 +88,14 @@ export const auth = betterAuth({
     }),
   ],
 
+  // APP_URL is always trusted — hardcoding the list means changing the public
+  // hostname silently breaks sign-in with a CSRF-shaped error. Dev origins are
+  // added only outside production.
   trustedOrigins: [
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
-    'https://portal.hackdojob.com',
+    env.APP_URL,
+    ...(env.NODE_ENV === 'production'
+      ? []
+      : ['http://localhost:5173', 'http://127.0.0.1:5173']),
   ],
 })
 

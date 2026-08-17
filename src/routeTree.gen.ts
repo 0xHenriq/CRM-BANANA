@@ -17,10 +17,16 @@ import { Route as errors404RouteImport } from './routes/(errors)/404'
 import { Route as errors500RouteImport } from './routes/(errors)/500'
 import { Route as errors503RouteImport } from './routes/(errors)/503'
 import { Route as AuthenticatedIndexRouteImport } from './routes/_authenticated/index'
+import { Route as AuthenticatedClientsRouteImport } from './routes/_authenticated/clients'
+import { Route as AuthenticatedPipelineRouteImport } from './routes/_authenticated/pipeline'
 import { Route as AuthenticatedSettingsRouteRouteImport } from './routes/_authenticated/settings/route'
 import { Route as authAcceptInvitationInvitationIdRouteImport } from './routes/(auth)/accept-invitation/$invitationId'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
 import { Route as AuthenticatedPortalIndexRouteImport } from './routes/_authenticated/portal/index'
+import { Route as AuthenticatedPortalCalendarRouteImport } from './routes/_authenticated/portal/calendar'
+import { Route as AuthenticatedPortalFeedRouteImport } from './routes/_authenticated/portal/feed'
+import { Route as AuthenticatedPortalIdeasRouteImport } from './routes/_authenticated/portal/ideas'
+import { Route as AuthenticatedPortalMoodboardRouteImport } from './routes/_authenticated/portal/moodboard'
 import { Route as AuthenticatedSettingsIndexRouteImport } from './routes/_authenticated/settings/index'
 import { Route as AuthenticatedSettingsAccountRouteImport } from './routes/_authenticated/settings/account'
 import { Route as AuthenticatedSettingsAppearanceRouteImport } from './routes/_authenticated/settings/appearance'
@@ -66,6 +72,16 @@ const AuthenticatedIndexRoute = AuthenticatedIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedClientsRoute = AuthenticatedClientsRouteImport.update({
+  id: '/clients',
+  path: '/clients',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedPipelineRoute = AuthenticatedPipelineRouteImport.update({
+  id: '/pipeline',
+  path: '/pipeline',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
 const AuthenticatedSettingsRouteRoute =
   AuthenticatedSettingsRouteRouteImport.update({
     id: '/settings',
@@ -88,6 +104,29 @@ const AuthenticatedPortalIndexRoute =
   AuthenticatedPortalIndexRouteImport.update({
     id: '/portal/',
     path: '/portal/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedPortalCalendarRoute =
+  AuthenticatedPortalCalendarRouteImport.update({
+    id: '/portal/calendar',
+    path: '/portal/calendar',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedPortalFeedRoute = AuthenticatedPortalFeedRouteImport.update({
+  id: '/portal/feed',
+  path: '/portal/feed',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedPortalIdeasRoute =
+  AuthenticatedPortalIdeasRouteImport.update({
+    id: '/portal/ideas',
+    path: '/portal/ideas',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedPortalMoodboardRoute =
+  AuthenticatedPortalMoodboardRouteImport.update({
+    id: '/portal/moodboard',
+    path: '/portal/moodboard',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedSettingsIndexRoute =
@@ -130,8 +169,14 @@ export interface FileRoutesByFullPath {
   '/404': typeof errors404Route
   '/500': typeof errors500Route
   '/503': typeof errors503Route
+  '/clients': typeof AuthenticatedClientsRoute
+  '/pipeline': typeof AuthenticatedPipelineRoute
   '/accept-invitation/$invitationId': typeof authAcceptInvitationInvitationIdRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
+  '/portal/calendar': typeof AuthenticatedPortalCalendarRoute
+  '/portal/feed': typeof AuthenticatedPortalFeedRoute
+  '/portal/ideas': typeof AuthenticatedPortalIdeasRoute
+  '/portal/moodboard': typeof AuthenticatedPortalMoodboardRoute
   '/settings/account': typeof AuthenticatedSettingsAccountRoute
   '/settings/appearance': typeof AuthenticatedSettingsAppearanceRoute
   '/settings/display': typeof AuthenticatedSettingsDisplayRoute
@@ -146,9 +191,15 @@ export interface FileRoutesByTo {
   '/404': typeof errors404Route
   '/500': typeof errors500Route
   '/503': typeof errors503Route
+  '/clients': typeof AuthenticatedClientsRoute
+  '/pipeline': typeof AuthenticatedPipelineRoute
   '/': typeof AuthenticatedIndexRoute
   '/accept-invitation/$invitationId': typeof authAcceptInvitationInvitationIdRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
+  '/portal/calendar': typeof AuthenticatedPortalCalendarRoute
+  '/portal/feed': typeof AuthenticatedPortalFeedRoute
+  '/portal/ideas': typeof AuthenticatedPortalIdeasRoute
+  '/portal/moodboard': typeof AuthenticatedPortalMoodboardRoute
   '/settings/account': typeof AuthenticatedSettingsAccountRoute
   '/settings/appearance': typeof AuthenticatedSettingsAppearanceRoute
   '/settings/display': typeof AuthenticatedSettingsDisplayRoute
@@ -166,9 +217,15 @@ export interface FileRoutesById {
   '/(errors)/404': typeof errors404Route
   '/(errors)/500': typeof errors500Route
   '/(errors)/503': typeof errors503Route
+  '/_authenticated/clients': typeof AuthenticatedClientsRoute
+  '/_authenticated/pipeline': typeof AuthenticatedPipelineRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/(auth)/accept-invitation/$invitationId': typeof authAcceptInvitationInvitationIdRoute
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
+  '/_authenticated/portal/calendar': typeof AuthenticatedPortalCalendarRoute
+  '/_authenticated/portal/feed': typeof AuthenticatedPortalFeedRoute
+  '/_authenticated/portal/ideas': typeof AuthenticatedPortalIdeasRoute
+  '/_authenticated/portal/moodboard': typeof AuthenticatedPortalMoodboardRoute
   '/_authenticated/settings/account': typeof AuthenticatedSettingsAccountRoute
   '/_authenticated/settings/appearance': typeof AuthenticatedSettingsAppearanceRoute
   '/_authenticated/settings/display': typeof AuthenticatedSettingsDisplayRoute
@@ -187,8 +244,14 @@ export interface FileRouteTypes {
     | '/404'
     | '/500'
     | '/503'
+    | '/clients'
+    | '/pipeline'
     | '/accept-invitation/$invitationId'
     | '/errors/$error'
+    | '/portal/calendar'
+    | '/portal/feed'
+    | '/portal/ideas'
+    | '/portal/moodboard'
     | '/settings/account'
     | '/settings/appearance'
     | '/settings/display'
@@ -203,9 +266,15 @@ export interface FileRouteTypes {
     | '/404'
     | '/500'
     | '/503'
+    | '/clients'
+    | '/pipeline'
     | '/'
     | '/accept-invitation/$invitationId'
     | '/errors/$error'
+    | '/portal/calendar'
+    | '/portal/feed'
+    | '/portal/ideas'
+    | '/portal/moodboard'
     | '/settings/account'
     | '/settings/appearance'
     | '/settings/display'
@@ -222,9 +291,15 @@ export interface FileRouteTypes {
     | '/(errors)/404'
     | '/(errors)/500'
     | '/(errors)/503'
+    | '/_authenticated/clients'
+    | '/_authenticated/pipeline'
     | '/_authenticated/'
     | '/(auth)/accept-invitation/$invitationId'
     | '/_authenticated/errors/$error'
+    | '/_authenticated/portal/calendar'
+    | '/_authenticated/portal/feed'
+    | '/_authenticated/portal/ideas'
+    | '/_authenticated/portal/moodboard'
     | '/_authenticated/settings/account'
     | '/_authenticated/settings/appearance'
     | '/_authenticated/settings/display'
@@ -302,6 +377,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/clients': {
+      id: '/_authenticated/clients'
+      path: '/clients'
+      fullPath: '/clients'
+      preLoaderRoute: typeof AuthenticatedClientsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/pipeline': {
+      id: '/_authenticated/pipeline'
+      path: '/pipeline'
+      fullPath: '/pipeline'
+      preLoaderRoute: typeof AuthenticatedPipelineRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/settings': {
       id: '/_authenticated/settings'
       path: '/settings'
@@ -328,6 +417,34 @@ declare module '@tanstack/react-router' {
       path: '/portal'
       fullPath: '/portal/'
       preLoaderRoute: typeof AuthenticatedPortalIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/portal/calendar': {
+      id: '/_authenticated/portal/calendar'
+      path: '/portal/calendar'
+      fullPath: '/portal/calendar'
+      preLoaderRoute: typeof AuthenticatedPortalCalendarRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/portal/feed': {
+      id: '/_authenticated/portal/feed'
+      path: '/portal/feed'
+      fullPath: '/portal/feed'
+      preLoaderRoute: typeof AuthenticatedPortalFeedRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/portal/ideas': {
+      id: '/_authenticated/portal/ideas'
+      path: '/portal/ideas'
+      fullPath: '/portal/ideas'
+      preLoaderRoute: typeof AuthenticatedPortalIdeasRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/portal/moodboard': {
+      id: '/_authenticated/portal/moodboard'
+      path: '/portal/moodboard'
+      fullPath: '/portal/moodboard'
+      preLoaderRoute: typeof AuthenticatedPortalMoodboardRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/settings/': {
@@ -393,15 +510,27 @@ const AuthenticatedSettingsRouteRouteWithChildren =
 
 interface AuthenticatedRouteRouteChildren {
   AuthenticatedSettingsRouteRoute: typeof AuthenticatedSettingsRouteRouteWithChildren
+  AuthenticatedClientsRoute: typeof AuthenticatedClientsRoute
+  AuthenticatedPipelineRoute: typeof AuthenticatedPipelineRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedErrorsErrorRoute: typeof AuthenticatedErrorsErrorRoute
+  AuthenticatedPortalCalendarRoute: typeof AuthenticatedPortalCalendarRoute
+  AuthenticatedPortalFeedRoute: typeof AuthenticatedPortalFeedRoute
+  AuthenticatedPortalIdeasRoute: typeof AuthenticatedPortalIdeasRoute
+  AuthenticatedPortalMoodboardRoute: typeof AuthenticatedPortalMoodboardRoute
   AuthenticatedPortalIndexRoute: typeof AuthenticatedPortalIndexRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedSettingsRouteRoute: AuthenticatedSettingsRouteRouteWithChildren,
+  AuthenticatedClientsRoute: AuthenticatedClientsRoute,
+  AuthenticatedPipelineRoute: AuthenticatedPipelineRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedErrorsErrorRoute: AuthenticatedErrorsErrorRoute,
+  AuthenticatedPortalCalendarRoute: AuthenticatedPortalCalendarRoute,
+  AuthenticatedPortalFeedRoute: AuthenticatedPortalFeedRoute,
+  AuthenticatedPortalIdeasRoute: AuthenticatedPortalIdeasRoute,
+  AuthenticatedPortalMoodboardRoute: AuthenticatedPortalMoodboardRoute,
   AuthenticatedPortalIndexRoute: AuthenticatedPortalIndexRoute,
 }
 

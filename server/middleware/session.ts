@@ -1,10 +1,9 @@
-import { eq, and } from 'drizzle-orm'
-import type { Context, MiddlewareHandler } from 'hono'
+import { eq } from 'drizzle-orm'
+import type { MiddlewareHandler } from 'hono'
 import { auth } from '../auth/index.js'
 import { isStaffRole } from '../auth/access.js'
 import { db, type TenantContext } from '../db/index.js'
 import { member } from '../db/auth-schema.js'
-import { clientAccess } from '../db/schema.js'
 
 export type SessionUser = {
   id: string
@@ -81,33 +80,4 @@ export const requireStaff: MiddlewareHandler = async (c, next) => {
   if (!user) return c.json({ error: 'Not authenticated' }, 401)
   if (!user.isStaff) return c.json({ error: 'Forbidden' }, 403)
   return next()
-}
-
-/**
- * Asserts the caller has been granted access to a specific client workspace.
- *
- * Staff pass through. For a client-role user this reads `client_access` under
- * their own RLS context, so it cannot be tricked into confirming access to a
- * workspace they cannot see.
- */
-export async function hasClientAccess(
-  c: Context,
-  clientId: string
-): Promise<boolean> {
-  const user = c.get('user')
-  if (!user) return false
-  if (user.isStaff) return true
-
-  const rows = await db
-    .select({ id: clientAccess.id })
-    .from(clientAccess)
-    .where(
-      and(
-        eq(clientAccess.userId, user.id),
-        eq(clientAccess.clientId, clientId)
-      )
-    )
-    .limit(1)
-
-  return rows.length > 0
 }

@@ -70,12 +70,22 @@ dropping columns. Use `db:generate` → review the emitted SQL → `db:migrate`.
 policy that has to join upward to find its tenant is slower and easier to get
 subtly wrong.
 
+**`app_is_staff()` compares against the literal string `'true'`, not a cast.**
+Postgres accepts `yes`, `y`, `on`, `t` and `1` as booleans, so the original
+`::boolean` cast escalated a client to staff on any of them — confirmed by
+reading the agency's deal row. Never reintroduce a cast here.
+
+**Child rows inherit their parent's visibility.** A policy on `content_assets`
+or `content_comments` that checks only `client_id` lets a client read the assets
+and comments of a content item they cannot see. The policies subquery
+`content_items`, which RLS filters for them, so visibility composes on its own.
+
 **Isolation is tested by mutation, not by assertion alone.** The suite in
-`server/__tests__/isolation.test.ts` was verified by deliberately breaking the
-policies: replacing the staff-only `deals` rule with a naive `client_id`-only
-one fails 3 tests, and removing `missing_ok` from the SQL helpers fails 9. A
-test that cannot fail is not protecting anything — re-verify this way after
-changing `0002_rls.sql`.
+`server/__tests__/isolation.test.ts` has been verified by deliberately breaking
+each rule it protects: a naive `client_id`-only `deals` policy fails 3 tests,
+removing `missing_ok` from the helpers fails 9, and reverting the child-
+visibility policies fails 2. A test that cannot fail is not protecting
+anything — re-verify this way after touching any policy migration.
 
 **Her design tokens are verbatim.** The palette, fonts, and textures in
 `src/styles/theme.css` come from her prototype. The art direction is the brand

@@ -85,10 +85,13 @@ app.route('/api/invitations', invitationRoutes)
 
 // Phase 3+ mounts /api/clients, /api/deals, /api/portal/* here.
 
+// Must not call c.notFound() — that re-enters this very handler and blows the
+// stack. Verified: any non-API path returned 500 with
+// "RangeError: Maximum call stack size exceeded".
 app.notFound((c) =>
-  c.req.path.startsWith('/api') || c.req.path === '/healthz'
+  c.req.path.startsWith('/api')
     ? c.json({ error: 'Not found' }, 404)
-    : c.notFound()
+    : c.text('Not found', 404)
 )
 
 app.onError((err, c) => {

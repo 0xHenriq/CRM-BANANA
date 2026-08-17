@@ -1,5 +1,6 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { Dashboard } from '@/features/dashboard'
+import { requireStaffRoute } from '@/lib/route-guards'
 
 export const Route = createFileRoute('/_authenticated/')({
   /**
@@ -10,10 +11,6 @@ export const Route = createFileRoute('/_authenticated/')({
    *
    * `context.user` is resolved by the parent `_authenticated` route.
    */
-  beforeLoad: ({ context }) => {
-    if (!context.user?.isStaff) {
-      throw redirect({ to: '/portal' })
-    }
-  },
+  beforeLoad: ({ context }) => requireStaffRoute(context),
   component: Dashboard,
 })
