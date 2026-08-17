@@ -9,6 +9,36 @@ import {
 } from '@/components/ui/sidebar'
 import { Button } from '../ui/button'
 
+/**
+ * The banana peel mark from her prototype: a yellow square with three rounded
+ * corners, rotated -15deg, outlined in cream. Reproduced in CSS rather than
+ * shipped as an asset so it inherits the theme and stays crisp at any size.
+ */
+export function PeelMark({
+  className,
+  outline = 'cream',
+}: {
+  className?: string
+  /**
+   * Which ground the mark sits on. The outline must contrast with the
+   * background or the peel reads as an amorphous yellow blob — 'cream' for the
+   * ink sidebar, 'ink' for the cream page.
+   */
+  outline?: 'cream' | 'ink'
+}) {
+  return (
+    <div
+      aria-hidden
+      className={cn('size-7 shrink-0 -rotate-[15deg] border-2', className)}
+      style={{
+        backgroundColor: 'var(--bd-yellow)',
+        borderColor: outline === 'ink' ? 'var(--bd-ink)' : 'var(--bd-cream)',
+        borderRadius: '0 60% 60% 60% / 0 70% 70% 70%',
+      }}
+    />
+  )
+}
+
 export function AppTitle() {
   const { setOpenMobile } = useSidebar()
   return (
@@ -23,10 +53,17 @@ export function AppTitle() {
             <Link
               to='/'
               onClick={() => setOpenMobile(false)}
-              className='grid flex-1 text-start text-sm leading-tight'
+              className='flex flex-1 items-center gap-2.5'
             >
-              <span className='truncate font-bold'>Shadcn-Admin</span>
-              <span className='truncate text-xs'>Vite + ShadcnUI</span>
+              <PeelMark />
+              <div className='grid flex-1 text-start leading-tight'>
+                <span className='display truncate text-[1.35rem]'>
+                  Banana Digital
+                </span>
+                <span className='truncate text-[0.625rem] tracking-[0.16em] uppercase opacity-70'>
+                  Client Portal
+                </span>
+              </div>
             </Link>
             <ToggleSidebar />
           </div>

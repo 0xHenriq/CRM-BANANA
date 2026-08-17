@@ -1,119 +1,77 @@
-# Shadcn Admin Dashboard
+# Banana Digital — Client Portal + CRM
 
-Admin Dashboard UI crafted with Shadcn and Vite. Built with responsiveness and accessibility in mind.
+Client portal and CRM for Banana Digital London. Replaces a single-file HTML
+prototype whose state lived in `window.storage` — per-browser, so the agency and
+the client never saw the same data.
 
-![alt text](public/images/shadcn-admin.png)
+Plan of record: `~/.claude/plans/lets-build-it-properly-cheeky-swing.md`
 
-[![Sponsored by Clerk](https://img.shields.io/badge/Sponsored%20by-Clerk-5b6ee1?logo=clerk)](https://go.clerk.com/GttUAaK)
+## Stack
 
-I've been creating dashboard UIs at work and for my personal projects. I always wanted to make a reusable collection of dashboard UI for future projects; and here it is now. While I've created a few custom components, some of the code is directly adapted from ShadcnUI examples.
+| | |
+|---|---|
+| Frontend | Vite + React 19 + TanStack Router/Query + Zustand + shadcn/ui + Tailwind v4 |
+| Backend | Hono on Node 20, Drizzle ORM |
+| Database | Postgres 18 with Row Level Security |
+| Host | VPS4 (`ssh vps4` → `yota@161.97.76.197:2222`) |
 
-> This is not a starter project (template) though. I'll probably make one in the future.
+## Local setup
 
-## Features
-
-- Light/dark mode
-- Responsive
-- Accessible
-- With built-in Sidebar component
-- Global search command
-- 10+ pages
-- Extra custom components
-- RTL support
-
-<details>
-<summary>Customized Components (click to expand)</summary>
-
-This project uses Shadcn UI components, but some have been slightly modified for better RTL (Right-to-Left) support and other improvements. These customized components differ from the original Shadcn UI versions.
-
-If you want to update components using the Shadcn CLI (e.g., `npx shadcn@latest add <component>`), it's generally safe for non-customized components. For the listed customized ones, you may need to manually merge changes to preserve the project's modifications and avoid overwriting RTL support or other updates.
-
-> If you don't require RTL support, you can safely update the 'RTL Updated Components' via the Shadcn CLI, as these changes are primarily for RTL compatibility. The 'Modified Components' may have other customizations to consider.
-
-### Modified Components
-
-- scroll-area
-- sonner
-- separator
-
-### RTL Updated Components
-
-- alert-dialog
-- calendar
-- command
-- dialog
-- dropdown-menu
-- select
-- table
-- sheet
-- sidebar
-- switch
-
-**Notes:**
-
-- **Modified Components**: These have general updates, potentially including RTL adjustments.
-- **RTL Updated Components**: These have specific changes for RTL language support (e.g., layout, positioning).
-- For implementation details, check the source files in `src/components/ui/`.
-- All other Shadcn UI components in the project are standard and can be safely updated via the CLI.
-
-</details>
-
-## Tech Stack
-
-**UI:** [ShadcnUI](https://ui.shadcn.com) (TailwindCSS + RadixUI)
-
-**Build Tool:** [Vite](https://vitejs.dev/)
-
-**Routing:** [TanStack Router](https://tanstack.com/router/latest)
-
-**Type Checking:** [TypeScript](https://www.typescriptlang.org/)
-
-**Linting/Formatting:** [ESLint](https://eslint.org/) & [Prettier](https://prettier.io/)
-
-**Icons:** [Lucide Icons](https://lucide.dev/icons/), [Tabler Icons](https://tabler.io/icons) (Brand icons only)
-
-**Auth (partial):** [Clerk](https://go.clerk.com/GttUAaK)
-
-## Run Locally
-
-Clone the project
+Postgres is not exposed publicly on VPS4, so development reaches it through an
+SSH tunnel. Three terminals:
 
 ```bash
-  git clone https://github.com/satnaing/shadcn-admin.git
+npm run db:tunnel   # localhost:55432 -> vps4:5432   (leave running)
+npm run dev:api     # Hono on :4300
+npm run dev         # Vite on :5173, proxies /api -> :4300
 ```
 
-Go to the project directory
+Copy `.env.example` to `.env` and fill in the two database URLs.
 
 ```bash
-  cd shadcn-admin
+npm run build        # tsc -b (app + node + server) && vite build
+npm run lint
+npm test             # vitest, browser mode via playwright
+npm run db:generate  # emit a migration from schema changes
+npm run db:migrate   # apply migrations as bd_owner
 ```
 
-Install dependencies
+## Non-negotiables
 
-```bash
-  pnpm install
-```
+These are the invariants the design depends on. Breaking one does not fail
+loudly — it silently removes a guarantee.
 
-Start the server
+**`bd_app` is the only runtime role.** It is a non-owner, non-superuser with
+`rolbypassrls = false`. Row Level Security policies are binding *because* of
+that. If a permissions error tempts you to point `DATABASE_URL` at `bd_owner`,
+the fix is a `GRANT`, never a role swap.
 
-```bash
-  pnpm run dev
-```
+**Tenant data is only queried inside `withTenant()`.** It opens a transaction
+and applies the RLS session variables with `SET LOCAL`, which is what makes this
+safe under connection pooling. A query outside a transaction has no session
+variables and — by design — returns nothing rather than everything.
 
-## Sponsoring this project ❤️
+**`drizzle-kit push` is banned outside local scratch work.** It reconciles by
+dropping columns. Use `db:generate` → review the emitted SQL → `db:migrate`.
 
-If you find this project helpful or use this in your own work, consider [sponsoring me](https://github.com/sponsors/satnaing) to support development and maintenance. You can [buy me a coffee](https://buymeacoffee.com/satnaing) as well. Don’t worry, every penny helps. Thank you! 🙏
+**Every tenant table carries `client_id` directly**, child tables included. A
+policy that has to join upward to find its tenant is slower and easier to get
+subtly wrong.
 
-For questions or sponsorship inquiries, feel free to reach out at [satnaingdev@gmail.com](mailto:satnaingdev@gmail.com).
+**Her design tokens are verbatim.** The palette, fonts, and textures in
+`src/styles/theme.css` come from her prototype. The art direction is the brand
+asset; do not "improve" the values.
 
-### Current Sponsor
+## Status
 
-- [Clerk](https://go.clerk.com/GttUAaK) - authentication and user management for the modern web
+- [x] Phase 1 — Foundation: scaffold, brand tokens, database roles
+- [ ] Phase 2 — Auth, seats, tenancy (RLS + isolation tests)
+- [ ] Phase 3 — CRM core: clients, contacts, deals pipeline
+- [ ] Phase 4 — Client portal: links, files, notice board, tasks
+- [ ] Phase 5 — Content engine: unified Ideas Bank + Calendar
+- [ ] Phase 6 — Media: uploads, thumbnails, feed preview, moodboard
+- [ ] Phase 7 — Deploy to VPS4
 
-## Author
-
-Crafted with 🤍 by [@satnaing](https://github.com/satnaing)
-
-## License
-
-Licensed under the [MIT License](https://choosealicense.com/licenses/mit/)
+> **The sign-in form is scaffolding and accepts any credentials.** It mints a
+> fake session client-side. Phase 2 replaces it with Better Auth; the isolation
+> suite is the gate that proves it is gone. Do not deploy before then.

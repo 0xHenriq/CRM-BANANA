@@ -1,68 +1,126 @@
-:root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.129 0.042 264.695);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.129 0.042 264.695);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.129 0.042 264.695);
-  --primary: oklch(0.208 0.042 265.755);
-  --primary-foreground: oklch(0.984 0.003 247.858);
-  --secondary: oklch(0.968 0.007 247.896);
-  --secondary-foreground: oklch(0.208 0.042 265.755);
-  --muted: oklch(0.968 0.007 247.896);
-  --muted-foreground: oklch(0.554 0.046 257.417);
-  --accent: oklch(0.968 0.007 247.896);
-  --accent-foreground: oklch(0.208 0.042 265.755);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.929 0.013 255.508);
-  --input: oklch(0.929 0.013 255.508);
-  --ring: oklch(0.704 0.04 256.788);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
+/* ---------------------------------------------------------------------------
+ * Banana Digital London — crate-label palette.
+ *
+ * Source values are lifted verbatim from her original portal prototype. Do not
+ * "improve" them; the art direction is the brand asset. Raw brand values live
+ * under --bd-* so they can be referenced directly (tag pills, stamps, rules)
+ * without going through shadcn's semantic aliases.
+ * ------------------------------------------------------------------------- */
 
-  --sidebar: var(--background);
-  --sidebar-foreground: var(--foreground);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--accent);
-  --sidebar-accent-foreground: var(--accent-foreground);
-  --sidebar-border: var(--border);
-  --sidebar-ring: var(--ring);
+:root {
+  /* Raw brand values — verbatim from the prototype */
+  --bd-yellow: #f4b400;
+  --bd-yellow-deep: #e0a400;
+  --bd-ink: #14110f;
+  --bd-cream: #fff8e7;
+  --bd-paper: #fffcf3;
+  --bd-graphite: #6b6459;
+  --bd-green: #4c6444;
+  --bd-red: #c1432e;
+
+  /* Derived neutrals — mixed from ink/cream so they stay in the same family */
+  --bd-rule: #dcd2ba;
+  --bd-rule-soft: #efe8d5;
+  --bd-sand: #f1e7cf;
+  --bd-sidebar-hover: #221e19;
+  --bd-sidebar-rule: #2a2622;
+  --bd-sidebar-dim: #a89f8e;
+
+  /* Content-type tag fills — her exact five */
+  --tag-video: #dcebdd;
+  --tag-reel: #dce3f5;
+  --tag-story: #f7dfd3;
+  --tag-graphic: #f5dce6;
+  --tag-carousel: #eee4c8;
+
+  --radius: 0.5rem;
+
+  --background: var(--bd-cream);
+  --foreground: var(--bd-ink);
+  --card: var(--bd-paper);
+  --card-foreground: var(--bd-ink);
+  --popover: var(--bd-paper);
+  --popover-foreground: var(--bd-ink);
+  --primary: var(--bd-yellow);
+  --primary-foreground: var(--bd-ink);
+  --secondary: var(--bd-sand);
+  --secondary-foreground: var(--bd-ink);
+  --muted: var(--bd-sand);
+  --muted-foreground: var(--bd-graphite);
+  --accent: var(--bd-sand);
+  --accent-foreground: var(--bd-ink);
+  --destructive: var(--bd-red);
+  --border: var(--bd-rule);
+  --input: var(--bd-rule);
+  --ring: var(--bd-yellow-deep);
+
+  --chart-1: var(--bd-yellow);
+  --chart-2: var(--bd-green);
+  --chart-3: var(--bd-red);
+  --chart-4: var(--bd-graphite);
+  --chart-5: var(--bd-yellow-deep);
+
+  /* Sidebar is ink-on-cream in her design — inverted from the page */
+  --sidebar: var(--bd-ink);
+  --sidebar-foreground: var(--bd-cream);
+  --sidebar-primary: var(--bd-yellow);
+  --sidebar-primary-foreground: var(--bd-ink);
+  --sidebar-accent: var(--bd-sidebar-hover);
+  --sidebar-accent-foreground: var(--bd-cream);
+  --sidebar-border: var(--bd-sidebar-rule);
+  --sidebar-ring: var(--bd-yellow);
 }
 
+/* Dark mode keeps the brand: ink ground, cream ink, yellow still the accent.
+   Her prototype had no dark mode, but shadcn-admin ships the toggle, and a
+   half-themed dark mode looks broken rather than absent. */
 .dark {
-  --background: oklch(0.129 0.042 264.695);
-  --foreground: oklch(0.984 0.003 247.858);
-  --card: oklch(0.14 0.04 259.21);
-  --card-foreground: oklch(0.984 0.003 247.858);
-  --popover: oklch(0.208 0.042 265.755);
-  --popover-foreground: oklch(0.984 0.003 247.858);
-  --primary: oklch(0.929 0.013 255.508);
-  --primary-foreground: oklch(0.208 0.042 265.755);
-  --secondary: oklch(0.279 0.041 260.031);
-  --secondary-foreground: oklch(0.984 0.003 247.858);
-  --muted: oklch(0.279 0.041 260.031);
-  --muted-foreground: oklch(0.704 0.04 256.788);
-  --accent: oklch(0.279 0.041 260.031);
-  --accent-foreground: oklch(0.984 0.003 247.858);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.551 0.027 264.364);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
+  --bd-rule: #33302b;
+  --bd-rule-soft: #262320;
+  --bd-sand: #221e19;
+
+  --background: #14110f;
+  --foreground: #fff8e7;
+  --card: #1b1815;
+  --card-foreground: #fff8e7;
+  --popover: #1b1815;
+  --popover-foreground: #fff8e7;
+  --primary: var(--bd-yellow);
+  --primary-foreground: var(--bd-ink);
+  --secondary: #262320;
+  --secondary-foreground: #fff8e7;
+  --muted: #262320;
+  --muted-foreground: #a89f8e;
+  --accent: #262320;
+  --accent-foreground: #fff8e7;
+  --destructive: #d9583f;
+  --border: #33302b;
+  --input: #3b3731;
+  --ring: var(--bd-yellow);
+
+  --chart-1: var(--bd-yellow);
+  --chart-2: #7c9a72;
+  --chart-3: #d9583f;
+  --chart-4: #a89f8e;
+  --chart-5: var(--bd-yellow-deep);
+
+  --sidebar: #0e0c0b;
+  --sidebar-foreground: var(--bd-cream);
+  --sidebar-primary: var(--bd-yellow);
+  --sidebar-primary-foreground: var(--bd-ink);
+  --sidebar-accent: #221e19;
+  --sidebar-accent-foreground: var(--bd-cream);
+  --sidebar-border: #2a2622;
+  --sidebar-ring: var(--bd-yellow);
 }
 
 @theme inline {
-  --font-inter: 'Inter', 'sans-serif';
-  --font-manrope: 'Manrope', 'sans-serif';
+  /* League Gothic is the display face: uppercase, tight, 0.03em tracking.
+     Public Sans carries all body copy. */
+  --font-display: 'League Gothic', 'Public Sans', sans-serif;
+  --font-sans: 'Public Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-public-sans: 'Public Sans', sans-serif;
+  --font-league-gothic: 'League Gothic', sans-serif;
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -99,4 +157,23 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Brand colors exposed as Tailwind utilities: bg-bd-yellow, text-bd-ink, … */
+  --color-bd-yellow: var(--bd-yellow);
+  --color-bd-yellow-deep: var(--bd-yellow-deep);
+  --color-bd-ink: var(--bd-ink);
+  --color-bd-cream: var(--bd-cream);
+  --color-bd-paper: var(--bd-paper);
+  --color-bd-graphite: var(--bd-graphite);
+  --color-bd-green: var(--bd-green);
+  --color-bd-red: var(--bd-red);
+  --color-bd-rule: var(--bd-rule);
+  --color-bd-rule-soft: var(--bd-rule-soft);
+  --color-bd-sand: var(--bd-sand);
+
+  --color-tag-video: var(--tag-video);
+  --color-tag-reel: var(--tag-reel);
+  --color-tag-story: var(--tag-story);
+  --color-tag-graphic: var(--tag-graphic);
+  --color-tag-carousel: var(--tag-carousel);
 }

@@ -16,4 +16,7 @@
  *      --font-roboto: 'Roboto', var(--font-sans);
  *   }
  */
-export const fonts = ['inter', 'manrope', 'system'] as const
+// League Gothic is deliberately absent — it is a display face, and setting it
+// as the body font makes the whole app unreadable. Use the `display` utility
+// (see index.css) for headings instead.
+export const fonts = ['public-sans', 'system'] as const

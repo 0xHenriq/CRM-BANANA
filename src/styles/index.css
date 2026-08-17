@@ -15,6 +15,13 @@
   }
   body {
     @apply min-h-svh w-full bg-background text-foreground has-[div[data-variant='inset']]:bg-sidebar;
+    /* 14px radial dot grid — the crate-paper texture from her prototype */
+    background-image: radial-gradient(
+      circle,
+      color-mix(in srgb, var(--bd-ink) 6%, transparent) 1px,
+      transparent 1px
+    );
+    background-size: 14px 14px;
   }
 
   /* Override Radix scroll locking for sticky headers */
@@ -41,6 +48,64 @@
 @utility container {
   margin-inline: auto;
   padding-inline: 2rem;
+}
+
+/* --------------------------------------------------------------------------
+ * Banana Digital signature treatments.
+ * Tailwind v4 has no tailwind.config.ts — custom utilities live here.
+ * ------------------------------------------------------------------------ */
+
+/* League Gothic display type: uppercase, tight leading, 0.03em tracking */
+@utility display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+/* Her card treatment: paper fill, 2px ink border, no soft shadow */
+@utility crate-card {
+  background-color: var(--card);
+  border: 2px solid var(--bd-ink);
+  border-radius: var(--radius);
+}
+
+/* The dashed rule under every card title */
+@utility crate-rule {
+  border-bottom: 1.5px dashed var(--bd-rule);
+}
+
+/* Rotated wax stamp used in page headers */
+@utility crate-stamp {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 4rem;
+  height: 4rem;
+  border: 2px solid var(--bd-ink);
+  border-radius: 9999px;
+  background-color: var(--bd-paper);
+  transform: rotate(-8deg);
+  flex-shrink: 0;
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* Section headers sit on a heavy ink rule */
+@utility crate-underline {
+  border-bottom: 3px solid var(--bd-ink);
+}
+
+/* The red eyebrow above page titles */
+@utility crate-eyebrow {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--bd-red);
 }
 
 @utility no-scrollbar {

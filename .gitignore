@@ -32,3 +32,9 @@ dist-ssr
 # Vitest artifacts (browser screenshots/attachments)
 **/__screenshots__/
 .vitest-attachments/
+
+# Local uploads (dev)
+.uploads
+
+# Build output of the API
+server-dist

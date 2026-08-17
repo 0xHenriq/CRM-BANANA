@@ -4,7 +4,10 @@ import { getCookie, setCookie, removeCookie } from '@/lib/cookies'
 type Theme = 'dark' | 'light' | 'system'
 type ResolvedTheme = Exclude<Theme, 'system'>
 
-const DEFAULT_THEME = 'system'
+// Her brand is light-first: cream paper, ink type, yellow accents. Defaulting
+// to 'system' means anyone whose OS is in dark mode sees a portal that looks
+// nothing like the design she signed off on. Dark stays available as a choice.
+const DEFAULT_THEME = 'light'
 const THEME_COOKIE_NAME = 'vite-ui-theme'
 const THEME_COOKIE_MAX_AGE = 60 * 60 * 24 * 365 // 1 year
 

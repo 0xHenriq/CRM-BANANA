@@ -21,6 +21,16 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  server: {
+    // In development Vite serves the SPA and forwards the API to the Hono
+    // process (npm run dev:api). In production Caddy plays this role, so the
+    // frontend only ever talks to same-origin /api — no CORS, and session
+    // cookies work identically in both environments.
+    proxy: {
+      '/api': { target: 'http://127.0.0.1:4300', changeOrigin: false },
+      '/healthz': { target: 'http://127.0.0.1:4300', changeOrigin: false },
+    },
+  },
   test: {
     silent: 'passed-only',
     unstubEnvs: true,

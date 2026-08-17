@@ -6,12 +6,6 @@ type User = {
   avatar: string
 }
 
-type Team = {
-  name: string
-  logo: React.ElementType
-  plan: string
-}
-
 type BaseNavItem = {
   title: string
   badge?: string
@@ -33,11 +27,15 @@ type NavItem = NavCollapsible | NavLink
 type NavGroup = {
   title: string
   items: NavItem[]
+  /**
+   * Hides the group from client-role sessions. Presentation only — the API
+   * and RLS policies are what actually keep clients out of agency data.
+   */
+  staffOnly?: boolean
 }
 
 type SidebarData = {
   user: User
-  teams: Team[]
   navGroups: NavGroup[]
 }
 
