@@ -142,11 +142,17 @@ export type ClientDetail = {
 /** '2400.50' -> 240050. Integer pence: the only safe unit to do sums in. */
 export function toPence(value: string | null | undefined): number {
   if (!value) return 0
+  // Read the sign off the string, not the parsed number: Number('-0') is -0,
+  // and `-0 < 0` is false, so '-0.50' came back as +50 pence. Nothing produces
+  // negative values today (the API rejects them), but a sign flip inside a
+  // money helper is exactly the bug that surfaces the day credit notes land.
+  const negative = value.trimStart().startsWith('-')
   const [whole, frac = ''] = value.split('.')
   const pence = Number(`${frac}00`.slice(0, 2))
-  const units = Number(whole)
+  const units = Math.abs(Number(whole))
   if (!Number.isFinite(units) || !Number.isFinite(pence)) return 0
-  return units * 100 + (units < 0 ? -pence : pence)
+  const total = units * 100 + pence
+  return negative ? -total : total
 }
 
 export function sumPence(values: (string | null | undefined)[]): number {

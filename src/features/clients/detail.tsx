@@ -14,6 +14,7 @@ import {
 import { toast } from 'sonner'
 import {
   api,
+  ApiError,
   formatMoney,
   type ClientDetail,
   type ClientStatus,
@@ -89,9 +90,24 @@ export function ClientDetailPage() {
           </div>
         </Header>
         <Main>
-          <PageHead eyebrow='Client account' title='Not found' />
+          {/* Only claim "not found" when the server actually said 404 — a
+              network failure or a 500 is a different problem, and telling her
+              the client does not exist would send her looking for the wrong
+              thing. */}
+          <PageHead
+            eyebrow='Client account'
+            title={
+              error instanceof ApiError && error.status === 404
+                ? 'Not found'
+                : 'Unavailable'
+            }
+          />
           <QueryError
-            title='Could not load this client'
+            title={
+              error instanceof ApiError && error.status === 404
+                ? 'That client does not exist, or you no longer have access.'
+                : 'Could not load this client'
+            }
             error={error as Error}
             onRetry={() => refetch()}
           />
