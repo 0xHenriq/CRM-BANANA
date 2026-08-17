@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { DEAL_STAGES as SERVER_STAGES } from '../routes/deals.js'
-import { DEAL_STAGES as CLIENT_STAGES } from '../../src/lib/api.js'
-import { toPence, formatPence, sumPence } from '../../src/lib/api.js'
+import {
+  DEAL_STAGES as CLIENT_STAGES,
+  formatPence,
+  sumPence,
+  toPence,
+} from '../../src/lib/api.js'
 
 /**
  * Contract checks between the API and the client.
