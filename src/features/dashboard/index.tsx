@@ -1,7 +1,14 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { Building2, CalendarDays, ClipboardCheck, Eye } from 'lucide-react'
-import { api, formatMoney, type ClientSummary, type DealWithClient } from '@/lib/api'
+import { Building2, ClipboardCheck, Eye, PoundSterling } from 'lucide-react'
+import {
+  api,
+  formatMoney,
+  formatPence,
+  sumPence,
+  type ClientSummary,
+  type DealWithClient,
+} from '@/lib/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ConfigDrawer } from '@/components/config-drawer'
@@ -43,10 +50,7 @@ export function Dashboard() {
   const openDeals = deals.filter(
     (d) => d.stage !== 'won' && d.stage !== 'lost'
   )
-  const pipelineValue = openDeals.reduce(
-    (sum, d) => sum + Number(d.value ?? 0),
-    0
-  )
+  const pipelinePence = sumPence(openDeals.map((d) => d.value))
 
   const stats = [
     {
@@ -63,8 +67,8 @@ export function Dashboard() {
     },
     {
       label: 'Open pipeline',
-      icon: CalendarDays,
-      value: pipelineValue > 0 ? formatMoney(String(pipelineValue)) : '—',
+      icon: PoundSterling,
+      value: pipelinePence > 0 ? formatPence(pipelinePence) : '—',
       hint: `${openDeals.length} deal${openDeals.length === 1 ? '' : 's'} in play`,
     },
     {

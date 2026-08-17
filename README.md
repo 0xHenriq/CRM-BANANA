@@ -87,6 +87,17 @@ removing `missing_ok` from the helpers fails 9, and reverting the child-
 visibility policies fails 2. A test that cannot fail is not protecting
 anything — re-verify this way after touching any policy migration.
 
+**Money is integer pence until the moment it is displayed.** Deal values are
+`numeric(12,2)` carried as strings; use `toPence`/`sumPence`/`formatPence` from
+`src/lib/api.ts`. Summing them as floats drifted (1800.10 + 2400.20 + 99.30 =
+4299.599999999999), and rounding to whole pounds rendered £2,400.50 as "£2,401" —
+a deal value that does not match the contract.
+
+**A failed query must never render the empty state.** "No clients yet — add the
+first one" when the request actually failed is a lie she would act on. Use
+`QueryError` (`src/components/layout/query-error.tsx`) and branch on `isError`
+before `isEmpty`.
+
 **Never interpolate Drizzle columns into a correlated subquery.**
 `sql\`… where ${tasks.clientId} = ${clients.id}\`` renders both sides
 UNQUALIFIED, so inside the subquery `"id"` binds to the inner table. The

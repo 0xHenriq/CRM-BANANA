@@ -206,9 +206,25 @@ clientRoutes.patch('/:id', async (c) => {
       .limit(1)
     if (!before) return null
 
+    // Moving a client to `active` opens their portal, exactly as creating one
+    // as active does. Without this the two paths diverged: create-as-active
+    // seeded a workspace, but the ordinary route — lead becomes client — left
+    // portalEnabled false. She would move them to Active, hand over a login,
+    // and they would find an empty portal with nothing to explain it.
+    // An explicit portalEnabled in the same patch still wins.
+    const opensPortal =
+      patch.portalEnabled ??
+      (patch.status === 'active' && before.status !== 'active'
+        ? true
+        : undefined)
+
     const [row] = await tx
       .update(clients)
-      .set({ ...patch, updatedAt: new Date() })
+      .set({
+        ...patch,
+        ...(opensPortal === undefined ? {} : { portalEnabled: opensPortal }),
+        updatedAt: new Date(),
+      })
       .where(eq(clients.id, id))
       .returning()
 

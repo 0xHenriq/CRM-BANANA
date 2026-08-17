@@ -29,13 +29,14 @@ import { ConfigDrawer } from '@/components/config-drawer'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
 import { PageHead } from '@/components/layout/page-head'
+import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { Search } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { ClientStatusPill, CLIENT_LABEL } from './status-pill'
 
 export function ClientsList() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['clients'],
     queryFn: () => api.get<{ clients: ClientSummary[] }>('/clients'),
   })
@@ -65,6 +66,14 @@ export function ClientsList() {
               <Skeleton key={i} className='h-40 rounded-lg' />
             ))}
           </div>
+        ) : isError ? (
+          // Never fall through to the empty state on error: "No clients yet"
+          // when the request failed is a lie she would act on.
+          <QueryError
+            title='Could not load clients'
+            error={error as Error}
+            onRetry={() => refetch()}
+          />
         ) : !data?.clients.length ? (
           <Card className='crate-card'>
             <CardContent className='py-10 text-center'>

@@ -56,13 +56,21 @@ export const api = {
 
 export type ClientStatus = 'lead' | 'proposal' | 'active' | 'paused' | 'churned'
 
-export type DealStage =
-  | 'lead'
-  | 'contacted'
-  | 'proposal'
-  | 'negotiation'
-  | 'won'
-  | 'lost'
+/**
+ * Board order, and the single client-side source of truth. The server has its
+ * own list in routes/deals.ts; these must agree, and a mismatch shows up as a
+ * 400 on the very first drag rather than anything subtle.
+ */
+export const DEAL_STAGES = [
+  'lead',
+  'contacted',
+  'proposal',
+  'negotiation',
+  'won',
+  'lost',
+] as const
+
+export type DealStage = (typeof DEAL_STAGES)[number]
 
 export type ClientSummary = {
   id: string
@@ -126,14 +134,43 @@ export type ClientDetail = {
   seats: { userId: string; email: string; name: string }[]
 }
 
-/** Formats a numeric(12,2) string for display without float round-tripping. */
-export function formatMoney(value: string | null, currency = 'GBP'): string {
-  if (value === null) return '—'
-  const n = Number(value)
-  if (!Number.isFinite(n)) return value
+/**
+ * Deal values are numeric(12,2), carried as strings so they survive the round
+ * trip exactly. These helpers keep them exact right up to the point of display.
+ */
+
+/** '2400.50' -> 240050. Integer pence: the only safe unit to do sums in. */
+export function toPence(value: string | null | undefined): number {
+  if (!value) return 0
+  const [whole, frac = ''] = value.split('.')
+  const pence = Number(`${frac}00`.slice(0, 2))
+  const units = Number(whole)
+  if (!Number.isFinite(units) || !Number.isFinite(pence)) return 0
+  return units * 100 + (units < 0 ? -pence : pence)
+}
+
+export function sumPence(values: (string | null | undefined)[]): number {
+  return values.reduce<number>((total, v) => total + toPence(v), 0)
+}
+
+/**
+ * Formats integer pence for display.
+ *
+ * Pence are shown only when they are non-zero. Rounding them away made
+ * £2,400.50 render as "£2,401" and £0.75 as "£1" — a deal value that does not
+ * match the contract is worse than a slightly longer string.
+ */
+export function formatPence(pence: number, currency = 'GBP'): string {
+  const hasFraction = pence % 100 !== 0
   return new Intl.NumberFormat('en-GB', {
     style: 'currency',
     currency,
-    maximumFractionDigits: 0,
-  }).format(n)
+    minimumFractionDigits: hasFraction ? 2 : 0,
+    maximumFractionDigits: hasFraction ? 2 : 0,
+  }).format(pence / 100)
+}
+
+export function formatMoney(value: string | null, currency = 'GBP'): string {
+  if (value === null) return '—'
+  return formatPence(toPence(value), currency)
 }

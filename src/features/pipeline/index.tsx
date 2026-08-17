@@ -21,6 +21,9 @@ import { toast } from 'sonner'
 import {
   api,
   formatMoney,
+  formatPence,
+  sumPence,
+  DEAL_STAGES,
   type ClientSummary,
   type DealStage,
   type DealWithClient,
@@ -57,6 +60,7 @@ import { ConfigDrawer } from '@/components/config-drawer'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
 import { PageHead } from '@/components/layout/page-head'
+import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { STAGE_LABEL } from '../clients/status-pill'
@@ -80,20 +84,15 @@ const collisionDetection: CollisionDetection = (args) => {
   return underPointer.length > 0 ? underPointer : closestCorners(args)
 }
 
-const STAGES: DealStage[] = [
-  'lead',
-  'contacted',
-  'proposal',
-  'negotiation',
-  'won',
-  'lost',
-]
+// Shared with the API contract rather than re-declared, so the board and the
+// server cannot drift apart.
+const STAGES: readonly DealStage[] = DEAL_STAGES
 
 export function Pipeline() {
   const queryClient = useQueryClient()
   const [dragging, setDragging] = useState<DealWithClient | null>(null)
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['deals'],
     queryFn: () => api.get<{ deals: DealWithClient[] }>('/deals'),
   })
@@ -126,8 +125,11 @@ export function Pipeline() {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['deals'] })
-      // A stage change writes to the client's timeline, so that view is stale.
+      // A stage change writes the client's timeline, and the clients list
+      // shows per-client counts. Note ['client'] does not match ['clients'] —
+      // prefix matching is element-wise, so both keys are needed.
       queryClient.invalidateQueries({ queryKey: ['client'] })
+      queryClient.invalidateQueries({ queryKey: ['clients'] })
     },
   })
 
@@ -186,6 +188,13 @@ export function Pipeline() {
               <Skeleton key={s} className='h-72 w-64 shrink-0 rounded-lg' />
             ))}
           </div>
+        ) : isError ? (
+          // An empty board and a failed request look identical otherwise.
+          <QueryError
+            title='Could not load the pipeline'
+            error={error as Error}
+            onRetry={() => refetch()}
+          />
         ) : (
           <DndContext
             sensors={sensors}
@@ -225,7 +234,9 @@ function StageColumn({
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage })
 
-  const total = deals.reduce((sum, d) => sum + Number(d.value ?? 0), 0)
+  // Summed in integer pence. Adding these as floats drifted:
+  // 1800.10 + 2400.20 + 99.30 came out as 4299.599999999999.
+  const totalPence = sumPence(deals.map((d) => d.value))
 
   return (
     <section
@@ -240,7 +251,7 @@ function StageColumn({
         <h2 className='display text-base'>{STAGE_LABEL[stage]}</h2>
         <span className='text-xs text-muted-foreground'>
           {deals.length}
-          {total > 0 && ` · ${formatMoney(String(total))}`}
+          {totalPence > 0 && ` · ${formatPence(totalPence)}`}
         </span>
       </header>
 

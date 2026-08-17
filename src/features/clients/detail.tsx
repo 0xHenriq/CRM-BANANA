@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { useParams } from '@tanstack/react-router'
+import { Link, useParams } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  ArrowLeft,
   Mail,
   Phone,
   Plus,
@@ -43,6 +44,7 @@ import { ConfigDrawer } from '@/components/config-drawer'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
 import { PageHead } from '@/components/layout/page-head'
+import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { ClientStatusPill, DealStagePill, CLIENT_LABEL } from './status-pill'
@@ -59,7 +61,7 @@ export function ClientDetailPage() {
   const { clientId } = useParams({ from: '/_authenticated/clients_/$clientId' })
   const queryClient = useQueryClient()
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['client', clientId],
     queryFn: () => api.get<ClientDetail>(`/clients/${clientId}`),
   })
@@ -73,6 +75,38 @@ export function ClientDetailPage() {
     },
     onError: (err: Error) => toast.error(err.message),
   })
+
+  // A failed query previously left `data` undefined and `isLoading` false,
+  // so this component rendered skeletons forever — verified against a
+  // non-existent client id. An error needs its own branch and a way out.
+  if (isError || (!isLoading && !data)) {
+    return (
+      <>
+        <Header>
+          <div className='ms-auto flex items-center gap-2'>
+            <ThemeSwitch />
+            <ProfileDropdown />
+          </div>
+        </Header>
+        <Main>
+          <PageHead eyebrow='Client account' title='Not found' />
+          <QueryError
+            title='Could not load this client'
+            error={error as Error}
+            onRetry={() => refetch()}
+          />
+          <div className='mt-4'>
+            <Button variant='outline' asChild>
+              <Link to='/clients'>
+                <ArrowLeft />
+                Back to clients
+              </Link>
+            </Button>
+          </div>
+        </Main>
+      </>
+    )
+  }
 
   if (isLoading || !data) {
     return (
@@ -108,7 +142,17 @@ export function ClientDetailPage() {
           eyebrow='Client account'
           title={client.name}
           stamp={{ top: 'EST.', big: 'BD', bottom: 'LDN' }}
-          actions={<ClientStatusPill status={client.status} />}
+          actions={
+            <div className='flex items-center gap-3'>
+              <Button variant='outline' size='sm' asChild>
+                <Link to='/clients'>
+                  <ArrowLeft />
+                  Clients
+                </Link>
+              </Button>
+              <ClientStatusPill status={client.status} />
+            </div>
+          }
         />
 
         <div className='grid gap-5 lg:grid-cols-3'>
