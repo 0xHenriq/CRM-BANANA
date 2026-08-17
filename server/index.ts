@@ -11,6 +11,8 @@ import { auth } from './auth/index.js'
 import { withSession } from './middleware/session.js'
 import { seatsRoutes } from './routes/seats.js'
 import { invitationRoutes } from './routes/invitations.js'
+import { clientRoutes } from './routes/clients.js'
+import { dealRoutes } from './routes/deals.js'
 
 const app = new Hono()
 
@@ -83,7 +85,10 @@ app.route('/api/seats', seatsRoutes)
 // invitation id is the credential.
 app.route('/api/invitations', invitationRoutes)
 
-// Phase 3+ mounts /api/clients, /api/deals, /api/portal/* here.
+app.route('/api/clients', clientRoutes)
+app.route('/api/deals', dealRoutes)
+
+// Phase 4+ mounts /api/portal/* here.
 
 // Must not call c.notFound() — that re-enters this very handler and blows the
 // stack. Verified: any non-API path returned 500 with

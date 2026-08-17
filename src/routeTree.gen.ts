@@ -21,6 +21,7 @@ import { Route as AuthenticatedClientsRouteImport } from './routes/_authenticate
 import { Route as AuthenticatedPipelineRouteImport } from './routes/_authenticated/pipeline'
 import { Route as AuthenticatedSettingsRouteRouteImport } from './routes/_authenticated/settings/route'
 import { Route as authAcceptInvitationInvitationIdRouteImport } from './routes/(auth)/accept-invitation/$invitationId'
+import { Route as AuthenticatedClientsClientIdRouteImport } from './routes/_authenticated/clients_.$clientId'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
 import { Route as AuthenticatedPortalIndexRouteImport } from './routes/_authenticated/portal/index'
 import { Route as AuthenticatedPortalCalendarRouteImport } from './routes/_authenticated/portal/calendar'
@@ -93,6 +94,12 @@ const authAcceptInvitationInvitationIdRoute =
     id: '/(auth)/accept-invitation/$invitationId',
     path: '/accept-invitation/$invitationId',
     getParentRoute: () => rootRouteImport,
+  } as any)
+const AuthenticatedClientsClientIdRoute =
+  AuthenticatedClientsClientIdRouteImport.update({
+    id: '/clients_/$clientId',
+    path: '/clients/$clientId',
+    getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedErrorsErrorRoute =
   AuthenticatedErrorsErrorRouteImport.update({
@@ -172,6 +179,7 @@ export interface FileRoutesByFullPath {
   '/clients': typeof AuthenticatedClientsRoute
   '/pipeline': typeof AuthenticatedPipelineRoute
   '/accept-invitation/$invitationId': typeof authAcceptInvitationInvitationIdRoute
+  '/clients/$clientId': typeof AuthenticatedClientsClientIdRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/portal/calendar': typeof AuthenticatedPortalCalendarRoute
   '/portal/feed': typeof AuthenticatedPortalFeedRoute
@@ -195,6 +203,7 @@ export interface FileRoutesByTo {
   '/pipeline': typeof AuthenticatedPipelineRoute
   '/': typeof AuthenticatedIndexRoute
   '/accept-invitation/$invitationId': typeof authAcceptInvitationInvitationIdRoute
+  '/clients/$clientId': typeof AuthenticatedClientsClientIdRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/portal/calendar': typeof AuthenticatedPortalCalendarRoute
   '/portal/feed': typeof AuthenticatedPortalFeedRoute
@@ -221,6 +230,7 @@ export interface FileRoutesById {
   '/_authenticated/pipeline': typeof AuthenticatedPipelineRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/(auth)/accept-invitation/$invitationId': typeof authAcceptInvitationInvitationIdRoute
+  '/_authenticated/clients_/$clientId': typeof AuthenticatedClientsClientIdRoute
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/_authenticated/portal/calendar': typeof AuthenticatedPortalCalendarRoute
   '/_authenticated/portal/feed': typeof AuthenticatedPortalFeedRoute
@@ -247,6 +257,7 @@ export interface FileRouteTypes {
     | '/clients'
     | '/pipeline'
     | '/accept-invitation/$invitationId'
+    | '/clients/$clientId'
     | '/errors/$error'
     | '/portal/calendar'
     | '/portal/feed'
@@ -270,6 +281,7 @@ export interface FileRouteTypes {
     | '/pipeline'
     | '/'
     | '/accept-invitation/$invitationId'
+    | '/clients/$clientId'
     | '/errors/$error'
     | '/portal/calendar'
     | '/portal/feed'
@@ -295,6 +307,7 @@ export interface FileRouteTypes {
     | '/_authenticated/pipeline'
     | '/_authenticated/'
     | '/(auth)/accept-invitation/$invitationId'
+    | '/_authenticated/clients_/$clientId'
     | '/_authenticated/errors/$error'
     | '/_authenticated/portal/calendar'
     | '/_authenticated/portal/feed'
@@ -405,6 +418,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof authAcceptInvitationInvitationIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/clients_/$clientId': {
+      id: '/_authenticated/clients_/$clientId'
+      path: '/clients/$clientId'
+      fullPath: '/clients/$clientId'
+      preLoaderRoute: typeof AuthenticatedClientsClientIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/errors/$error': {
       id: '/_authenticated/errors/$error'
       path: '/errors/$error'
@@ -513,6 +533,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedClientsRoute: typeof AuthenticatedClientsRoute
   AuthenticatedPipelineRoute: typeof AuthenticatedPipelineRoute
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
+  AuthenticatedClientsClientIdRoute: typeof AuthenticatedClientsClientIdRoute
   AuthenticatedErrorsErrorRoute: typeof AuthenticatedErrorsErrorRoute
   AuthenticatedPortalCalendarRoute: typeof AuthenticatedPortalCalendarRoute
   AuthenticatedPortalFeedRoute: typeof AuthenticatedPortalFeedRoute
@@ -526,6 +547,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedClientsRoute: AuthenticatedClientsRoute,
   AuthenticatedPipelineRoute: AuthenticatedPipelineRoute,
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
+  AuthenticatedClientsClientIdRoute: AuthenticatedClientsClientIdRoute,
   AuthenticatedErrorsErrorRoute: AuthenticatedErrorsErrorRoute,
   AuthenticatedPortalCalendarRoute: AuthenticatedPortalCalendarRoute,
   AuthenticatedPortalFeedRoute: AuthenticatedPortalFeedRoute,

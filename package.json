@@ -28,6 +28,9 @@
     "test:isolation": "node --env-file=.env ./node_modules/vitest/vitest.mjs run --config vitest.server.config.ts"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@hono/node-server": "^2.1.1",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-alert-dialog": "^1.1.15",

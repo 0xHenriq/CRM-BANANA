@@ -87,6 +87,13 @@ removing `missing_ok` from the helpers fails 9, and reverting the child-
 visibility policies fails 2. A test that cannot fail is not protecting
 anything — re-verify this way after touching any policy migration.
 
+**Never interpolate Drizzle columns into a correlated subquery.**
+`sql\`… where ${tasks.clientId} = ${clients.id}\`` renders both sides
+UNQUALIFIED, so inside the subquery `"id"` binds to the inner table. The
+comparison is silently always false and every count reads zero. Write those
+subqueries with explicit aliases (`from tasks tk where tk.client_id =
+clients.id`).
+
 **Her design tokens are verbatim.** The palette, fonts, and textures in
 `src/styles/theme.css` come from her prototype. The art direction is the brand
 asset; do not "improve" the values.
@@ -95,7 +102,7 @@ asset; do not "improve" the values.
 
 - [x] Phase 1 — Foundation: scaffold, brand tokens, database roles
 - [x] Phase 2 — Auth, seats, tenancy (RLS + isolation tests)
-- [ ] Phase 3 — CRM core: clients, contacts, deals pipeline
+- [x] Phase 3 — CRM core: clients, contacts, deals pipeline
 - [ ] Phase 4 — Client portal: links, files, notice board, tasks
 - [ ] Phase 5 — Content engine: unified Ideas Bank + Calendar
 - [ ] Phase 6 — Media: uploads, thumbnails, feed preview, moodboard
