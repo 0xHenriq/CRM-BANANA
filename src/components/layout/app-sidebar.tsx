@@ -1,4 +1,5 @@
 import { useLayout } from '@/context/layout-provider'
+import { useCurrentUser } from '@/hooks/use-current-user'
 import {
   Sidebar,
   SidebarContent,
@@ -13,10 +14,13 @@ import { NavUser } from './nav-user'
 
 export function AppSidebar() {
   const { collapsible, variant } = useLayout()
+  const { data: currentUser } = useCurrentUser()
 
-  // TODO(phase-2): filter `staffOnly` groups against the signed-in user's role.
-  // Until auth lands, everything renders. The API is the real gate regardless.
-  const groups = sidebarData.navGroups
+  // Hiding agency nav from a client is courtesy, not security — the RLS
+  // policies are what stop them reading deals. Default to hiding while the
+  // user is still loading, so staff-only items never flash for a client.
+  const isStaff = currentUser?.isStaff ?? false
+  const groups = sidebarData.navGroups.filter((g) => !g.staffOnly || isStaff)
 
   return (
     <Sidebar collapsible={collapsible} variant={variant}>
@@ -29,7 +33,17 @@ export function AppSidebar() {
         ))}
       </SidebarContent>
       <SidebarFooter>
-        <NavUser user={sidebarData.user} />
+        <NavUser
+          user={
+            currentUser
+              ? {
+                  name: currentUser.name,
+                  email: currentUser.email,
+                  avatar: '/images/favicon.png',
+                }
+              : sidebarData.user
+          }
+        />
         <div className='px-2 pb-1 text-[0.625rem] leading-relaxed tracking-wide opacity-50'>
           <span className='font-semibold'>Banana Digital London</span>
           <br />

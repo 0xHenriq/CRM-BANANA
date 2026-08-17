@@ -3,10 +3,11 @@ import { z } from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useNavigate } from '@tanstack/react-router'
+import { useQueryClient } from '@tanstack/react-query'
 import { Loader2, LogIn } from 'lucide-react'
 import { toast } from 'sonner'
-import { useAuthStore } from '@/stores/auth-store'
-import { sleep, cn } from '@/lib/utils'
+import { signIn } from '@/lib/auth-client'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -23,6 +24,8 @@ const formSchema = z.object({
   email: z.email({
     error: (iss) => (iss.input === '' ? 'Please enter your email.' : undefined),
   }),
+  // No client-side length rule: the server owns password policy, and a
+  // front-end minimum that disagrees with it just produces a confusing error.
   password: z.string().min(1, 'Please enter your password.'),
 })
 
@@ -37,36 +40,31 @@ export function UserAuthForm({
 }: UserAuthFormProps) {
   const [isLoading, setIsLoading] = useState(false)
   const navigate = useNavigate()
-  const { auth } = useAuthStore()
+  const queryClient = useQueryClient()
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: { email: '', password: '' },
   })
 
-  function onSubmit(data: z.infer<typeof formSchema>) {
+  async function onSubmit(data: z.infer<typeof formSchema>) {
     setIsLoading(true)
-
-    // ⚠️ SCAFFOLD ONLY — accepts any credentials and mints a fake session.
-    // Phase 2 replaces this entirely with Better Auth (httpOnly cookie session,
-    // no token in JS). This must not reach a deployed environment: the Phase 2
-    // isolation suite is the gate that proves it is gone.
-    toast.promise(sleep(600), {
-      loading: 'Signing in...',
-      success: () => {
-        setIsLoading(false)
-        auth.setUser({
-          accountNo: 'SCAFFOLD',
-          email: data.email,
-          role: ['staff'],
-          exp: Date.now() + 24 * 60 * 60 * 1000,
-        })
-        auth.setAccessToken('scaffold-token')
-        navigate({ to: redirectTo || '/', replace: true })
-        return `Welcome back, ${data.email}`
-      },
-      error: 'Could not sign in',
+    const { error } = await signIn.email({
+      email: data.email,
+      password: data.password,
     })
+    setIsLoading(false)
+
+    if (error) {
+      // Never distinguish "no such account" from "wrong password": that turns
+      // the form into an account-enumeration oracle.
+      toast.error('That email and password did not match.')
+      form.setValue('password', '')
+      return
+    }
+
+    await queryClient.invalidateQueries({ queryKey: ['me'] })
+    navigate({ to: redirectTo || '/', replace: true })
   }
 
   return (
@@ -83,7 +81,11 @@ export function UserAuthForm({
             <FormItem>
               <FormLabel>Email</FormLabel>
               <FormControl>
-                <Input placeholder='name@example.com' autoComplete='email' {...field} />
+                <Input
+                  placeholder='name@example.com'
+                  autoComplete='email'
+                  {...field}
+                />
               </FormControl>
               <FormMessage />
             </FormItem>

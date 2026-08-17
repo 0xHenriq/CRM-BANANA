@@ -6,6 +6,11 @@ import { existsSync } from 'node:fs'
 import { env } from './env.js'
 import { logger } from './logger.js'
 import { db, closeDb } from './db/index.js'
+import { assertRlsIsBinding } from './db/guard.js'
+import { auth } from './auth/index.js'
+import { withSession } from './middleware/session.js'
+import { seatsRoutes } from './routes/seats.js'
+import { invitationRoutes } from './routes/invitations.js'
 
 const app = new Hono()
 
@@ -59,7 +64,26 @@ app.get('/api/version', (c) =>
   c.json({ name: 'bd-portal', env: env.NODE_ENV })
 )
 
-// Phase 2+ mounts /api/auth, /api/clients, /api/portal/* here.
+// Better Auth owns everything under /api/auth: sign-in, sign-out, sessions,
+// organization membership, invitations. Mounted before withSession because it
+// is what establishes the session in the first place.
+app.on(['GET', 'POST'], '/api/auth/*', (c) => auth.handler(c.req.raw))
+
+app.use('/api/*', withSession)
+
+app.get('/api/me', (c) => {
+  const user = c.get('user')
+  return user
+    ? c.json({ user })
+    : c.json({ error: 'Not authenticated' }, 401)
+})
+
+app.route('/api/seats', seatsRoutes)
+// Unauthenticated by necessity — the invitee has no account yet. The
+// invitation id is the credential.
+app.route('/api/invitations', invitationRoutes)
+
+// Phase 3+ mounts /api/clients, /api/deals, /api/portal/* here.
 
 app.notFound((c) =>
   c.req.path.startsWith('/api') || c.req.path === '/healthz'
@@ -83,6 +107,9 @@ if (env.NODE_ENV === 'production' && existsSync('./dist')) {
   app.use('/images/*', serveStatic({ root: './dist' }))
   app.get('*', serveStatic({ path: './dist/index.html' }))
 }
+
+await assertRlsIsBinding()
+logger.info('row level security verified as binding')
 
 const server = serve({ fetch: app.fetch, port: env.PORT }, (info) => {
   logger.info(

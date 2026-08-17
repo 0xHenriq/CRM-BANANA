@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, type RenderResult } from 'vitest-browser-react'
-import { type Locator, userEvent } from 'vitest/browser'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { render } from 'vitest-browser-react'
+import { userEvent } from 'vitest/browser'
 import { UserAuthForm } from './user-auth-form'
 
 const FORM_MESSAGES = {
@@ -9,16 +10,21 @@ const FORM_MESSAGES = {
 } as const
 
 const navigate = vi.fn()
-const setUserMock = vi.fn()
-const setAccessTokenMock = vi.fn()
+const signInEmail = vi.fn()
+const toastError = vi.fn()
 
-vi.mock('@/stores/auth-store', () => ({
-  useAuthStore: () => ({
-    auth: {
-      setUser: setUserMock,
-      setAccessToken: setAccessTokenMock,
-    },
-  }),
+vi.mock('@/lib/auth-client', () => ({
+  signIn: {
+    email: (...args: unknown[]) => signInEmail(...args),
+  },
+}))
+
+vi.mock('sonner', () => ({
+  toast: {
+    error: (...args: unknown[]) => toastError(...args),
+    success: vi.fn(),
+    promise: vi.fn(),
+  },
 }))
 
 vi.mock('@tanstack/react-router', async (importOriginal) => {
@@ -26,102 +32,103 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   return {
     ...actual,
     useNavigate: () => navigate,
-    Link: ({
-      children,
-      to,
-      className,
-      ...rest
-    }: {
-      children?: React.ReactNode
-      to: string
-      className?: string
-    }) => (
-      <a href={to} className={className} {...rest}>
-        {children}
-      </a>
-    ),
   }
 })
 
-vi.mock('@/lib/utils', async (orig) => ({
-  ...(await orig()),
-  sleep: vi.fn(() => Promise.resolve()),
-}))
+/**
+ * Each test mounts its own form. Rendering once in beforeEach and again inside
+ * a test leaves two forms in the DOM, and every locator then matches twice.
+ */
+async function renderForm(props: { redirectTo?: string } = {}) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  const screen = await render(
+    <QueryClientProvider client={queryClient}>
+      <UserAuthForm {...props} />
+    </QueryClientProvider>
+  )
+  return {
+    screen,
+    email: screen.getByRole('textbox', { name: /^Email$/i }),
+    password: screen.getByLabelText(/^Password$/i),
+    submit: screen.getByRole('button', { name: /^Sign in$/i }),
+  }
+}
 
 describe('UserAuthForm', () => {
-  describe('Rendering without redirectTo', () => {
-    let screen: RenderResult
-    let emailInput: Locator
-    let passwordInput: Locator
-    let signInButton: Locator
+  beforeEach(() => {
+    vi.clearAllMocks()
+    signInEmail.mockResolvedValue({ data: { user: {} }, error: null })
+  })
 
-    beforeEach(async () => {
-      vi.clearAllMocks()
-      screen = await render(<UserAuthForm />)
-      emailInput = screen.getByRole('textbox', { name: /^Email$/i })
-      passwordInput = screen.getByLabelText(/^Password$/i)
-      signInButton = screen.getByRole('button', { name: /^Sign in$/i })
+  it('renders fields and submit button', async () => {
+    const { email, password, submit } = await renderForm()
+    await expect.element(email).toBeInTheDocument()
+    await expect.element(password).toBeInTheDocument()
+    await expect.element(submit).toBeInTheDocument()
+  })
+
+  it('shows validation messages when submitting empty form', async () => {
+    const { screen, submit } = await renderForm()
+    await userEvent.click(submit)
+
+    await expect
+      .element(screen.getByText(FORM_MESSAGES.emailEmpty))
+      .toBeInTheDocument()
+    await expect
+      .element(screen.getByText(FORM_MESSAGES.passwordEmpty))
+      .toBeInTheDocument()
+    expect(signInEmail).not.toHaveBeenCalled()
+  })
+
+  it('signs in and navigates to the default route on success', async () => {
+    const { email, password, submit } = await renderForm()
+    await userEvent.fill(email, 'sophie@bananadigital.london')
+    await userEvent.fill(password, 'bananacrate2026')
+    await userEvent.click(submit)
+
+    await vi.waitFor(() => expect(signInEmail).toHaveBeenCalledOnce())
+    expect(signInEmail).toHaveBeenCalledWith({
+      email: 'sophie@bananadigital.london',
+      password: 'bananacrate2026',
+    })
+    await vi.waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith({ to: '/', replace: true })
+    )
+  })
+
+  it('reports a generic failure and does not navigate on bad credentials', async () => {
+    signInEmail.mockResolvedValue({
+      data: null,
+      error: { message: 'User not found', status: 401 },
     })
 
-    it('renders fields and submit button', async () => {
-      await expect.element(emailInput).toBeInTheDocument()
-      await expect.element(passwordInput).toBeInTheDocument()
-      await expect.element(signInButton).toBeInTheDocument()
-    })
+    const { email, password, submit } = await renderForm()
+    await userEvent.fill(email, 'nobody@example.com')
+    await userEvent.fill(password, 'wrong-password')
+    await userEvent.click(submit)
 
-    it('shows validation messages when submitting empty form', async () => {
-      await userEvent.click(signInButton)
-
-      await expect
-        .element(screen.getByText(FORM_MESSAGES.emailEmpty))
-        .toBeInTheDocument()
-      await expect
-        .element(screen.getByText(FORM_MESSAGES.passwordEmpty))
-        .toBeInTheDocument()
-    })
-
-    it('authenticates and navigates to default route on success', async () => {
-      await userEvent.fill(emailInput, 'a@b.com')
-      await userEvent.fill(passwordInput, '1234567')
-
-      await userEvent.click(signInButton)
-
-      await vi.waitFor(() => expect(setUserMock).toHaveBeenCalledOnce())
-      expect(setUserMock).toHaveBeenCalledWith(
-        expect.objectContaining({
-          email: 'a@b.com',
-          accountNo: expect.any(String),
-          role: expect.any(Array),
-          exp: expect.any(Number),
-        })
-      )
-      expect(setAccessTokenMock).toHaveBeenCalledOnce()
-      expect(setAccessTokenMock).toHaveBeenCalledWith('scaffold-token')
-
-      await vi.waitFor(() =>
-        expect(navigate).toHaveBeenCalledWith({ to: '/', replace: true })
-      )
-    })
+    await vi.waitFor(() => expect(toastError).toHaveBeenCalledOnce())
+    // The message must not distinguish "no such account" from "wrong
+    // password", or the form becomes an account-enumeration oracle.
+    expect(toastError).toHaveBeenCalledWith(
+      'That email and password did not match.'
+    )
+    expect(navigate).not.toHaveBeenCalled()
   })
 
   it('navigates to redirectTo when provided', async () => {
-    vi.clearAllMocks()
-
-    const { getByRole, getByLabelText } = await render(
-      <UserAuthForm redirectTo='/settings' />
-    )
-
-    await userEvent.fill(getByRole('textbox', { name: /Email/i }), 'a@b.com')
-    await userEvent.fill(getByLabelText('Password'), '1234567')
-
-    await userEvent.click(getByRole('button', { name: /Sign in/i }))
-
-    await vi.waitFor(() => expect(setUserMock).toHaveBeenCalledOnce())
-    expect(setAccessTokenMock).toHaveBeenCalledOnce()
+    const { email, password, submit } = await renderForm({
+      redirectTo: '/portal/calendar',
+    })
+    await userEvent.fill(email, 'a@b.com')
+    await userEvent.fill(password, 'password123')
+    await userEvent.click(submit)
 
     await vi.waitFor(() =>
       expect(navigate).toHaveBeenCalledWith({
-        to: '/settings',
+        to: '/portal/calendar',
         replace: true,
       })
     )

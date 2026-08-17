@@ -8,6 +8,41 @@
       "when": 1786996728409,
       "tag": "0000_graceful_impossible_man",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786998569743,
+      "tag": "0001_app_schema",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786998570743,
+      "tag": "0002_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786999617300,
+      "tag": "0003_invitation_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786999618300,
+      "tag": "0004_invitation_grant_fn",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786999619300,
+      "tag": "0005_invitation_grants_rls",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,6 @@
 import { useNavigate, useLocation } from '@tanstack/react-router'
-import { useAuthStore } from '@/stores/auth-store'
+import { useQueryClient } from '@tanstack/react-query'
+import { signOut } from '@/lib/auth-client'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 
 interface SignOutDialogProps {
@@ -10,15 +11,18 @@ interface SignOutDialogProps {
 export function SignOutDialog({ open, onOpenChange }: SignOutDialogProps) {
   const navigate = useNavigate()
   const location = useLocation()
-  const { auth } = useAuthStore()
+  const queryClient = useQueryClient()
 
-  const handleSignOut = () => {
-    auth.reset()
-    // Preserve current location for redirect after sign-in
-    const currentPath = location.href
+  const handleSignOut = async () => {
+    // Revokes the session server-side, not just locally: clearing a client
+    // store while the cookie stays valid is not signing out.
+    await signOut()
+    // Drop every cached query — some of it is one client's data, and the next
+    // person at this browser may be a different one.
+    queryClient.clear()
     navigate({
       to: '/sign-in',
-      search: { redirect: currentPath },
+      search: { redirect: location.href },
       replace: true,
     })
   }

@@ -32,6 +32,9 @@ export default defineConfig({
     },
   },
   test: {
+    // Component tests only. Server tests run in Node under
+    // vitest.server.config.ts and would fail immediately in a browser.
+    include: ['src/**/*.test.{ts,tsx}'],
     silent: 'passed-only',
     unstubEnvs: true,
     browser: {

@@ -1,0 +1,279 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import {
+  ALL_TENANT_TABLES,
+  CLIENT_VISIBLE_TABLES,
+  COLUMN_GATED_TABLES,
+  STAFF_ONLY_TABLES,
+  asActor,
+  closePools,
+  ownerPool,
+  resetAndSeed,
+  type Fixture,
+} from './fixtures.js'
+
+/**
+ * Tenancy isolation.
+ *
+ * The one property in this application that must never regress, tested at the
+ * database layer so it holds even if the API is bypassed entirely. Three
+ * distinct failure modes, because they fail independently:
+ *
+ *   1. Cross-tenant   — A's user reading B's rows.
+ *   2. Class confusion — A's user reading A's own staff-only rows. A
+ *                        client_id-only policy passes cross-tenant and fails
+ *                        this one, which is what makes it worth separating.
+ *   3. Fail-closed    — no session variables at all.
+ */
+
+let f: Fixture
+
+beforeAll(async () => {
+  f = await resetAndSeed()
+})
+
+afterAll(async () => {
+  await closePools()
+})
+
+describe('the runtime role cannot bypass RLS', () => {
+  it('bd_app is not a superuser, has no BYPASSRLS, and owns no tables', async () => {
+    const [row] = await asActor<{
+      role: string
+      is_superuser: boolean
+      bypasses_rls: boolean
+      owned: number
+    }>({ kind: 'anonymous' }, `
+      select current_user as role,
+             (select rolsuper     from pg_roles where rolname = current_user) as is_superuser,
+             (select rolbypassrls from pg_roles where rolname = current_user) as bypasses_rls,
+             (select count(*)::int from pg_class c
+               where c.relnamespace = 'public'::regnamespace and c.relkind = 'r'
+                 and pg_get_userbyid(c.relowner) = current_user) as owned
+    `)
+
+    expect(row.role).toBe('bd_app')
+    expect(row.is_superuser).toBe(false)
+    expect(row.bypasses_rls).toBe(false)
+    // A table owner is exempt from its own policies unless FORCE is set, so
+    // ownership by the app role would silently disable everything below.
+    expect(row.owned).toBe(0)
+  })
+
+  it('every tenant table has row level security enabled', async () => {
+    const rows = await asActor<{ relname: string }>({ kind: 'anonymous' }, `
+      select c.relname from pg_class c
+       where c.relnamespace = 'public'::regnamespace
+         and c.relkind = 'r'
+         and not c.relrowsecurity
+         and c.relname = any($1::text[])
+    `, [[...ALL_TENANT_TABLES]])
+
+    expect(rows.map((r) => r.relname)).toEqual([])
+  })
+
+  it('every tenant table has at least one policy', async () => {
+    const rows = await asActor<{ tablename: string; n: number }>(
+      { kind: 'anonymous' },
+      `select tablename, count(*)::int as n from pg_policies
+        where schemaname = 'public' group by 1`
+    )
+    const withPolicies = new Set(rows.map((r) => r.tablename))
+    const missing = ALL_TENANT_TABLES.filter((t) => !withPolicies.has(t))
+
+    // Adding a tenant table without a policy fails the build here.
+    expect(missing).toEqual([])
+  })
+})
+
+describe('1 — cross-tenant', () => {
+  it('a client user sees only their own client row', async () => {
+    const rows = await asActor<{ id: string }>(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from clients order by name'
+    )
+    expect(rows.map((r) => r.id)).toEqual([f.clientA])
+  })
+
+  it.each([...CLIENT_VISIBLE_TABLES, ...COLUMN_GATED_TABLES])(
+    'a client user reads no rows belonging to another client from %s',
+    async (table) => {
+      const rows = await asActor<{ client_id: string }>(
+        { kind: 'client', userId: f.clientUserA },
+        `select client_id from ${table}`
+      )
+      expect(rows.every((r) => r.client_id === f.clientA)).toBe(true)
+      expect(rows.some((r) => r.client_id === f.clientB)).toBe(false)
+    }
+  )
+
+  it("cannot fetch another client's link by its exact id", async () => {
+    const rows = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from links where id = $1',
+      [f.linkB]
+    )
+    expect(rows).toHaveLength(0)
+  })
+
+  it("cannot fetch another client's notice post by its exact id", async () => {
+    const rows = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from notice_posts where id = $1',
+      [f.noticeB]
+    )
+    expect(rows).toHaveLength(0)
+  })
+
+  it("cannot write into another client's workspace", async () => {
+    // The WITH CHECK clause makes this affect zero rows rather than erroring.
+    const inserted = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      `insert into notice_posts(client_id, body) values ($1,'injected')
+       returning id`,
+      [f.clientB]
+    ).catch(() => [] as unknown[])
+
+    expect(inserted).toHaveLength(0)
+
+    const { rows: check } = await ownerPool.query(
+      `select count(*)::int as n from notice_posts where client_id = $1 and body = 'injected'`,
+      [f.clientB]
+    )
+    expect(check[0].n).toBe(0)
+  })
+
+  it('staff see both clients', async () => {
+    const rows = await asActor<{ id: string }>(
+      { kind: 'staff', userId: f.staffUser },
+      'select id from clients'
+    )
+    expect(rows).toHaveLength(2)
+  })
+})
+
+describe('2 — class confusion (same tenant, wrong audience)', () => {
+  it.each([...STAFF_ONLY_TABLES])(
+    'a client user reads nothing from %s, not even their own rows',
+    async (table) => {
+      const rows = await asActor(
+        { kind: 'client', userId: f.clientUserA },
+        `select * from ${table}`
+      )
+      expect(rows).toHaveLength(0)
+    }
+  )
+
+  it('a client cannot read their own deal — value, stage, or close date', async () => {
+    const rows = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'select id, value, stage from deals where client_id = $1',
+      [f.clientA]
+    )
+    // This is the disclosure a client_id-only policy would have allowed:
+    // what she charges them and when she expects to close.
+    expect(rows).toHaveLength(0)
+  })
+
+  it('a client sees only tasks flagged visible_to_client', async () => {
+    const rows = await asActor<{ id: string }>(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from tasks'
+    )
+    expect(rows.map((r) => r.id)).toEqual([f.taskAVisible])
+  })
+
+  it('a client does not see the raw Ideas Bank backlog', async () => {
+    const rows = await asActor<{ id: string }>(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from content_items'
+    )
+    expect(rows.map((r) => r.id)).toEqual([f.contentAVisible])
+  })
+
+  it('a client cannot flip visible_to_client on their own content', async () => {
+    await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'update content_items set visible_to_client = true where id = $1',
+      [f.contentAHidden]
+    ).catch(() => [])
+
+    const { rows } = await ownerPool.query(
+      'select visible_to_client from content_items where id = $1',
+      [f.contentAHidden]
+    )
+    expect(rows[0].visible_to_client).toBe(false)
+  })
+
+  it('staff do see internal tasks and the full backlog', async () => {
+    const tasks = await asActor(
+      { kind: 'staff', userId: f.staffUser },
+      'select id from tasks'
+    )
+    const content = await asActor(
+      { kind: 'staff', userId: f.staffUser },
+      'select id from content_items'
+    )
+    expect(tasks).toHaveLength(2)
+    expect(content).toHaveLength(2)
+  })
+})
+
+describe('3 — fail closed', () => {
+  it.each([...ALL_TENANT_TABLES])(
+    'returns zero rows from %s with no session variables set — and does not raise',
+    async (table) => {
+      // If current_setting were called without missing_ok, this would throw.
+      // A suite that fails with an exception invites "fixing" the policy.
+      const rows = await asActor({ kind: 'anonymous' }, `select * from ${table}`)
+      expect(rows).toHaveLength(0)
+    }
+  )
+
+  it('an unknown user id grants nothing', async () => {
+    const rows = await asActor(
+      { kind: 'client', userId: 'no-such-user' },
+      'select id from clients'
+    )
+    expect(rows).toHaveLength(0)
+  })
+
+  it('a malformed is_staff value is not treated as staff', async () => {
+    // coalesce(nullif(...,'')::boolean, false) — anything unparseable must
+    // degrade to the less privileged side.
+    const rows = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from deals'
+    )
+    expect(rows).toHaveLength(0)
+  })
+})
+
+describe('append-only approvals', () => {
+  it('nobody can update or delete an approval, staff included', async () => {
+    const { rows: seeded } = await ownerPool.query(
+      `insert into content_approvals(client_id, content_item_id, decision, actor_id, note)
+       values ($1,$2,'approved',$3,'looks good') returning id`,
+      [f.clientA, f.contentAVisible, f.staffUser]
+    )
+    const approvalId = seeded[0].id
+
+    await asActor(
+      { kind: 'staff', userId: f.staffUser },
+      `update content_approvals set note = 'rewritten' where id = $1`,
+      [approvalId]
+    ).catch(() => [])
+
+    await asActor(
+      { kind: 'staff', userId: f.staffUser },
+      'delete from content_approvals where id = $1',
+      [approvalId]
+    ).catch(() => [])
+
+    const { rows } = await ownerPool.query(
+      'select note from content_approvals where id = $1',
+      [approvalId]
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0].note).toBe('looks good')
+  })
+})

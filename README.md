@@ -29,12 +29,24 @@ npm run dev         # Vite on :5173, proxies /api -> :4300
 Copy `.env.example` to `.env` and fill in the two database URLs.
 
 ```bash
-npm run build        # tsc -b (app + node + server) && vite build
+npm run build          # tsc -b (app + node + server) && vite build
 npm run lint
-npm test             # vitest, browser mode via playwright
-npm run db:generate  # emit a migration from schema changes
-npm run db:migrate   # apply migrations as bd_owner
+npm test               # component tests, browser mode via playwright
+npm run test:isolation # tenancy isolation, against bd_portal_test
+npm run db:generate    # emit a migration from schema changes
+npm run db:migrate     # apply migrations as bd_owner
+npm run bootstrap -- --email … --password …   # create the org + first owner
 ```
+
+First run:
+
+```bash
+npm run db:migrate
+npm run bootstrap -- --email you@example.com --password "at-least-10-chars" --name "Your Name"
+```
+
+Sign-up is disabled — seats are invited. Bootstrap is the only path that
+creates an account without an invitation.
 
 ## Non-negotiables
 
@@ -58,6 +70,13 @@ dropping columns. Use `db:generate` → review the emitted SQL → `db:migrate`.
 policy that has to join upward to find its tenant is slower and easier to get
 subtly wrong.
 
+**Isolation is tested by mutation, not by assertion alone.** The suite in
+`server/__tests__/isolation.test.ts` was verified by deliberately breaking the
+policies: replacing the staff-only `deals` rule with a naive `client_id`-only
+one fails 3 tests, and removing `missing_ok` from the SQL helpers fails 9. A
+test that cannot fail is not protecting anything — re-verify this way after
+changing `0002_rls.sql`.
+
 **Her design tokens are verbatim.** The palette, fonts, and textures in
 `src/styles/theme.css` come from her prototype. The art direction is the brand
 asset; do not "improve" the values.
@@ -65,13 +84,13 @@ asset; do not "improve" the values.
 ## Status
 
 - [x] Phase 1 — Foundation: scaffold, brand tokens, database roles
-- [ ] Phase 2 — Auth, seats, tenancy (RLS + isolation tests)
+- [x] Phase 2 — Auth, seats, tenancy (RLS + isolation tests)
 - [ ] Phase 3 — CRM core: clients, contacts, deals pipeline
 - [ ] Phase 4 — Client portal: links, files, notice board, tasks
 - [ ] Phase 5 — Content engine: unified Ideas Bank + Calendar
 - [ ] Phase 6 — Media: uploads, thumbnails, feed preview, moodboard
 - [ ] Phase 7 — Deploy to VPS4
 
-> **The sign-in form is scaffolding and accepts any credentials.** It mints a
-> fake session client-side. Phase 2 replaces it with Better Auth; the isolation
-> suite is the gate that proves it is gone. Do not deploy before then.
+Auth is real as of Phase 2: Better Auth with httpOnly cookie sessions, a single
+Banana Digital organization, 10 seats, and invite-only access. Phases 3–6 build
+the CRM and portal features on top.

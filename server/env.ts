@@ -20,6 +20,10 @@ const schema = z.object({
     .default('false')
     .transform((v) => v === 'true'),
   MAX_SEATS: z.coerce.number().int().positive().default(10),
+  /** Public origin. Better Auth derives callbacks and cookie domain from it. */
+  APP_URL: z.string().url().default('http://localhost:5173'),
+  /** Signing key for sessions. Rotating it invalidates every login. */
+  BETTER_AUTH_SECRET: z.string().min(32).optional(),
   UPLOAD_DIR: z.string().default('./.uploads'),
 })
 
