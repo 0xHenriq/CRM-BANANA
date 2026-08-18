@@ -19,6 +19,7 @@ import { ProfileDropdown } from '@/components/profile-dropdown'
 import { Search } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { ClientStatusPill, DealStagePill } from '../clients/status-pill'
+import { ReviewQueue } from '../content/review-queue'
 
 /**
  * Agency overview.
@@ -96,6 +97,10 @@ export function Dashboard() {
           title='Dashboard'
           stamp={{ top: 'EST.', big: 'BD', bottom: 'LDN' }}
         />
+
+        {/* What is actually blocked, before the summary numbers. Her Monday
+            question is "who owes me a decision", not "how many". */}
+        <ReviewQueue variant='agency' />
 
         <div className='grid gap-5 sm:grid-cols-2 lg:grid-cols-4'>
           {stats.map(({ label, icon: Icon, value, hint }) => (

@@ -11,6 +11,7 @@ import { PageHead } from '@/components/layout/page-head'
 import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
+import { ReviewQueue } from '@/features/content/review-queue'
 import { LinkStack } from './link-stack'
 import { FileFolder, NoticeBoard, TaskList } from './panels'
 
@@ -100,6 +101,10 @@ export function PortalHome() {
             <span className='display max-sm:hidden text-xl'>{client.name}</span>
           }
         />
+
+        {/* Above everything: the reason they opened the portal, if there is
+            one. Buried below a link stack it may as well not exist. */}
+        <ReviewQueue variant={isStaff ? 'agency' : 'client'} />
 
         {isStaff && (
           <Card className='crate-card mb-5 border-dashed'>

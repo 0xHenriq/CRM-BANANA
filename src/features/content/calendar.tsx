@@ -92,6 +92,13 @@ export function ContentCalendar() {
     return map
   }, [data])
 
+  const monthItems = useMemo(() => {
+    const prefix = `${cursor.year}-${String(cursor.month + 1).padStart(2, '0')}`
+    return (data?.items ?? [])
+      .filter((i) => i.scheduledAt?.startsWith(prefix))
+      .sort((a, b) => (a.scheduledAt ?? '').localeCompare(b.scheduledAt ?? ''))
+  }, [data, cursor])
+
   const grid = useMemo(() => {
     const first = new Date(cursor.year, cursor.month, 1)
     const offset = (first.getDay() + 6) % 7 // Monday = 0
@@ -171,7 +178,45 @@ export function ContentCalendar() {
                 </div>
               </div>
 
-              <div className='grid grid-cols-7 gap-1.5'>
+              {/* Phones get a list, not a 7-column grid: at 390px each cell
+                  is ~45px and every post title truncates to nothing. The
+                  client is the likeliest phone user, so this is their view. */}
+              <ol className='space-y-2 sm:hidden'>
+                {monthItems.length === 0 ? (
+                  <li className='py-6 text-center text-sm text-muted-foreground'>
+                    Nothing scheduled this month.
+                  </li>
+                ) : (
+                  monthItems.map((item) => (
+                    <li key={item.id}>
+                      <button
+                        type='button'
+                        onClick={() => setOpenId(item.id)}
+                        className='flex w-full items-center gap-3 rounded-md border-[1.5px] border-bd-rule p-2 text-start'
+                      >
+                        <span
+                          className={cn(
+                            'flex size-9 shrink-0 flex-col items-center justify-center rounded border border-bd-ink text-[0.625rem] font-bold',
+                            TYPE_TONE[item.type]
+                          )}
+                        >
+                          {item.scheduledAt?.slice(8)}
+                        </span>
+                        <span className='min-w-0 flex-1'>
+                          <span className='block truncate text-sm font-semibold'>
+                            {item.title}
+                          </span>
+                          <span className='block text-xs text-muted-foreground'>
+                            {TYPE_LABEL[item.type]}
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                  ))
+                )}
+              </ol>
+
+              <div className='hidden grid-cols-7 gap-1.5 sm:grid'>
                 {DOW.map((d) => (
                   <div
                     key={d}

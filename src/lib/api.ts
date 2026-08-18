@@ -394,3 +394,13 @@ export async function uploadMedia(
   }
   return res.json()
 }
+
+export type AwaitingItem = {
+  id: string
+  clientId: string
+  clientName: string
+  title: string
+  type: ContentType
+  scheduledAt: string | null
+  updatedAt: string
+}

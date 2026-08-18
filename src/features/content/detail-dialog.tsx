@@ -71,6 +71,13 @@ export function ContentDetailDialog({
   const invalidate = async () => {
     await queryClient.invalidateQueries({ queryKey: ['content'] })
     await queryClient.invalidateQueries({ queryKey: ['content-item', itemId] })
+    // The review queue is keyed separately, and every decision or status
+    // change moves an item in or out of it. Without this the client approved
+    // a post and the panel still read "2 posts need your review" — which
+    // looks exactly like the approval not working.
+    await queryClient.invalidateQueries({ queryKey: ['awaiting'] })
+    // The dashboard's awaiting count comes from the client list.
+    await queryClient.invalidateQueries({ queryKey: ['clients'] })
   }
 
   const patch = useMutation({
@@ -166,6 +173,23 @@ export function ContentDetailDialog({
 
             {isStaff && (
               <div className='grid gap-3 rounded-md border-[1.5px] border-dashed border-bd-rule p-3 sm:grid-cols-3'>
+                {/* Title and caption were previously read-only everywhere in
+                    the product, so a typo in a post name could not be fixed
+                    at all. Saved on blur rather than per keystroke. */}
+                <div className='grid gap-1.5 sm:col-span-3'>
+                  <Label htmlFor='cd-title'>Name</Label>
+                  <Input
+                    id='cd-title'
+                    name='content-title'
+                    className='h-8'
+                    defaultValue={item.title}
+                    key={`title-${item.id}-${item.updatedAt}`}
+                    onBlur={(e) => {
+                      const next = e.target.value.trim()
+                      if (next && next !== item.title) patch.mutate({ title: next })
+                    }}
+                  />
+                </div>
                 <div className='grid gap-1.5'>
                   <Label htmlFor='cd-type'>Type</Label>
                   <Select
@@ -216,6 +240,23 @@ export function ContentDetailDialog({
                     }
                   />
                 </div>
+                <div className='grid gap-1.5 sm:col-span-3'>
+                  <Label htmlFor='cd-caption'>Caption</Label>
+                  <Textarea
+                    id='cd-caption'
+                    name='content-caption'
+                    className='min-h-16 resize-y'
+                    placeholder='The copy that goes out with this post…'
+                    defaultValue={item.caption ?? ''}
+                    key={`caption-${item.id}-${item.updatedAt}`}
+                    onBlur={(e) => {
+                      const next = e.target.value
+                      if (next !== (item.caption ?? '')) {
+                        patch.mutate({ caption: next || null })
+                      }
+                    }}
+                  />
+                </div>
                 <p className='text-xs text-muted-foreground sm:col-span-3'>
                   Giving this a date puts it on the calendar. It is the same
                   record either way — there is no separate calendar entry to
@@ -224,7 +265,7 @@ export function ContentDetailDialog({
               </div>
             )}
 
-            {item.caption && (
+            {!isStaff && item.caption && (
               <p className='text-sm whitespace-pre-wrap'>{item.caption}</p>
             )}
 
