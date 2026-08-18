@@ -14,6 +14,7 @@ import { invitationRoutes } from './routes/invitations.js'
 import { clientRoutes } from './routes/clients.js'
 import { dealRoutes } from './routes/deals.js'
 import { portalRoutes } from './routes/portal.js'
+import { contentRoutes } from './routes/content.js'
 
 const app = new Hono()
 
@@ -90,6 +91,7 @@ app.route('/api/clients', clientRoutes)
 app.route('/api/deals', dealRoutes)
 
 app.route('/api/portal', portalRoutes)
+app.route('/api/content', contentRoutes)
 
 // Must not call c.notFound() — that re-enters this very handler and blows the
 // stack. Verified: any non-API path returned 500 with

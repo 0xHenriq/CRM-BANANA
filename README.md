@@ -126,7 +126,7 @@ asset; do not "improve" the values.
 - [x] Phase 2 — Auth, seats, tenancy (RLS + isolation tests)
 - [x] Phase 3 — CRM core: clients, contacts, deals pipeline
 - [x] Phase 4 — Client portal: links, files, notice board, tasks
-- [ ] Phase 5 — Content engine: unified Ideas Bank + Calendar
+- [x] Phase 5 — Content engine: unified Ideas Bank + Calendar
 - [ ] Phase 6 — Media: uploads, thumbnails, feed preview, moodboard
 - [ ] Phase 7 — Deploy to VPS4
 

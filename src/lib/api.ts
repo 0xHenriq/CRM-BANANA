@@ -236,3 +236,67 @@ export type PortalWorkspace = {
   tasks: PortalTask[]
   notices: NoticePost[]
 }
+
+/* ----------------------------------------------------------------- content */
+
+export const CONTENT_TYPES = [
+  'video',
+  'reel',
+  'story',
+  'graphic',
+  'carousel',
+] as const
+export type ContentType = (typeof CONTENT_TYPES)[number]
+
+export const CONTENT_STATUSES = [
+  'idea',
+  'in_progress',
+  'ready_for_review',
+  'approved',
+  'scheduled',
+  'published',
+] as const
+export type ContentStatus = (typeof CONTENT_STATUSES)[number]
+
+/**
+ * One record, three views.
+ *
+ * `scheduledAt === null` is an idea; a date puts the same row on the calendar;
+ * its assets fill the feed preview. The prototype kept two stores that never
+ * spoke, so approving an idea did nothing to the calendar.
+ */
+export type ContentItem = {
+  id: string
+  clientId: string
+  title: string
+  type: ContentType
+  status: ContentStatus
+  scheduledAt: string | null
+  caption: string | null
+  feedOrder: number | null
+  visibleToClient: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export type ContentComment = {
+  id: string
+  body: string
+  createdAt: string
+  authorId: string | null
+  authorName: string | null
+}
+
+export type ContentApproval = {
+  id: string
+  decision: 'approved' | 'changes_requested'
+  note: string | null
+  decidedAt: string
+  actorName: string | null
+}
+
+export type ContentDetail = {
+  item: ContentItem
+  comments: ContentComment[]
+  approvals: ContentApproval[]
+}
