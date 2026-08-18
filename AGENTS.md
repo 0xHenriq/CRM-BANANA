@@ -1,0 +1,689 @@
+# AGENTS.md — Banana Digital Client Portal + CRM
+
+> A client portal and CRM for a London social media agency. Postgres decides who sees what. Read this file completely before touching anything.
+
+<INSTRUCTIONS>
+
+## Rule 0 — The Fundamental Override Prerogative
+
+**I AM IN CHARGE, NOT YOU.**
+
+The human's explicit instruction overrides every rule in this document. If they tell you to use a different tool, skip a step, or take an approach this file argues against, **comply**. State your concern in one sentence if you have one, then do as asked.
+
+This includes tool choices. If the human says "use X", use X — even if this file recommends Y.
+
+---
+
+## Rule Number 1 — No File Deletion
+
+**You have permanently lost any and all rights to delete files in this repository.**
+
+You have a horrible track record with deletion. You delete "unused" files that are imported dynamically, "stale" migrations that are already applied in production, and "duplicate" configs that differ in one critical line.
+
+**NEVER run any of these:**
+
+```bash
+rm -rf                    # never, under any circumstance
+rm                        # not even a single file
+find . -delete
+git clean -fd
+mv <file> /tmp/           # deletion wearing a disguise
+```
+
+**These paths are catastrophic to touch. They are NOT recoverable from git:**
+
+| Path | Why it is unrecoverable |
+|---|---|
+| `.env` | Production DB passwords and `BETTER_AUTH_SECRET`. Gitignored. Losing it locks you out of the database. |
+| `.uploads/` | Client-uploaded images and video. Gitignored. Referenced by `storage_key` rows that will dangle forever. |
+| `server/db/migrations/*.sql` | Already applied to production. Deleting one does not un-apply it; it makes the journal lie. |
+| `server/db/migrations/meta/_journal.json` | The record of what has been applied. Corrupt it and migrations re-run against live data. |
+| `/home/yota/data/bd-portal/` (VPS4) | Production uploads and backups. |
+| `/srv/http/bd-portal/` (VPS4) | The served frontend. |
+
+If you believe a file must go, **say so and stop**. The human deletes it.
+
+---
+
+## Irreversible Git and Filesystem Actions — DO NOT EVER BREAK GLASS
+
+1. **Forbidden commands.** Never run any of these without an explicit, in-conversation instruction naming the command:
+
+```bash
+git reset --hard
+git checkout -- .
+git restore .
+git clean -fd
+git push --force
+git push --force-with-lease
+git rebase          # interactive rebase is unavailable in this environment anyway
+git filter-branch
+DROP TABLE          # or DROP DATABASE, TRUNCATE without a WHERE-scoped plan
+drizzle-kit push    # see Rule: migrations
+```
+
+2. **No guessing.** If you are unsure whether an action is reversible, **it is irreversible**. Treat it as forbidden.
+
+3. **Safer alternatives first.** `git stash` over `git checkout --`. A new migration over editing an applied one. `git revert` over `git reset --hard`.
+
+4. **Mandatory explicit plan.** Before any risky action, state in the conversation: what you will run, what it affects, and what the recovery path is. Then wait.
+
+5. **Document the confirmation.** When the human approves, quote their approval before acting.
+
+---
+
+## Git Branch Policy
+
+- Default branch: `master`. There is **no remote**; this repository is local only.
+- Commit when the human asks, or when completing a phase of work. Never push (there is nowhere to push).
+- End every commit message with:
+
+```
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+```
+
+- Commit messages explain **why**, and name what was verified. "fix: X" with no evidence is a bad commit here.
+
+---
+
+## Database Safety Rules — CONSTITUTIONAL
+
+The database is shared with production. **There is no separate development database.** `DATABASE_URL` in your local `.env` points through an SSH tunnel at the live `bd_portal` on VPS4.
+
+**Every query you run locally hits production data.**
+
+1. **NEVER point `DATABASE_URL` at `bd_owner`.** The runtime role is `bd_app`: a non-owner, non-superuser with `rolbypassrls = false`. Row Level Security policies are binding **because of that**. If a permissions error tempts you to swap the role, the fix is a `GRANT`, never a role swap. `server/db/guard.ts` refuses to boot if this is violated — do not disable it.
+
+2. **NEVER run `drizzle-kit push`.** It reconciles schema by **dropping columns**. Use `npm run db:generate` → read the emitted SQL → `npm run db:migrate`.
+
+3. **NEVER edit an applied migration.** Write a new one. `0002_rls.sql` and friends are already in production.
+
+4. **NEVER run raw `UPDATE`/`DELETE` without a `WHERE`.** State the row count you expect before running it.
+
+5. **Hand-written migrations must be registered** in `server/db/migrations/meta/_journal.json`, or `db:migrate` silently skips them.
+
+---
+
+## Multi-Agent Coordination
+
+**N/A — this is a single-agent project.** There is no Agent Mail, no file reservation protocol, no Beads. If `git status` shows changes you did not make, they are the human's. Ask; do not "clean up".
+
+---
+
+## Toolchain: TypeScript + npm
+
+### Version
+
+| Thing | Version | Enforced by |
+|---|---|---|
+| Node | **20.20.2** | `.nvmrc`; VPS4 systemd unit uses the absolute nvm path |
+| TypeScript | 5.x, strict | `tsconfig.*.json` |
+| Postgres | **18.3** | VPS4, and `bd_portal_test` for the isolation suite |
+| React | 19 | — |
+
+**Node 18 will not work.** Vite 8 requires ≥20. The system Node on VPS4 is 18.20.8, which is why the systemd unit hardcodes `/home/yota/.nvm/versions/node/v20.20.2/bin/node` — **systemd does not source `~/.nvm`**.
+
+### Key Dependencies
+
+| Package | Purpose |
+|---|---|
+| `hono` + `@hono/node-server` | API server |
+| `drizzle-orm` + `drizzle-kit` | Schema, queries, migrations |
+| `pg` | Postgres driver; the pool `withTenant` runs transactions on |
+| `better-auth` | Sessions, the single organization, members, invitations |
+| `@tanstack/react-router` | File-based routing, route guards |
+| `@tanstack/react-query` | Server state, optimistic mutations |
+| `sharp` | Image thumbnails (400px webp) |
+| `pino` | Structured logs |
+| `zod` | Request validation |
+| `@dnd-kit/*` | Pipeline board drag-and-drop |
+| `tsx` | **Runtime dependency, not dev** — Node 20 cannot execute TypeScript, and `npm start` runs the server through tsx |
+
+### Forbidden Dependencies
+
+| Dependency | Why it is FORBIDDEN |
+|---|---|
+| `bcrypt`, `argon2`, any hashing lib | Better Auth owns password hashing. A second scheme means accounts that cannot log in. |
+| Any ORM other than Drizzle | Schema and RLS session variables assume Drizzle transactions. |
+| `moment` | `date-fns` is present. Do not add a second date library. |
+| A second HTTP client | `fetch` via `src/lib/api.ts` on the client. Do not reach for `axios` (it is a leftover transitive dep). |
+| Object storage SDKs (`@aws-sdk/*`, etc.) | VPS4 has 416 GB free. `LocalDiskDriver` is the deliberate choice; see `server/lib/storage.ts`. |
+
+### Safety Boundary
+
+- **No `eval()`, `new Function()`, or `innerHTML`.**
+- User-supplied URLs **MUST** go through `safeHref()` (`src/lib/safe-href.ts`) before becoming an `href`. It permits http/https only. `javascript:`, `data:`, `vbscript:` and `file:` are refused, and there are tests for each.
+
+### Logging & Console Output
+
+- Server: `pino` via `server/logger.ts`. **No `console.log` in `server/`** — lint enforces `no-console`. CLI scripts in `scripts/` may print, with an `eslint-disable-next-line no-console` and a reason.
+- Client: no `console.log` in committed code.
+
+### Build & Verification
+
+```bash
+npm run build          # tsc -b (app + node + server projects) && vite build
+npm run lint           # eslint, zero warnings tolerated
+npm test               # component tests, Playwright browser mode
+npm run test:isolation # server tests: tenancy, contracts, patch schemas
+```
+
+**All four MUST pass before you commit.**
+
+### Third-Party Library Usage
+
+If you are not 100% sure how a third-party library works, **search online for current documentation**. Do not hallucinate API signatures. Better Auth's CLI entrypoint in particular has changed between releases — verify before running it.
+
+---
+
+## Code Editing Discipline
+
+### No Script-Based Changes
+
+Never apply regex bulk transforms across files. Every edit is deliberate and reviewed. `sed -i` on a single, verified string is acceptable; `sed -i` across a glob is not.
+
+### No File Proliferation
+
+**The bar for creating a new file is incredibly high.**
+
+Forbidden: `api_v2.ts`, `schema.backup.ts`, `content-improved.tsx`, `index.old.tsx`. If a file needs replacing, replace it.
+
+Shared constants and non-component exports go in their own module — a `.tsx` file that exports both a component and a constant trips `react-refresh/only-export-components`. See `src/features/content/vocabulary.ts` and `src/lib/safe-href.ts` for the pattern.
+
+---
+
+## Backwards Compatibility
+
+**This is a BROWNFIELD project. Backwards compatibility is CRITICAL.**
+
+The patterns below are established, load-bearing, and were each paid for with a real bug. **Match them exactly.** Before writing code in an area, read 3+ existing files in the same directory. The bar for deviating is astronomically high.
+
+---
+
+## Compiler / Linter Checks (CRITICAL)
+
+```bash
+npx tsc -b                              # whole project: app, node config, server
+npx tsc -p tsconfig.server.json --noEmit  # server only, faster loop
+npm run lint
+npm run format:check
+```
+
+If you see errors, **carefully understand and resolve each one**. Never suppress with `@ts-ignore` or a blanket eslint-disable.
+
+---
+
+## Testing
+
+### Testing Policy
+
+Every change to tenancy, auth, or request validation **MUST** ship with a test. Tests cover the happy path, the edge case, and the failure.
+
+**This is a brownfield codebase — test patterns already exist.** Before writing any test, read 2+ existing tests in the same area and match their style, fixtures, and assertions exactly.
+
+### Mutation Testing Is Mandatory For Security Rules
+
+**A test that cannot fail protects nothing.** After writing or changing a test that guards tenancy, RLS, or validation, **break the rule deliberately and confirm the test fails**, then restore it.
+
+This is not ceremony. It has caught real defects in this repo:
+
+| Mutation | Result |
+|---|---|
+| Replace the staff-only `deals` policy with a naive `client_id`-only one | 3 tests fail |
+| Remove `missing_ok` from the SQL helpers | 9 tests fail |
+| Revert the content child-visibility policies | 2 tests fail |
+| Restore `taskSchema.partial()` in a PATCH schema | 1 test fails |
+| Rename a deal stage server-side | 1 test fails |
+
+The fail-closed tests once passed for the *wrong reason* — pooled connections retain a custom GUC once `set_config` has defined it, so `current_setting` stopped raising. Anonymous actors now get a fresh connection. **Verify by mutation, not by reading.**
+
+### Test Commands
+
+```bash
+npm test                                    # all component tests (browser mode)
+npm run test:isolation                      # all server tests
+npx vitest run --config vitest.server.config.ts server/__tests__/isolation.test.ts
+npm run test:coverage
+```
+
+### Test Categories
+
+| Suite | File | Focus |
+|---|---|---|
+| Tenancy isolation | `server/__tests__/isolation.test.ts` | Cross-tenant, class confusion, fail-closed |
+| API/client contract | `server/__tests__/contract.test.ts` | Deal stages match on both sides; money arithmetic |
+| Patch schemas | `server/__tests__/patch-schemas.test.ts` | PATCH bodies invent no fields |
+| URL safety | `src/lib/safe-href.test.ts` | `javascript:`/`data:` refused |
+| Components | `src/**/*.test.tsx` | Sign-in, config drawer, search palette |
+
+### The Isolation Suite Covers Three Distinct Failure Modes
+
+They fail independently. Do not collapse them:
+
+1. **Cross-tenant** — A's user reading B's rows.
+2. **Class confusion** — A's user reading A's *own* staff-only rows. A `client_id`-only policy passes (1) and fails this.
+3. **Fail-closed** — no session variables at all: zero rows, **not an error**.
+
+### Test Database
+
+`bd_portal_test` on VPS4, reached through the same tunnel. The suite truncates it freely. `TEST_DATABASE_URL` must **never** point at `bd_portal`.
+
+```bash
+DATABASE_URL_OWNER="$TEST_DATABASE_URL_OWNER" npx tsx scripts/migrate.ts  # migrate the test DB
+```
+
+### CI/CD
+
+**None.** There is no CI. You are the gate. Run all four commands under "Build & Verification" before every commit.
+
+---
+
+## Banana Digital Client Portal — This Project
+
+**This is the project you are working on.**
+
+### What It Does
+
+A London social media agency (Banana Digital) runs its client relationships here. Staff manage clients, a deals pipeline, and a content calendar. Each client gets a branded portal where they see their own links, files, notice board, to-dos, and — critically — **approve the content the agency proposes**.
+
+It replaces a single-file HTML prototype whose state lived in `window.storage`, so the agency and the client never saw the same data.
+
+### Architecture
+
+```
+  Browser (React 19 SPA)
+        |
+        |  same-origin /api  (cookie session, httpOnly)
+        v
+  +------------------+       Caddy :8100 in production
+  |  Vite dev :5173  |  -->  serves dist/, proxies /api -> :4300
+  +------------------+
+        |
+        v
+  +----------------------------------------------------+
+  |  Hono API :4300                                     |
+  |    withSession  -> resolves user + isStaff          |
+  |    withTenant   -> BEGIN; set_config(app.user_id,   |
+  |                    app.is_staff); ...; COMMIT       |
+  +----------------------------------------------------+
+        |
+        |  connects ONLY as bd_app (non-owner, no BYPASSRLS)
+        v
+  +----------------------------------------------------+
+  |  Postgres 18 — Row Level Security is the authority  |
+  |    staff-only | client-visible | + column gate      |
+  +----------------------------------------------------+
+        |
+        v
+  Local disk: /home/yota/data/bd-portal/uploads
+  Streamed back through /api/media/* (never a static path)
+```
+
+### Workspace Structure
+
+```
+server/
+  index.ts               Hono app, route mounting, /healthz, graceful shutdown
+  env.ts                 Zod-validated env; refuses to boot on bad config
+  logger.ts              pino; redacts cookies and passwords
+  auth/
+    index.ts             Better Auth config: org plugin, rate limits, cookies
+    access.ts            Roles + isStaffRole() — THE staff/client authority
+    org.ts               The single organization's id, memoized
+  db/
+    index.ts             Pool, withTenant(), withoutTenant()
+    schema.ts            All application tables
+    auth-schema.ts       Better Auth generated tables — DO NOT hand-edit
+    guard.ts             Boot assertion: refuses to start unless RLS binds
+    migrations/          Numbered SQL + meta/_journal.json
+  lib/
+    resolve-client.ts    Which workspace a request is for (staff vs client)
+    audit.ts             audit() + recordActivity(), both take the tx
+    storage.ts           StorageDriver; LocalDiskDriver; path-escape guard
+    media.ts             sharp thumbnails, ffmpeg posters, magic-number sniffing
+    seed-workspace.ts    Her 8 links / 5 file slots / 4 onboarding to-dos
+  middleware/
+    session.ts           withSession, requireAuth, requireStaff
+    rate-limit.ts        In-process fixed-window limiter
+  routes/                clients, deals, portal, content, media, seats, invitations
+  __tests__/             isolation, contract, patch-schemas, fixtures
+
+src/
+  lib/api.ts             API client + shared types + money helpers
+  lib/safe-href.ts       URL sanitiser for anything that becomes an href
+  lib/route-guards.ts    requireStaffRoute()
+  hooks/use-current-user.ts   /api/me — the single authority on isStaff
+  features/
+    portal/use-workspace.ts   Persisted workspace selection (shared, derived)
+    content/                  Ideas Bank, Calendar, Feed, Moodboard, Review Queue
+    clients/ pipeline/ dashboard/ auth/
+  routes/                TanStack file-based routes
+
+scripts/
+  migrate.ts             Applies migrations as bd_owner
+  bootstrap.ts           Creates the org + first owner (sign-up is disabled)
+  set-password.ts        Rotates a password; revokes that user's sessions
+  db-tunnel.sh           localhost:55432 -> vps4:5432, auto-reconnecting
+  deploy.sh              rsync + build + publish + restart
+  backup.sh              Nightly pg_dump + uploads snapshot
+  restore-check.sh       Restores the newest dump and asserts it has rows
+```
+
+### Core Types Quick Reference
+
+| Type | Purpose | Defined in |
+|---|---|---|
+| `clients` | A client account. `portalEnabled` opens their workspace. | `server/db/schema.ts` |
+| `client_access` | Which workspaces a client-role user may see. The root of the visibility graph. | `server/db/schema.ts` |
+| `content_items` | **Both** the Ideas Bank and the Calendar. Unscheduled = idea; dated = calendar. | `server/db/schema.ts` |
+| `content_assets` | Uploaded media for an item. First asset (by `sortOrder`) fills the feed cell. | `server/db/schema.ts` |
+| `content_approvals` | Append-only decision record. No UPDATE/DELETE policy exists. | `server/db/schema.ts` |
+| `tasks` | To-dos, with `visibleToClient` separating internal work. | `server/db/schema.ts` |
+| `TenantContext` | `{ userId, isStaff }` — what `withTenant` writes into the transaction. | `server/db/index.ts` |
+| `StorageDriver` | Put/read/remove for uploaded bytes. | `server/lib/storage.ts` |
+
+### Key Design Decisions
+
+- **Postgres RLS is the authority on visibility, not application code.** A forgotten `where` clause returns nothing instead of leaking.
+- **`FORCE ROW LEVEL SECURITY` is deliberately NOT used.** It would apply policies to `bd_owner`, breaking migrations and seeds, and its failure mode is a confusing empty result. Replaced by `server/db/guard.ts`, which refuses to boot and says why.
+- **`organization` = the agency, not each client.** Keeps "10 seats" a literal `count(*) from member`.
+- **`content_items` is one table serving three views.** The prototype's two disconnected stores meant approving an idea did nothing to the calendar.
+- **Media streams through the app.** Caddy has no `secure_link` equivalent, so a signed URL would have nothing validating it.
+- **Local disk over object storage.** 416 GB free on VPS4.
+
+### Non-Negotiable Invariants
+
+| # | Invariant | Rationale |
+|---|---|---|
+| 1 | The app connects **only** as `bd_app` | Non-owner, no BYPASSRLS — this is what makes policies bind |
+| 2 | Every tenant query runs inside `withTenant()` | `SET LOCAL` is transaction-scoped; outside one there are no session variables |
+| 3 | Every tenant table carries `client_id` **directly** | A policy that joins upward to find its tenant is slower and easier to get wrong |
+| 4 | `app_is_staff()` compares to the literal `'true'` — **never a cast** | Postgres accepts `yes`/`y`/`on`/`t`/`1` as booleans |
+| 5 | Session variables are read with `missing_ok` | `current_setting` **raises** when unset; it does not return NULL |
+| 6 | PATCH schemas are written separately and carry **no defaults** | `.partial()` does not strip `.default()` |
+| 7 | Money is integer pence until display | Float sums drift; rounding to pounds misstates a contract |
+| 8 | Child rows inherit their parent's visibility | `client_id` alone leaks a hidden item's assets and comments |
+| 9 | `visible_to_client` is **sticky** once granted | A status reset must not yank a thread from a client mid-conversation |
+| 10 | Her design tokens are verbatim | The art direction in `src/styles/theme.css` is the brand asset |
+
+### Performance Requirements
+
+Standard. One agency, tens of clients, hundreds of content rows. Filtering happens client-side over one payload on purpose. Do not add pagination or caching layers without evidence of a problem.
+
+### API Surface
+
+All under `/api`, same-origin, cookie-authenticated.
+
+| Route | Access | Notes |
+|---|---|---|
+| `/api/auth/*` | public | Better Auth. Sign-up is **disabled**. |
+| `/api/me` | authed | The single authority on `isStaff` |
+| `/api/clients`, `/api/deals` | **staff only** | 403 for clients, including their own client |
+| `/api/portal`, `/api/content`, `/api/media` | authed | `?client=<uuid>` honoured for staff, **ignored** for clients |
+| `/api/content/awaiting` | authed | Registered **before** `/:id`, or "awaiting" parses as an id |
+| `/api/seats` | staff only | Seat cap of 10, counting members + pending invitations |
+| `/api/invitations/:id` | public | Rate limited; the invitation id is the credential |
+| `/healthz` | public | Asserts DB **and** uploads, not just a socket |
+
+Status codes: `401` unauthenticated, `403` wrong role, `404` invisible-or-absent (**deliberately indistinguishable**), `409` state conflict, `413` too large, `415` wrong file type, `429` rate limited.
+
+---
+
+## Operational Tooling
+
+### The SSH Tunnel (`npm run db:tunnel`)
+
+**What it does.** Forwards VPS4's Postgres (bound to `127.0.0.1:5432` there) to `localhost:55432`. Postgres is not publicly exposed; this is how local development reaches it.
+
+**When to use.** Always. Nothing that touches the database works without it.
+
+**Workflow.**
+
+```bash
+npm run db:tunnel   # leave running in its own terminal
+npm run dev:api     # Hono on :4300
+npm run dev         # Vite on :5173
+```
+
+**Common pitfalls.**
+- The tunnel dies on any network blip. It now auto-reconnects, but if the API refuses to boot with `ECONNREFUSED 127.0.0.1:55432`, **the tunnel is down — this is not an application bug**.
+- The boot guard refusing to start is correct behaviour. Do not "fix" it by disabling the guard.
+
+### Browser Verification (`chrome-devtools-axi`)
+
+**What it does.** Drives a real Chrome for verifying UI behaviour.
+
+**When to use.** After **any** UI change. Type-checking proves nothing about what a user sees. Multiple real bugs in this repo were invisible to code reading and obvious in the browser.
+
+**Workflow.**
+
+```bash
+chrome-devtools-axi open "http://localhost:5173/portal"
+chrome-devtools-axi snapshot            # accessibility tree with uids
+chrome-devtools-axi fill @<uid> "text"
+chrome-devtools-axi click @<uid>
+chrome-devtools-axi eval "(function(){ return document.title })()"
+chrome-devtools-axi screenshot /path/to/shot.png
+chrome-devtools-axi console --type error
+```
+
+**Common pitfalls.**
+- **uids go stale.** Take one snapshot and use uids from *that* snapshot. Grepping a fresh snapshot for each uid gives mismatched ids and silent no-op clicks.
+- `eval` needs a single expression — wrap multi-statement code in an IIFE.
+- Synthetic pointer events do **not** drive dnd-kit; the harness cannot emit the intermediate moves it tracks.
+- The headed window **does not resize**, so mobile layout cannot be verified here. Say so rather than claiming it works.
+
+### Deploy (`npm run deploy`)
+
+**What it does.** rsyncs source to VPS4, installs and builds **on the host**, publishes `dist/` to `/srv/http/bd-portal`, applies migrations, restarts the service, and waits for health.
+
+**When to use.** Any change the human wants live.
+
+**Common pitfalls.**
+- **Native modules must build on the host.** `sharp` from macOS will not load on Linux. Never rsync `node_modules`.
+- `.env` is excluded on purpose. Production secrets live only on the server.
+- Caddy cannot traverse `/home/yota` (mode 0750) — that is why `dist/` is published to `/srv/http/bd-portal`. Serving from the home directory returns **403**.
+- **The URL must not change.** `http://161.97.76.197:8100` is shared with a real person.
+
+### Backups
+
+```bash
+ssh vps4 /home/yota/apps/bd-portal/scripts/backup.sh          # nightly via systemd timer
+ssh vps4 sudo /home/yota/apps/bd-portal/scripts/restore-check.sh   # monthly
+```
+
+**Pitfall that already bit:** `postgres` cannot read dumps inside `/home/yota` (0750). The restore check stages the dump in `/tmp` first. It once reported "restored but empty" because `pg_restore`'s stderr was discarded — **never swallow errors in a verification script**.
+
+### Tool Selection Matrix
+
+| Scenario | Tool | Why |
+|---|---|---|
+| Verify a UI change | `chrome-devtools-axi` | tsc cannot see a blank page or an invisible button |
+| Verify an API change | `curl` against `:4300` | Faster, and isolates server from client |
+| Verify a tenancy rule | `npm run test:isolation` + mutation | Only a failing mutation proves the test works |
+| Change the schema | `db:generate` → review SQL → `db:migrate` | `push` drops columns |
+| Change an RLS policy | Hand-written migration + journal entry | Drizzle does not generate policies |
+| Inspect production data | `psql "$DATABASE_URL_OWNER"` via the tunnel | `bd_app` cannot see across tenants without session vars |
+
+---
+
+## Session Lifecycle
+
+### Session Protocol
+
+```bash
+# 1. Bring the environment up
+npm run db:tunnel &                   # or a separate terminal
+npm run dev:api &
+npm run dev &
+
+# 2. Confirm it is actually healthy before assuming anything
+curl -s http://127.0.0.1:4300/healthz
+
+# 3. Read before writing — this is a brownfield codebase
+#    3+ existing files in the area you are about to change
+
+# 4. Work: edit, then verify in the browser or with curl
+
+# 5. Quality gates
+npx tsc -b && npm run lint && npm test && npm run test:isolation
+```
+
+### Landing the Plane
+
+Every session **MUST** end with all applicable steps:
+
+1. **Run every gate.** `npx tsc -b`, `npm run lint`, `npm test`, `npm run test:isolation`. All four green.
+2. **Mutation-test any new security test.** Break the rule, watch it fail, restore.
+3. **Commit** with a message that says why, and what was verified.
+4. **Deploy if the human asked.** `npm run deploy`, then confirm `/healthz` on the live URL.
+5. **Report honestly.** State what you verified, what you could not verify and why, and what you deliberately left undone. Never imply a check you did not run.
+
+---
+
+## Known LLM Failure Modes
+
+These are **observed** on this codebase, not hypothetical. Each one shipped a real bug.
+
+### Failure Mode 1: Trusting `.partial()` to strip defaults
+
+**The bad behavior:** Writing a PATCH schema as `createSchema.partial()`.
+
+**What happened:** `PATCH /portal/tasks/:id` with body `{"done":true}` parsed to `{done:true, visibleToClient:true}`. Ticking off "INTERNAL: chase unpaid invoice" **published it to the client**.
+
+**The correct behavior:** Write update schemas separately, with **no defaults**. `server/__tests__/patch-schemas.test.ts` enforces this. Defaults belong to creates.
+
+### Failure Mode 2: Interpolating Drizzle columns into correlated subqueries
+
+**The bad behavior:** ``sql`select count(*) from ${tasks} where ${tasks.clientId} = ${clients.id}` ``
+
+**What happened:** Drizzle renders those **unqualified**, so `"id"` bound to `tasks.id`. The comparison was always false and every dashboard count read **zero** — no error, no warning.
+
+**The correct behavior:** Write correlated subqueries with explicit aliases: `from tasks tk where tk.client_id = clients.id`.
+
+### Failure Mode 3: Casting the staff flag
+
+**The bad behavior:** `nullif(current_setting('app.is_staff', true), '')::boolean`
+
+**What happened:** Postgres accepts `yes`, `y`, `on`, `t`, `1` as booleans. `app.is_staff = 'yes'` granted **full staff escalation**.
+
+**The correct behavior:** `current_setting('app.is_staff', true) = 'true'`. Exact comparison. **NEVER reintroduce a cast here.**
+
+### Failure Mode 4: Writing staff-only tables from a client context
+
+**The bad behavior:** A client approving content, with the handler updating `content_items` and inserting into `activities` under the client's own tenant context.
+
+**What happened:** RLS rejected it and **rolled the whole transaction back** — the approval row silently never appeared.
+
+**The correct behavior:** Establish authority under the caller's own context (an item they cannot see is *not found*), then run the bookkeeping under `withTenant({ userId, isStaff: true })`. See `POST /api/content/:id/decision`. **Do not** grant clients write access to those tables.
+
+### Failure Mode 5: Query keys that do not match
+
+**The bad behavior:** A page keyed on `['portal', selected ?? 'default']` while panels wrote `['portal', clientId]`.
+
+**What happened:** Optimistic updates landed on a cache entry that did not exist. Checkboxes did not move until a refetch. Separately, approving a post left the panel reading "2 posts need your review" — indistinguishable from failure.
+
+**The correct behavior:** Address by prefix (`setQueriesData({ queryKey: ['portal'] }, …)`), and invalidate **every** key a mutation affects — including `['awaiting']` and `['clients']`.
+
+### Failure Mode 6: State that lives in one component and is guessed elsewhere
+
+**The bad behavior:** The workspace selection living in the Homepage's local state while the Ideas Bank and Calendar sent no client at all.
+
+**What happened:** Selecting "Verdant Botanicals" and clicking to the Ideas Bank showed **Acme Skincare's** content with nothing on screen to say so. You could schedule or approve against the wrong client.
+
+**The correct behavior:** Shared, persisted, **derived** state — `src/features/portal/use-workspace.ts`. Include the workspace in query keys.
+
+### Failure Mode 7: Assuming instead of reproducing
+
+**The bad behavior:** Declaring something fixed because the code looks right.
+
+**What happened:** Repeatedly, tests passed for the wrong reason. Fail-closed tests passed whether or not `missing_ok` was present, because pooled connections retain the GUC.
+
+**The correct behavior:** **Reproduce the bug first, fix it, then reproduce the fix.** For security rules, mutation-test.
+
+### Failure Mode 8: Suppressing the error that explains the failure
+
+**The bad behavior:** `pg_restore ... 2>/dev/null`.
+
+**What happened:** The restore check reported "the dump restored but is empty". The real message was `Permission denied` — `postgres` cannot read `/home/yota`. Debugging took far longer than it should have.
+
+**The correct behavior:** Never discard stderr in a verification script.
+
+### Failure Mode 9: Over-clever TypeScript
+
+**The bad behavior:** `c: Parameters<Parameters<typeof routes.get>[1]>[0]` to type a Hono context.
+
+**What happened:** Resolved to `never`; a cascade of confusing errors. Written twice, in two different files.
+
+**The correct behavior:** `import { type Context } from 'hono'`.
+
+### Failure Mode 10: Date and money shortcuts
+
+**The bad behavior:** `new Date().toISOString().slice(0,10)` for a calendar date; float arithmetic for currency.
+
+**What happened:** The ISO conversion goes through UTC, so east of Greenwich an evening click lands on the **previous day**. Float sums drifted (`4299.599999999999`), and rounding rendered £2,400.50 as "£2,401".
+
+**The correct behavior:** Build dates from local parts (`isoDate()` in `calendar.tsx`). Use `toPence`/`sumPence`/`formatPence`.
+
+### Failure Mode 11: Tailwind classes that silently do nothing
+
+**The bad behavior:** `-rotate-15` (not on Tailwind's scale); `group-hover:opacity-100` with no `group` ancestor.
+
+**What happened:** The peel mark never rotated. The calendar's add button sat at `opacity: 0` **permanently** — unreachable by mouse.
+
+**The correct behavior:** Use arbitrary values (`-rotate-[15deg]`) for off-scale numbers, and verify hover affordances **in the browser**.
+
+### Failure Mode 12: Building for the happy path only
+
+**The bad behavior:** Rendering the empty state when a query fails; skeletons with no error branch.
+
+**What happened:** "No clients yet. Add the first one." when the request had failed — a lie the user would act on. The client detail page skeleton-ed **forever** on a 404.
+
+**The correct behavior:** Branch on `isError` **before** `isEmpty`. Use `QueryError`. Give the user a way out.
+
+---
+
+## Appendix A: Environment Variables
+
+| Variable | Purpose | Notes |
+|---|---|---|
+| `DATABASE_URL` | Runtime connection | **MUST** be `bd_app`. The guard refuses to boot otherwise. |
+| `DATABASE_URL_OWNER` | Migrations only | `bd_owner`. The app never connects with this. |
+| `TEST_DATABASE_URL` / `_OWNER` | Isolation suite | `bd_portal_test`. **Never** point at `bd_portal`. |
+| `PORT` | API port | 4300 |
+| `NODE_ENV` | `development` \| `production` \| `test` | Production serves `dist/` from Node if Caddy is absent |
+| `LOG_LEVEL` | pino level | `info` in production |
+| `COOKIE_SECURE` | `Secure` flag on session cookies | **`false` today — the site is HTTP.** Flip to `true` the moment it is HTTPS, or every login silently fails. |
+| `MAX_SEATS` | Seat cap | 10 |
+| `UPLOAD_DIR` | Where bytes land | `./.uploads` locally, `/home/yota/data/bd-portal/uploads` on VPS4 |
+| `APP_URL` | Public origin | Better Auth derives callbacks and trusted origins from it |
+| `BETTER_AUTH_SECRET` | Session signing key | **Required in production.** Rotating it logs everyone out. |
+
+## Appendix B: Quick Reference
+
+| I want to… | Command |
+|---|---|
+| Start everything | `npm run db:tunnel` + `npm run dev:api` + `npm run dev` |
+| Add a table or column | `npm run db:generate` → read the SQL → `npm run db:migrate` |
+| Add an RLS policy | Write `server/db/migrations/00NN_*.sql`, add it to `meta/_journal.json`, `npm run db:migrate` |
+| Migrate the test DB | `DATABASE_URL_OWNER="$TEST_DATABASE_URL_OWNER" npx tsx scripts/migrate.ts` |
+| Create the first account | `npm run bootstrap -- --email … --password …` |
+| Rotate a password | `npm run set-password -- --email … --password …` |
+| Check tenancy still holds | `npm run test:isolation` |
+| Deploy | `npm run deploy` |
+| Read production logs | `ssh vps4 journalctl --user -u bd-portal -n 50` |
+| Restart production | `ssh vps4 systemctl --user restart bd-portal.service` |
+| Check production health | `curl http://161.97.76.197:8100/healthz` |
+
+## Appendix C: Current Known Limitations
+
+State these plainly when relevant. Do not paper over them.
+
+- **The site is HTTP.** Passwords cross the wire in plaintext. `COOKIE_SECURE=false` follows from this.
+- **No self-service password change.** Rotation requires `scripts/set-password.ts` on the server.
+- **No email.** Invitations are copyable links; nothing notifies a client that content awaits them except the in-app review queue.
+- **Backups sit on the same disk as the data.** They survive a mistake, not a disk failure.
+- **Mobile layout is unverified.** The browser harness cannot resize.
+- **Files in the File Folder are links, not uploads** — the upload pipeline supports `target=file`, but the UI does not use it yet.
+
+</INSTRUCTIONS>
