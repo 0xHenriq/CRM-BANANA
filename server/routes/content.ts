@@ -1,10 +1,8 @@
 import { asc, desc, eq } from 'drizzle-orm'
-import { Hono, type Context } from 'hono'
+import { Hono } from 'hono'
 import { z } from 'zod'
 import { withTenant } from '../db/index.js'
 import {
-  clientAccess,
-  clients,
   contentApprovals,
   contentComments,
   contentItems,
@@ -12,6 +10,7 @@ import {
 import { user } from '../db/auth-schema.js'
 import { audit, recordActivity } from '../lib/audit.js'
 import { requireAuth, requireStaff } from '../middleware/session.js'
+import { resolveClientId } from '../lib/resolve-client.js'
 
 export const contentRoutes = new Hono()
 
@@ -40,34 +39,6 @@ export const CONTENT_STATUSES = [
   'published',
 ] as const
 
-/** Same resolution rule as the portal: staff choose, clients are told. */
-async function resolveClientId(c: Context): Promise<string | null> {
-  const currentUser = c.get('user')
-  if (!currentUser) return null
-
-  if (currentUser.isStaff) {
-    const requested = c.req.query('client')
-    if (requested) return requested
-    const [first] = await withTenant(c.get('tenant'), (tx) =>
-      tx
-        .select({ id: clients.id })
-        .from(clients)
-        .where(eq(clients.portalEnabled, true))
-        .orderBy(asc(clients.name))
-        .limit(1)
-    )
-    return first?.id ?? null
-  }
-
-  const [grant] = await withTenant(c.get('tenant'), (tx) =>
-    tx
-      .select({ clientId: clientAccess.clientId })
-      .from(clientAccess)
-      .where(eq(clientAccess.userId, currentUser.id))
-      .limit(1)
-  )
-  return grant?.clientId ?? null
-}
 
 /**
  * One list feeds three views.

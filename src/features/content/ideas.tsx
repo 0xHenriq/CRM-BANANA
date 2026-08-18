@@ -10,7 +10,8 @@ import {
   type ContentStatus,
   type ContentType,
 } from '@/lib/api'
-import { useCurrentUser } from '@/hooks/use-current-user'
+import { useWorkspace, withClient } from '@/features/portal/use-workspace'
+import { WorkspaceSwitcher } from '@/features/portal/workspace-switcher'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -54,8 +55,7 @@ import { STATUS_LABEL, TYPE_LABEL } from './vocabulary'
 type SortKey = 'title' | 'type' | 'scheduledAt' | 'status'
 
 export function IdeasBank() {
-  const { data: currentUser } = useCurrentUser()
-  const isStaff = currentUser?.isStaff ?? false
+  const { isStaff, clientId, setClientId, workspaces, isReady } = useWorkspace()
 
   const [openId, setOpenId] = useState<string | null>(null)
   const [typeFilter, setTypeFilter] = useState<ContentType | 'all'>('all')
@@ -66,8 +66,14 @@ export function IdeasBank() {
   })
 
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['content'],
-    queryFn: () => api.get<{ clientId: string; items: ContentItem[] }>('/content'),
+    // The workspace is part of the key: without it, switching clients showed
+    // the previous client's cached rows.
+    queryKey: ['content', clientId ?? 'default'],
+    queryFn: () =>
+      api.get<{ clientId: string; items: ContentItem[] }>(
+        withClient('/content', clientId)
+      ),
+    enabled: isReady,
   })
 
   const rows = useMemo(() => {
@@ -88,6 +94,16 @@ export function IdeasBank() {
         if (!b.scheduledAt) return -1
         return a.scheduledAt.localeCompare(b.scheduledAt) * dir
       }
+      if (sort.key === 'status') {
+        // Alphabetical status ordering is meaningless for a workflow —
+        // "approved, idea, in_progress, published, ready_for_review,
+        // scheduled" tells her nothing. Sort by pipeline position instead.
+        return (
+          (CONTENT_STATUSES.indexOf(a.status) -
+            CONTENT_STATUSES.indexOf(b.status)) *
+          dir
+        )
+      }
       return String(a[sort.key]).localeCompare(String(b[sort.key])) * dir
     })
   }, [data, typeFilter, statusFilter, sort])
@@ -100,6 +116,13 @@ export function IdeasBank() {
     <>
       <Header>
         <div className='ms-auto flex items-center gap-2'>
+          {isStaff && (
+            <WorkspaceSwitcher
+              clientId={clientId}
+              workspaces={workspaces}
+              onChange={setClientId}
+            />
+          )}
           <ThemeSwitch />
           <ConfigDrawer />
           <ProfileDropdown />
@@ -111,7 +134,7 @@ export function IdeasBank() {
           eyebrow='Concept backlog'
           title='Ideas Bank'
           stamp={{ top: 'IDEA', big: '★', bottom: 'BANK' }}
-          actions={isStaff ? <NewIdeaDialog /> : undefined}
+          actions={isStaff ? <NewIdeaDialog clientId={clientId} /> : undefined}
         />
 
         <div className='mb-4 flex flex-wrap gap-2'>
@@ -303,7 +326,7 @@ function IdeaRow({
   )
 }
 
-function NewIdeaDialog() {
+function NewIdeaDialog({ clientId }: { clientId: string | null }) {
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState({
@@ -314,7 +337,7 @@ function NewIdeaDialog() {
 
   const create = useMutation({
     mutationFn: () =>
-      api.post('/content', {
+      api.post(withClient('/content', clientId), {
         title: form.title.trim(),
         type: form.type,
         scheduledAt: form.scheduledAt || null,

@@ -1,60 +1,16 @@
 import { asc, desc, eq } from 'drizzle-orm'
-import { Hono, type Context } from 'hono'
+import { Hono } from 'hono'
 import { z } from 'zod'
 import { withTenant } from '../db/index.js'
-import {
-  clientAccess,
-  clients,
-  files,
-  links,
-  noticePosts,
-  tasks,
-} from '../db/schema.js'
+import { clients, files, links, noticePosts, tasks } from '../db/schema.js'
 import { user } from '../db/auth-schema.js'
 import { audit } from '../lib/audit.js'
 import { requireAuth, requireStaff } from '../middleware/session.js'
+import { resolveClientId } from '../lib/resolve-client.js'
 
 export const portalRoutes = new Hono()
 
 portalRoutes.use('*', requireAuth)
-
-/**
- * Resolves which client workspace a request is for.
- *
- * Staff pass `?client=<id>`; a client-role user has no say — they get the
- * workspace they were granted, and their own id is the only input. The value
- * is never taken from the body, so there is nothing to tamper with, and RLS
- * would refuse the rows anyway if it were.
- */
-async function resolveClientId(c: Context): Promise<string | null> {
-  const currentUser = c.get('user')
-  if (!currentUser) return null
-
-  if (currentUser.isStaff) {
-    const requested = c.req.query('client')
-    if (requested) return requested
-    // No client chosen: fall back to the first active workspace so the nav
-    // links are never dead for staff browsing the portal views.
-    const [first] = await withTenant(c.get('tenant'), (tx) =>
-      tx
-        .select({ id: clients.id })
-        .from(clients)
-        .where(eq(clients.portalEnabled, true))
-        .orderBy(asc(clients.name))
-        .limit(1)
-    )
-    return first?.id ?? null
-  }
-
-  const [grant] = await withTenant(c.get('tenant'), (tx) =>
-    tx
-      .select({ clientId: clientAccess.clientId })
-      .from(clientAccess)
-      .where(eq(clientAccess.userId, currentUser.id))
-      .limit(1)
-  )
-  return grant?.clientId ?? null
-}
 
 /** Everything the portal homepage renders, in one round trip. */
 portalRoutes.get('/', async (c) => {

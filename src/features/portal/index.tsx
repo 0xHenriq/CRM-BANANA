@@ -1,15 +1,8 @@
-import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type PortalWorkspace } from '@/lib/api'
-import { useCurrentUser } from '@/hooks/use-current-user'
+import { useWorkspace, withClient } from './use-workspace'
+import { WorkspaceSwitcher } from './workspace-switcher'
 import { Card, CardContent } from '@/components/ui/card'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ConfigDrawer } from '@/components/config-drawer'
 import { Header } from '@/components/layout/header'
@@ -30,49 +23,23 @@ import { FileFolder, NoticeBoard, TaskList } from './panels'
  * separate components would have drifted into two different products.
  */
 export function PortalHome() {
-  const { data: currentUser } = useCurrentUser()
-  const isStaff = currentUser?.isStaff ?? false
-  const [selected, setSelected] = useState<string | null>(null)
-
-  // Staff can browse any open workspace; a client has exactly one and the
-  // server decides which, so this query is skipped for them entirely.
-  const workspaces = useQuery({
-    queryKey: ['portal-workspaces'],
-    queryFn: () =>
-      api.get<{ workspaces: { id: string; name: string }[] }>(
-        '/portal/workspaces'
-      ),
-    enabled: isStaff,
-  })
+  const { isStaff, clientId, setClientId, workspaces, isReady } = useWorkspace()
 
   const query = useQuery({
-    queryKey: ['portal', selected ?? 'default'],
-    queryFn: () =>
-      api.get<PortalWorkspace>(
-        selected ? `/portal?client=${selected}` : '/portal'
-      ),
-    enabled: currentUser !== undefined,
+    queryKey: ['portal', clientId ?? 'default'],
+    queryFn: () => api.get<PortalWorkspace>(withClient('/portal', clientId)),
+    enabled: isReady,
   })
 
   const chrome = (
     <Header>
       <div className='ms-auto flex items-center gap-2'>
-        {isStaff && (workspaces.data?.workspaces.length ?? 0) > 0 && (
-          <Select
-            value={selected ?? query.data?.client.id ?? ''}
-            onValueChange={setSelected}
-          >
-            <SelectTrigger className='h-8 w-48' aria-label='Client workspace'>
-              <SelectValue placeholder='Choose a workspace' />
-            </SelectTrigger>
-            <SelectContent>
-              {workspaces.data?.workspaces.map((w) => (
-                <SelectItem key={w.id} value={w.id}>
-                  {w.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        {isStaff && (
+          <WorkspaceSwitcher
+            clientId={clientId}
+            workspaces={workspaces}
+            onChange={setClientId}
+          />
         )}
         <ThemeSwitch />
         <ConfigDrawer />
@@ -117,7 +84,9 @@ export function PortalHome() {
   }
 
   const { client, links, files, tasks, notices } = query.data
-  const clientId = client.id
+  // The workspace the server actually resolved — for a client this is their
+  // own, and for staff it matches the switcher.
+  const workspaceId = client.id
 
   return (
     <>
@@ -144,16 +113,16 @@ export function PortalHome() {
 
         <div className='grid items-start gap-5 lg:grid-cols-2'>
           <div className='space-y-5'>
-            <LinkStack links={links} canEdit={isStaff} clientId={clientId} />
+            <LinkStack links={links} canEdit={isStaff} clientId={workspaceId} />
             <NoticeBoard
               notices={notices}
-              clientId={clientId}
+              clientId={workspaceId}
               canModerate={isStaff}
             />
           </div>
           <div className='space-y-5'>
-            <FileFolder files={files} canEdit={isStaff} clientId={clientId} />
-            <TaskList tasks={tasks} canEdit={isStaff} clientId={clientId} />
+            <FileFolder files={files} canEdit={isStaff} clientId={workspaceId} />
+            <TaskList tasks={tasks} canEdit={isStaff} clientId={workspaceId} />
           </div>
         </div>
       </Main>

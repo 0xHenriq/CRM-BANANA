@@ -8,7 +8,8 @@ import {
   type ContentItem,
   type ContentType,
 } from '@/lib/api'
-import { useCurrentUser } from '@/hooks/use-current-user'
+import { useWorkspace, withClient } from '@/features/portal/use-workspace'
+import { WorkspaceSwitcher } from '@/features/portal/workspace-switcher'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -60,8 +61,7 @@ function isoDate(year: number, month: number, day: number): string {
 }
 
 export function ContentCalendar() {
-  const { data: currentUser } = useCurrentUser()
-  const isStaff = currentUser?.isStaff ?? false
+  const { isStaff, clientId, setClientId, workspaces, isReady } = useWorkspace()
   const today = new Date()
 
   const [cursor, setCursor] = useState({
@@ -72,8 +72,12 @@ export function ContentCalendar() {
   const [addingOn, setAddingOn] = useState<string | null>(null)
 
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['content'],
-    queryFn: () => api.get<{ clientId: string; items: ContentItem[] }>('/content'),
+    queryKey: ['content', clientId ?? 'default'],
+    queryFn: () =>
+      api.get<{ clientId: string; items: ContentItem[] }>(
+        withClient('/content', clientId)
+      ),
+    enabled: isReady,
   })
 
   /** Scheduled rows only — an undated row is an idea, and lives in the bank. */
@@ -110,6 +114,13 @@ export function ContentCalendar() {
     <>
       <Header>
         <div className='ms-auto flex items-center gap-2'>
+          {isStaff && (
+            <WorkspaceSwitcher
+              clientId={clientId}
+              workspaces={workspaces}
+              onChange={setClientId}
+            />
+          )}
           <ThemeSwitch />
           <ConfigDrawer />
           <ProfileDropdown />
@@ -254,6 +265,7 @@ export function ContentCalendar() {
         date={addingOn}
         onClose={() => setAddingOn(null)}
         existing={data?.items ?? []}
+        clientId={clientId}
       />
     </>
   )
@@ -273,10 +285,12 @@ function SchedulePostDialog({
   date,
   onClose,
   existing,
+  clientId,
 }: {
   date: string | null
   onClose: () => void
   existing: ContentItem[]
+  clientId: string | null
 }) {
   const queryClient = useQueryClient()
   const [mode, setMode] = useState<'new' | 'existing'>('new')
@@ -295,7 +309,11 @@ function SchedulePostDialog({
 
   const create = useMutation({
     mutationFn: () =>
-      api.post('/content', { title: title.trim(), type, scheduledAt: date }),
+      api.post(withClient('/content', clientId), {
+        title: title.trim(),
+        type,
+        scheduledAt: date,
+      }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['content'] })
       reset()
