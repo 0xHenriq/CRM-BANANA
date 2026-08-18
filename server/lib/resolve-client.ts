@@ -7,6 +7,17 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
+ * Whether a value can be compared against a uuid column at all.
+ *
+ * Postgres raises on malformed input rather than returning no rows, and that
+ * surfaces as a 500 for what is really "no such thing". Callers that take an
+ * id straight from a URL check it here first.
+ */
+export function isUuid(value: string): boolean {
+  return UUID_RE.test(value)
+}
+
+/**
  * Resolves which client workspace a request is for.
  *
  * Staff pass `?client=<id>`; a client-role user has no say — they get the
@@ -30,7 +41,7 @@ export async function resolveClientId(c: Context): Promise<string | null> {
       // not a uuid made Postgres raise and the request 500 — verified with
       // ?client=not-a-uuid. Parameterisation meant it was never injectable,
       // but "malformed input" is a 400-shaped problem, not a server fault.
-      if (!UUID_RE.test(requested)) return null
+      if (!isUuid(requested)) return null
 
       // A well-formed id for a client that does not exist previously came
       // back 200 with an empty list, which presents a workspace that is not

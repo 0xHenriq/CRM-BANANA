@@ -290,9 +290,19 @@ function IdeaRow({
   const queryClient = useQueryClient()
   const remove = useMutation({
     mutationFn: () => api.del(`/content/${item.id}`),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['content'] }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['content'] })
+      // Deleting an item that was awaiting a decision changes both of these
+      // too. Without them the review queue kept offering a post that no
+      // longer exists — opening it answered 404 — and the client list went on
+      // counting it. Same rule as every other content mutation: invalidate
+      // every key the change touches, not just the one on screen.
+      await queryClient.invalidateQueries({ queryKey: ['awaiting'] })
+      await queryClient.invalidateQueries({ queryKey: ['clients'] })
+    },
     onError: (err: Error) => toast.error(err.message),
   })
+
 
   return (
     <TableRow className='group cursor-pointer' onClick={onOpen}>

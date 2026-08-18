@@ -26,6 +26,25 @@ export const VIDEO_MIME: Record<string, string> = {
 }
 
 /**
+ * HEIC/HEIF major brands — an iPhone's default photo format.
+ *
+ * Not accepted: sharp's prebuilt binaries decode AVIF but not HEIC, so these
+ * would store as an unreadable original with no thumbnail. They are listed
+ * only so `sniffMime` can refuse them rather than mistaking the container for
+ * an MP4.
+ */
+const HEIF_IMAGE_BRANDS = new Set([
+  'heic',
+  'heix',
+  'heim',
+  'heis',
+  'hevc',
+  'hevx',
+  'hevm',
+  'hevs',
+])
+
+/**
  * 200 MB.
  *
  * A phone-shot Reel is comfortably under this; a raw export is not, and she
@@ -218,8 +237,15 @@ export function sniffMime(buf: Buffer): string | null {
     if (ascii12.startsWith('qt')) return 'video/quicktime'
     if (ascii12.startsWith('avif') || ascii12.startsWith('mif1'))
       return 'image/avif'
+    // HEIC shares the ISO base media container with MP4, so the catch-all
+    // below classified an iPhone photo as video/mp4: it was stored as a
+    // video, ffprobe found no stream, no poster frame came out, and the feed
+    // rendered a tile nothing can play. Naming the brands turns that into the
+    // 415 that tells her which formats to send instead.
+    if (HEIF_IMAGE_BRANDS.has(ascii12.slice(0, 4))) return null
     return 'video/mp4'
   }
+
   if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3)
     return 'video/webm'
   return null

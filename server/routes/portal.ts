@@ -329,8 +329,30 @@ portalRoutes.post('/notices', async (c) => {
   const parsed = noticeSchema.safeParse(await c.req.json().catch(() => null))
   if (!parsed.success) return c.json({ error: 'Invalid request' }, 400)
 
-  const created = await withTenant(c.get('tenant'), (tx) =>
-    tx
+  const created = await withTenant(c.get('tenant'), async (tx) => {
+    /**
+     * A reply has to belong to the thread it claims to be under.
+     *
+     * `parent_id` came straight from the body with only a uuid check, and the
+     * foreign key only asks that the post exists — not that it is in this
+     * workspace. So a reply could be hung off another client's notice: the
+     * row itself is confined to the author's own workspace by RLS, so nothing
+     * leaks, but the board renders replies by parent, and a reply whose
+     * parent is invisible is a message that has silently gone nowhere.
+     *
+     * Looked up under the caller's own context, so a parent they may not see
+     * is indistinguishable from one that does not exist.
+     */
+    if (parsed.data.parentId) {
+      const [parent] = await tx
+        .select({ clientId: noticePosts.clientId })
+        .from(noticePosts)
+        .where(eq(noticePosts.id, parsed.data.parentId))
+        .limit(1)
+      if (!parent || parent.clientId !== clientId) return null
+    }
+
+    const [row] = await tx
       .insert(noticePosts)
       .values({
         clientId,
@@ -339,9 +361,13 @@ portalRoutes.post('/notices', async (c) => {
         parentId: parsed.data.parentId ?? null,
       })
       .returning()
-  )
+    return row
+  })
 
-  return c.json({ notice: created[0] }, 201)
+  if (!created) {
+    return c.json({ error: 'That post is no longer on the board.' }, 404)
+  }
+  return c.json({ notice: created }, 201)
 })
 
 /**

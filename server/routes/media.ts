@@ -15,13 +15,23 @@ import {
   processUpload,
   sniffMime,
 } from '../lib/media.js'
-import { resolveClientId } from '../lib/resolve-client.js'
+import { isUuid, resolveClientId } from '../lib/resolve-client.js'
+
 import { storage } from '../lib/storage.js'
 import { requireAuth, requireStaff } from '../middleware/session.js'
 
 export const mediaRoutes = new Hono()
 
 mediaRoutes.use('*', requireAuth)
+
+/**
+ * Headroom for the multipart envelope — boundaries, headers, the other form
+ * fields — when comparing `Content-Length` against a per-file limit. Without
+ * it a file exactly on the limit is refused for the few hundred bytes of
+ * wrapper around it.
+ */
+const MULTIPART_SLACK_BYTES = 1024 * 1024
+
 
 /* ------------------------------------------------------------------ upload */
 
@@ -33,8 +43,27 @@ mediaRoutes.use('*', requireAuth)
  * because the validation is the part that must not diverge.
  */
 mediaRoutes.post('/upload', requireStaff, async (c) => {
-  const clientId = await resolveClientId(c)
-  if (!clientId) return c.json({ error: 'No workspace selected' }, 400)
+  /**
+   * Refuse an oversized upload
+ from its declared length, before the body is
+   * touched.
+   *
+   * `parseBody()` reads the entire request into memory, so the `file.size`
+   * check further down — which is where this used to happen, under a comment
+   * claiming it ran first — only fires once the bytes are already buffered. A
+   * declared length is a claim rather than a fact, so both checks stay: this
+   * one keeps an honest client's 4 GB export out of the heap, and the one
+   * below is what actually enforces the limit.
+   */
+  const declared = Number(c.req.header('content-length') ?? 0)
+  if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES + MULTIPART_SLACK_BYTES) {
+    return c.json(
+      {
+        error: `That upload is ${(declared / 1024 / 1024).toFixed(0)} MB. The limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`,
+      },
+      413
+    )
+  }
 
   const form = await c.req.parseBody().catch(() => null)
   if (!form) return c.json({ error: 'Expected a multipart upload' }, 400)
@@ -44,12 +73,11 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
     return c.json({ error: 'No file was attached' }, 400)
   }
 
-  // Checked before reading the body into memory, so an oversized upload is
-  // rejected rather than buffered.
   if (file.size > MAX_UPLOAD_BYTES) {
     return c.json(
       {
-        error: `That file is ${(file.size / 1024 / 1024).toFixed(0)} MB. The limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`,
+        error: `That file is
+ ${(file.size / 1024 / 1024).toFixed(0)} MB. The limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`,
       },
       413
     )
@@ -82,12 +110,64 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
   const caption = form['caption'] ? String(form['caption']) : null
   const name = file.name || 'Untitled'
 
+  /**
+   * Which workspace these bytes belong to.
+   *
+   * For a content upload the item decides, NOT `?client=`. The two disagree
+   * routinely: the review queue spans every workspace, so she opens an item
+   * belonging to one client while another is selected — and the detail dialog
+   * sends no `?client=` at all, which used to fall back to the alphabetically
+   * first workspace. The asset row then carried the wrong `client_id`, and
+   * since a client may only read child rows whose `client_id` is in their
+   * grants, the client who owned the post could not see the image attached to
+   * it. Staff saw it, she had no way to tell, and the client saw a post with
+   * nothing on it.
+   *
+   * Reading it from the item also keeps the invariant the schema and the RLS
+   * policies assume: a child row's `client_id` always equals its parent's.
+   */
+  let clientId: string | null
+  if (target === 'content') {
+    if (!contentItemId) {
+      return c.json({ error: 'contentItemId is required' }, 400)
+    }
+    if (!isUuid(contentItemId)) {
+      return c.json({ error: 'That content item does not exist' }, 404)
+    }
+    const [item] = await withTenant(c.get('tenant'), (tx) =>
+      tx
+        .select({ clientId: contentItems.clientId })
+        .from(contentItems)
+        .where(eq(contentItems.id, contentItemId))
+        .limit(1)
+    )
+    if (!item) return c.json({ error: 'That content item does not exist' }, 404)
+    clientId = item.clientId
+  } else {
+    clientId = await resolveClientId(c)
+  }
+  if (!clientId) return c.json({ error: 'No workspace selected' }, 400)
+
   const processed = await processUpload(buf, sniffed, clientId)
   const actorId = c.get('user')?.id ?? null
 
+
   try {
     const result = await withTenant(c.get('tenant'), async (tx) => {
+      // In the same transaction as the row it describes, per lib/audit.ts:
+      // this used to run in a second transaction afterwards, so a failure
+      // here landed in the catch below, deleted bytes that a committed row
+      // still pointed at, and reported a 400 for an upload that had actually
+      // succeeded.
+      await audit(tx, {
+        actorId,
+        action: 'media.upload',
+        entity: target,
+        meta: { clientId, mime: processed.mime, bytes: processed.sizeBytes },
+      })
+
       if (target === 'content') {
+
         if (!contentItemId) throw new Error('contentItemId is required')
         const [item] = await tx
           .select({ id: contentItems.id })
@@ -161,16 +241,8 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
       return { moodboardItem: row }
     })
 
-    await withTenant(c.get('tenant'), (tx) =>
-      audit(tx, {
-        actorId,
-        action: 'media.upload',
-        entity: target,
-        meta: { clientId, mime: processed.mime, bytes: processed.sizeBytes },
-      })
-    )
-
     return c.json(result, 201)
+
   } catch (err) {
     // The bytes are already on disk; if attaching them failed there is nothing
     // pointing at them, so clean up rather than leaving an orphan.
@@ -197,30 +269,72 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
  * The key is never taken from the request — it is read from a row the caller
  * is allowed to see. An id they may not see simply is not found.
  */
+/**
+ * A single byte range, resolved against the size of the thing being served.
+ *
+ * Exported for `server/__tests__/media.test.ts` — the arithmetic is the part
+ * that goes wrong, and it is worth testing without a socket.
+ *
+ * Returns `null` when the caller did not ask for a range, or asked in a way
+ * this handler does not implement (multi-range) — both of which mean "send
+ * the whole representation", which is always a valid answer.
+ */
+export function parseRange(
+  header: string | undefined,
+  total: number
+): { start: number; end: number } | 'unsatisfiable' | null {
+  if (!header) return null
+
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim())
+  if (!match) return null
+  const [, rawStart, rawEnd] = match
+  if (!rawStart && !rawEnd) return null
+
+  // `bytes=-500` means the LAST 500 bytes, not the first 501. Reading it as a
+  // start of zero served the wrong part of the file with a Content-Range that
+  // disagreed with the bytes in the body.
+  if (!rawStart) {
+    const wanted = Number(rawEnd)
+    if (wanted === 0 || total === 0) return 'unsatisfiable'
+    return { start: Math.max(0, total - wanted), end: total - 1 }
+  }
+
+  const start = Number(rawStart)
+  if (start >= total) return 'unsatisfiable'
+
+  // An end past the last byte is clamped rather than refused. A range that
+  // starts inside the representation is satisfiable (RFC 9110 §14.1.1), and
+  // players routinely ask for a fixed-size window — `bytes=0-1048575` against
+  // a 300 KB poster — which the old `end >= total` test answered with a 416
+  // the player treats as a broken file.
+  const end = rawEnd ? Math.min(Number(rawEnd), total - 1) : total - 1
+  if (end < start) return 'unsatisfiable'
+  return { start, end }
+}
+
 async function streamKey(c: Context, key: string, mime: string | null) {
   const total = await storage.size(key)
-  const range = c.req.header('range')
 
   // Range support is what makes video seekable; without it Safari refuses to
   // play at all.
-  if (range) {
-    const match = /bytes=(\d*)-(\d*)/.exec(range)
-    if (match) {
-      const start = match[1] ? Number(match[1]) : 0
-      const end = match[2] ? Number(match[2]) : total - 1
-      if (start >= total || end >= total || start > end) {
-        return c.body(null, 416, { 'Content-Range': `bytes */${total}` })
-      }
-      const stream = storage.read(key, { start, end })
-      return c.body(stream as unknown as ReadableStream, 206, {
-        'Content-Type': mime ?? 'application/octet-stream',
-        'Content-Length': String(end - start + 1),
-        'Content-Range': `bytes ${start}-${end}/${total}`,
-        'Accept-Ranges': 'bytes',
-        'Cache-Control': 'private, max-age=3600',
-      })
-    }
+  const range = parseRange(c.req.header('range'), total)
+
+  if (range === 'unsatisfiable') {
+    return c.body(null, 416, { 'Content-Range': `bytes */${total}` })
   }
+
+  if (range) {
+    const { start, end } = range
+    const stream = storage.read(key, { start, end })
+    return c.body(stream as unknown as ReadableStream, 206, {
+      'Content-Type': mime ?? 'application/octet-stream',
+      'Content-Length': String(end - start + 1),
+      'Content-Range': `bytes ${start}-${end}/${total}`,
+      'Accept-Ranges': 'bytes',
+      'Cache-Control': 'private, max-age=3600',
+    })
+  }
+
 
   return c.body(storage.read(key) as unknown as ReadableStream, 200, {
     'Content-Type': mime ?? 'application/octet-stream',

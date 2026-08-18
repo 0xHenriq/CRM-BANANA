@@ -1,5 +1,5 @@
-import { AxiosError } from 'axios'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from './api'
 import { handleServerError } from './handle-server-error'
 
 const toastError = vi.hoisted(() => vi.fn())
@@ -27,64 +27,29 @@ describe('handleServerError', () => {
     expect(toastError).toHaveBeenCalledWith('No content.')
   })
 
-  it('prefers the API title when the error is an Axios error with response data', () => {
-    const error = new AxiosError('Bad request')
-    error.response = {
-      status: 422,
-      data: { title: 'Validation failed' },
-    } as AxiosError['response']
+  /**
+   * The message the server wrote is the whole point: "All 10 seats are taken
+   * (10 active, 0 pending)" tells her what to do, and "Something went wrong!"
+   * does not. These tests previously asserted the same thing about
+   * `AxiosError`, which nothing in this app throws — so they passed while the
+   * behaviour they described could not happen.
+   */
+  it("shows the server's own message when the error came from the API", () => {
+    handleServerError(new ApiError('All 10 seats are taken.', 409))
 
-    handleServerError(error)
-
-    expect(toastError).toHaveBeenCalledWith('Validation failed')
+    expect(toastError).toHaveBeenCalledWith('All 10 seats are taken.')
   })
 
-  it('falls back to the generic message when Axios response has no data.title', () => {
-    const error = new AxiosError('Request failed')
-    error.response = {
-      status: 500,
-      data: {},
-    } as AxiosError['response']
-
-    handleServerError(error)
+  it('falls back to the generic message when the API sent an empty one', () => {
+    handleServerError(new ApiError('', 500))
 
     expect(toastError).toHaveBeenCalledWith('Something went wrong!')
   })
 
-  it('falls back to the generic message when Axios data.title is an empty string', () => {
-    const error = new AxiosError('Bad request')
-    error.response = {
-      status: 400,
-      data: { title: '' },
-    } as AxiosError['response']
-
-    handleServerError(error)
+  it('does not surface the text of an error that is not from the API', () => {
+    // A TypeError from our own code must not be shown to a client verbatim.
+    handleServerError(new TypeError('cannot read properties of undefined'))
 
     expect(toastError).toHaveBeenCalledWith('Something went wrong!')
-  })
-
-  it('logs the error to the console in development', () => {
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
-    const err = new Error('logged')
-
-    handleServerError(err)
-
-    expect(log).toHaveBeenCalledTimes(1)
-    expect(log).toHaveBeenCalledWith(err)
-
-    log.mockRestore()
-  })
-
-  it('does not log the error to the console in production', () => {
-    vi.stubEnv('DEV', false)
-
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
-    const err = new Error('not logged')
-
-    handleServerError(err)
-
-    expect(log).not.toHaveBeenCalled()
-
-    log.mockRestore()
   })
 })

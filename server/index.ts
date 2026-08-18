@@ -104,11 +104,48 @@ app.notFound((c) =>
     : c.text('Not found', 404)
 )
 
+/**
+ * Whether this is Postgres refusing a malformed uuid (SQLSTATE 22P02).
+ *
+ * Every id in a URL reaches a uuid column eventually, and Postgres raises on
+ * text it cannot parse rather than returning no rows — so `/api/clients/foo`
+ * answered 500, logged a stack trace, and told the caller the server was
+ * broken when the truth is there is no such client. Drizzle wraps the driver
+ * error, so the chain is walked rather than the top checked.
+ *
+ * Narrow on purpose: 22P02 also covers a bad enum or integer, but those are
+ * validated by zod before they reach the database, so a uuid message here is
+ * a mistyped id and nothing else.
+ */
+function isMalformedUuidError(err: unknown): boolean {
+  let cursor: unknown = err
+  for (let depth = 0; cursor && depth < 5; depth++) {
+    const candidate = cursor as { code?: unknown; message?: unknown }
+    if (
+      candidate.code === '22P02' &&
+      typeof candidate.message === 'string' &&
+      /invalid input syntax for type uuid/i.test(candidate.message)
+    ) {
+      return true
+    }
+    cursor = (cursor as { cause?: unknown }).cause
+  }
+  return false
+}
+
 app.onError((err, c) => {
+  if (isMalformedUuidError(err)) {
+    // Same answer as an id that exists but is not visible: absent and
+    // invisible are deliberately indistinguishable here.
+    logger.warn({ path: c.req.path }, 'malformed id in request')
+    return c.json({ error: 'Not found' }, 404)
+  }
+
   logger.error({ err, path: c.req.path }, 'unhandled error')
   // Never leak internals to the client; the request id is the join key.
   return c.json({ error: 'Internal server error' }, 500)
 })
+
 
 /**
  * In production this process also serves the built SPA, so a single systemd
