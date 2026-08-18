@@ -1,9 +1,27 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, type RenderResult } from 'vitest-browser-react'
 import { userEvent } from 'vitest/browser'
 import { SearchProvider } from '@/context/search-provider'
+import type { CurrentUser } from '@/hooks/use-current-user'
 
 const COMMAND_MENU_PLACEHOLDER = 'Type a command or search...'
+
+const STAFF: CurrentUser = {
+  id: 'staff-1',
+  email: 'sophie@bananadigital.london',
+  name: 'Sophie',
+  role: 'owner',
+  isStaff: true,
+}
+
+const CLIENT: CurrentUser = {
+  id: 'client-1',
+  email: 'someone@acme.test',
+  name: 'Acme Skincare',
+  role: 'client',
+  isStaff: false,
+}
 
 const mocks = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -24,8 +42,22 @@ vi.mock('@/context/theme-provider', () => ({
 
 type ShortcutModifier = 'Control' | 'Meta'
 
-async function renderWithSearchProvider() {
-  return await render(<SearchProvider>{null}</SearchProvider>)
+/**
+ * The palette reads the signed-in user to decide whether the staff-only groups
+ * belong in it, so the query cache is seeded rather than the network mocked —
+ * `useCurrentUser` holds ['me'] fresh for a minute, so a seeded entry means no
+ * request is made at all.
+ */
+async function renderWithSearchProvider(user: CurrentUser | null = STAFF) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  queryClient.setQueryData(['me'], user)
+  return await render(
+    <QueryClientProvider client={queryClient}>
+      <SearchProvider>{null}</SearchProvider>
+    </QueryClientProvider>
+  )
 }
 
 /**
@@ -142,6 +174,39 @@ describe('SearchProvider and CommandMenu', () => {
     await expect
       .element(screen.getByPlaceholder(COMMAND_MENU_PLACEHOLDER))
       .not.toBeInTheDocument()
+  })
+
+  /**
+   * The sidebar filters staffOnly groups; this palette did not, and ⌘K opens it
+   * for every authenticated session — so a client saw an "Agency" group listing
+   * Dashboard, Clients and Pipeline. The routes were still guarded, so the leak
+   * was the framing rather than the data, which is exactly what
+   * `requireStaffRoute` exists to prevent.
+   */
+  it('hides the agency group from a client-role session', async () => {
+    const screen = await renderWithSearchProvider(CLIENT)
+
+    await openCommandPalette(screen)
+
+    await expect.element(screen.getByText('Agency')).not.toBeInTheDocument()
+    await expect.element(screen.getByText('Dashboard')).not.toBeInTheDocument()
+    await expect.element(screen.getByText('Clients')).not.toBeInTheDocument()
+    await expect.element(screen.getByText('Pipeline')).not.toBeInTheDocument()
+
+    // Their own workspace is still there — this hides a group, not the palette.
+    await expect.element(screen.getByText('Homepage')).toBeInTheDocument()
+  })
+
+  it('hides it while the session is still resolving, rather than flashing it', async () => {
+    // `useCurrentUser` returns null until /api/me answers. Defaulting to
+    // "staff" for that window would show a client the agency entries for as
+    // long as the request took.
+    const screen = await renderWithSearchProvider(null)
+
+    await openCommandPalette(screen)
+
+    await expect.element(screen.getByText('Agency')).not.toBeInTheDocument()
+    await expect.element(screen.getByText('Homepage')).toBeInTheDocument()
   })
 
   it('shows empty state when the filter matches nothing', async () => {

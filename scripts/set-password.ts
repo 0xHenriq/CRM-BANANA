@@ -8,7 +8,7 @@
  *
  *   npm run set-password -- --email someone@example.com --password '…'
  */
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { auth } from '../server/auth/index.js'
 import { closeDb, db } from '../server/db/index.js'
 import { account, user } from '../server/db/auth-schema.js'
@@ -41,10 +41,17 @@ if (!target) throw new Error(`No user with the address ${email}`)
 const ctx = await auth.$context
 const hash = await ctx.password.hash(password)
 
+// Narrowed to the credential provider, not "any account row for this user".
+// Better Auth writes one `account` row per provider and only the credential
+// one carries a password, so an unqualified match would pick whichever row
+// came back first and stamp a hash onto a row that has no business holding
+// one — leaving the real credential untouched and the rotation silently
+// ineffective. Only email/password is configured today; this is the assumption
+// made explicit rather than relied upon.
 const [credential] = await db
   .select({ id: account.id })
   .from(account)
-  .where(eq(account.userId, target.id))
+  .where(and(eq(account.userId, target.id), eq(account.providerId, 'credential')))
   .limit(1)
 
 if (credential) {

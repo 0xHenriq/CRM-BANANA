@@ -40,6 +40,8 @@ export type Fixture = {
   linkB: string
   noticeA: string
   noticeB: string
+  /** A pending invitation, so writes to invitation_grants can be exercised. */
+  invitationId: string
 }
 
 const TENANT_TABLES = [
@@ -174,8 +176,35 @@ export async function resetAndSeed(): Promise<Fixture> {
       [clientA, ids.contentAVisible]
     )
 
+    /**
+     * An organization and a pending invitation.
+     *
+     * Only invitation_grants needs these, and it needs them because that table
+     * is the one staff-only row the app writes from a route rather than from a
+     * fixture — POST /api/seats/invite. Truncating "user" cascades the
+     * invitation away, so both are rebuilt each run; the organization is
+     * matched on its slug because it is not in TENANT_TABLES and therefore
+     * survives.
+     */
+    await c.query(
+      `insert into organization(id, name, slug, created_at)
+       values ($1,'Isolation Fixture','isolation-fixture',now())
+       on conflict (slug) do nothing`,
+      [randomUUID()]
+    )
+    const { rows: orgRows } = await c.query<{ id: string }>(
+      `select id from organization where slug = 'isolation-fixture'`
+    )
+
+    const invitationId = `inv_${randomUUID()}`
+    await c.query(
+      `insert into invitation(id, organization_id, email, role, status, expires_at, inviter_id)
+       values ($1,$2,'invited@client.test','client','pending', now() + interval '14 days', $3)`,
+      [invitationId, orgRows[0].id, staffUser]
+    )
+
     await c.query('commit')
-    return { clientA, clientB, staffUser, clientUserA, ...ids }
+    return { clientA, clientB, staffUser, clientUserA, invitationId, ...ids }
   } catch (err) {
     await c.query('rollback')
     throw err

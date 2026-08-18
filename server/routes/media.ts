@@ -44,8 +44,7 @@ const MULTIPART_SLACK_BYTES = 1024 * 1024
  */
 mediaRoutes.post('/upload', requireStaff, async (c) => {
   /**
-   * Refuse an oversized upload
- from its declared length, before the body is
+   * Refuse an oversized upload from its declared length, before the body is
    * touched.
    *
    * `parseBody()` reads the entire request into memory, so the `file.size`
@@ -76,8 +75,10 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
   if (file.size > MAX_UPLOAD_BYTES) {
     return c.json(
       {
-        error: `That file is
- ${(file.size / 1024 / 1024).toFixed(0)} MB. The limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`,
+        // One line: this string is rendered verbatim in a toast, and the stray
+        // newline that used to sit after "That file is" came out as a line
+        // break mid-sentence.
+        error: `That file is ${(file.size / 1024 / 1024).toFixed(0)} MB. The limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`,
       },
       413
     )

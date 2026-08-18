@@ -305,6 +305,67 @@ describe('3 — fail closed', () => {
   })
 })
 
+/**
+ * The mirror of "fail closed": a write with no tenant context is refused too.
+ *
+ * Reads failing closed are easy to spot — the screen is empty. A write failing
+ * closed raises, and if the raise happens after something else has already
+ * committed, the caller is left with half an operation. That is what
+ * POST /api/seats/invite did: it created the invitation through Better Auth,
+ * then staged the workspace grants with a bare `db.insert`, which carries no
+ * session variables and is therefore indistinguishable from an anonymous
+ * request. 42501, a 500 to the operator, a seat consumed, and an invitee whose
+ * link resolved to an empty portal.
+ *
+ * invitation_grants is the only staff-only table the app writes from a route,
+ * so it is the one that has to be pinned here.
+ */
+describe('staff-only writes require a tenant context', () => {
+  it('refuses an insert into invitation_grants with no session variables', async () => {
+    await expect(
+      asActor(
+        { kind: 'anonymous' },
+        `insert into invitation_grants(invitation_id, client_id) values ($1,$2)`,
+        [f.invitationId, f.clientA]
+      )
+    ).rejects.toThrow(/row-level security/i)
+
+    const { rows } = await ownerPool.query(
+      'select count(*)::int as n from invitation_grants where invitation_id = $1',
+      [f.invitationId]
+    )
+    expect(rows[0].n).toBe(0)
+  })
+
+  it('accepts the same insert under a staff context', async () => {
+    await asActor(
+      { kind: 'staff', userId: f.staffUser },
+      `insert into invitation_grants(invitation_id, client_id) values ($1,$2)
+       on conflict do nothing`,
+      [f.invitationId, f.clientA]
+    )
+
+    const { rows } = await ownerPool.query(
+      'select count(*)::int as n from invitation_grants where invitation_id = $1',
+      [f.invitationId]
+    )
+    expect(rows[0].n).toBe(1)
+  })
+
+  it('refuses it under a client context', async () => {
+    // clientB, not clientA: the staff insert above already took (invitation,
+    // clientA), and a unique-index violation would pass this assertion for
+    // entirely the wrong reason.
+    await expect(
+      asActor(
+        { kind: 'client', userId: f.clientUserA },
+        `insert into invitation_grants(invitation_id, client_id) values ($1,$2)`,
+        [f.invitationId, f.clientB]
+      )
+    ).rejects.toThrow(/row-level security/i)
+  })
+})
+
 describe('append-only approvals', () => {
   it('nobody can update or delete an approval, staff included', async () => {
     const { rows: seeded } = await ownerPool.query(

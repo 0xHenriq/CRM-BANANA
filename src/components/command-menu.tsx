@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { ArrowRight, ChevronRight, Laptop, Moon, Sun } from 'lucide-react'
 import { useSearch } from '@/context/search-provider'
 import { useTheme } from '@/context/theme-provider'
+import { useCurrentUser } from '@/hooks/use-current-user'
 import {
   CommandDialog,
   CommandEmpty,
@@ -19,6 +20,25 @@ export function CommandMenu() {
   const navigate = useNavigate()
   const { setTheme } = useTheme()
   const { open, setOpen } = useSearch()
+  const { data: currentUser } = useCurrentUser()
+
+  /**
+   * The same staffOnly filter the sidebar applies, for the same reason.
+   *
+   * This palette is mounted by SearchProvider for every authenticated session,
+   * and ⌘K opens it regardless of whether the Search button is on screen — so a
+   * client-role user got an "Agency" group offering Dashboard, Clients and
+   * Pipeline. The routes themselves are guarded (requireStaffRoute bounces them
+   * to /portal, and the API answers 403 independently), so nothing leaked; what
+   * leaked was the framing. Naming her CRM screens to a client tells them there
+   * is an inside they are outside of, which is precisely what route-guards.ts
+   * and sidebar-data.ts are written to avoid.
+   *
+   * Defaults to hiding while the user is still loading, so the agency entries
+   * never flash for a client.
+   */
+  const isStaff = currentUser?.isStaff ?? false
+  const groups = sidebarData.navGroups.filter((g) => !g.staffOnly || isStaff)
 
   const runCommand = React.useCallback(
     (command: () => unknown) => {
@@ -34,7 +54,7 @@ export function CommandMenu() {
       <CommandList>
         <ScrollArea type='hover' className='h-72 pe-1'>
           <CommandEmpty>No results found.</CommandEmpty>
-          {sidebarData.navGroups.map((group) => (
+          {groups.map((group) => (
             <CommandGroup key={group.title} heading={group.title}>
               {group.items.map((navItem, i) => {
                 if (navItem.url)

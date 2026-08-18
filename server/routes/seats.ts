@@ -161,11 +161,23 @@ seatsRoutes.post('/invite', async (c) => {
   // Staged in the database, not process memory: the user row does not exist
   // until acceptance, and a restart between the two must not silently drop the
   // grant — leaving a client signed in to an empty portal with no error.
+  //
+  // Through withTenant, because invitation_grants carries RLS (migration 0005)
+  // and a bare `db.insert` runs with no session variables at all — which is
+  // indistinguishable from an anonymous request, so app_is_staff() is false and
+  // the WITH CHECK refuses the row. Verified against bd_portal_test: the bare
+  // insert raises 42501, the same insert under a staff context succeeds. The
+  // invitation itself is created above and already committed, so the failure
+  // landed AFTER a seat had been reserved: she saw "Internal server error",
+  // the invitee got a link, and accepting it granted them no workspace —
+  // exactly the empty portal this staging table exists to prevent.
   if (clientIds.length) {
-    await db
-      .insert(invitationGrants)
-      .values(clientIds.map((clientId) => ({ invitationId, clientId })))
-      .onConflictDoNothing()
+    await withTenant(c.get('tenant'), (tx) =>
+      tx
+        .insert(invitationGrants)
+        .values(clientIds.map((clientId) => ({ invitationId, clientId })))
+        .onConflictDoNothing()
+    )
   }
 
   // APP_URL, not the request origin: in production the API is reached through
