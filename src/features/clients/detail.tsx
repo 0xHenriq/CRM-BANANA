@@ -467,6 +467,9 @@ function TimelineCard({
       <CardContent className='space-y-4'>
         <div className='space-y-2'>
           <Textarea
+            id='activity-note'
+            name='activity-note'
+            aria-label='Log an activity'
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder='Log a call, a meeting, or a note…'

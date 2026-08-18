@@ -5,6 +5,33 @@ import { useCurrentUser } from '@/hooks/use-current-user'
 
 const STORAGE_KEY = 'bd_portal_workspace'
 
+/**
+ * Storage access can throw, and a throw here is fatal.
+ *
+ * Safari private browsing and "block all cookies" both make localStorage
+ * raise a SecurityError on every access. Reading it inside a useState
+ * initialiser meant that exception happened during render — verified by
+ * patching Storage.prototype: every portal screen rendered a blank page.
+ *
+ * Losing the remembered workspace is a small inconvenience. Losing the whole
+ * portal is not.
+ */
+function readStored(): string | null {
+  try {
+    return window.localStorage.getItem(STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writeStored(value: string): void {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, value)
+  } catch {
+    // Selection still works for this session; it just will not be remembered.
+  }
+}
+
 export type Workspace = { id: string; name: string }
 
 /**
@@ -25,9 +52,7 @@ export function useWorkspace() {
   const isStaff = currentUser?.isStaff ?? false
 
   const [stored, setStored] = useState<string | null>(() =>
-    typeof window === 'undefined'
-      ? null
-      : window.localStorage.getItem(STORAGE_KEY)
+    typeof window === 'undefined' ? null : readStored()
   )
 
   const workspaces = useQuery({
@@ -55,7 +80,7 @@ export function useWorkspace() {
 
   const setClientId = useCallback((id: string) => {
     setStored(id)
-    window.localStorage.setItem(STORAGE_KEY, id)
+    writeStored(id)
   }, [])
 
   return {

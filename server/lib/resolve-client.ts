@@ -3,6 +3,9 @@ import type { Context } from 'hono'
 import { withTenant } from '../db/index.js'
 import { clientAccess, clients } from '../db/schema.js'
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 /**
  * Resolves which client workspace a request is for.
  *
@@ -22,7 +25,26 @@ export async function resolveClientId(c: Context): Promise<string | null> {
 
   if (currentUser.isStaff) {
     const requested = c.req.query('client')
-    if (requested) return requested
+    if (requested) {
+      // The value goes straight into a uuid comparison, so anything that is
+      // not a uuid made Postgres raise and the request 500 — verified with
+      // ?client=not-a-uuid. Parameterisation meant it was never injectable,
+      // but "malformed input" is a 400-shaped problem, not a server fault.
+      if (!UUID_RE.test(requested)) return null
+
+      // A well-formed id for a client that does not exist previously came
+      // back 200 with an empty list, which presents a workspace that is not
+      // there as one that is merely empty. Confirm it is real; RLS confirms
+      // this caller may see it.
+      const [found] = await withTenant(c.get('tenant'), (tx) =>
+        tx
+          .select({ id: clients.id })
+          .from(clients)
+          .where(eq(clients.id, requested))
+          .limit(1)
+      )
+      return found?.id ?? null
+    }
 
     // No client chosen: fall back to the first open workspace so nav links
     // are never dead for staff. The UI keeps a persisted selection, so this

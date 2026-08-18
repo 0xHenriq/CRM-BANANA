@@ -398,6 +398,7 @@ export function TaskList({
           >
             <div className='flex gap-2'>
               <Input
+                name='new-task'
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder='Add a task…'
@@ -483,6 +484,11 @@ export function NoticeBoard({
           }}
         >
           <Textarea
+            // A placeholder is not an accessible name — it disappears on
+            // focus and screen readers announced this only as "text area".
+            id='notice-body'
+            name='notice-body'
+            aria-label='Write a notice'
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder='Leave an update or a question…'

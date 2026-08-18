@@ -206,6 +206,9 @@ export function ContentDetailDialog({
                   {isStaff ? 'Record a decision' : 'Your call'}
                 </p>
                 <Textarea
+                  id='decision-note'
+                  name='decision-note'
+                  aria-label='Note on your decision'
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
                   placeholder='Optional note — what needs changing?'
