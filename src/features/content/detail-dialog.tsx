@@ -1,9 +1,19 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Loader2, MessageSquare, Send, Undo2 } from 'lucide-react'
+import {
+  Check,
+  ImagePlus,
+  Loader2,
+  MessageSquare,
+  Play,
+  Send,
+  Undo2,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import {
   api,
+  assetUrl,
+  uploadMedia,
   CONTENT_STATUSES,
   CONTENT_TYPES,
   type ContentDetail,
@@ -50,6 +60,7 @@ export function ContentDetailDialog({
   const queryClient = useQueryClient()
   const [comment, setComment] = useState('')
   const [note, setNote] = useState('')
+  const fileInput = useRef<HTMLInputElement>(null)
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['content-item', itemId],
@@ -74,6 +85,24 @@ export function ContentDetailDialog({
     onSuccess: async () => {
       await invalidate()
       setComment('')
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const upload = useMutation({
+    mutationFn: async (files: FileList) => {
+      for (const file of Array.from(files)) {
+        await uploadMedia(file, {
+          clientId: null,
+          target: 'content',
+          contentItemId: itemId ?? undefined,
+        })
+      }
+    },
+    onSuccess: async () => {
+      await invalidate()
+      // The feed grid is built from these assets, so it is stale now too.
+      await queryClient.invalidateQueries({ queryKey: ['feed'] })
     },
     onError: (err: Error) => toast.error(err.message),
   })
@@ -198,6 +227,83 @@ export function ContentDetailDialog({
             {item.caption && (
               <p className='text-sm whitespace-pre-wrap'>{item.caption}</p>
             )}
+
+            {/* ---------------------------------------------------- assets */}
+            <div>
+              <div className='crate-rule mb-2 flex items-center justify-between pb-1'>
+                <p className='display text-sm'>Assets</p>
+                {isStaff && (
+                  <>
+                    <input
+                      ref={fileInput}
+                      type='file'
+                      accept='image/*,video/*'
+                      multiple
+                      className='hidden'
+                      aria-label='Choose files to attach'
+                      onChange={(e) => {
+                        if (e.target.files?.length) upload.mutate(e.target.files)
+                        e.target.value = ''
+                      }}
+                    />
+                    <Button
+                      size='sm'
+                      variant='outline'
+                      onClick={() => fileInput.current?.click()}
+                      disabled={upload.isPending}
+                    >
+                      {upload.isPending ? (
+                        <Loader2 className='animate-spin' />
+                      ) : (
+                        <ImagePlus />
+                      )}
+                      Add
+                    </Button>
+                  </>
+                )}
+              </div>
+
+              {data.assets.length === 0 ? (
+                <p className='text-sm text-muted-foreground'>
+                  {isStaff
+                    ? 'Nothing attached. The first asset here becomes this post’s cell in the feed preview.'
+                    : 'Nothing to see yet.'}
+                </p>
+              ) : (
+                <ul className='flex flex-wrap gap-2'>
+                  {data.assets.map((asset) => (
+                    <li key={asset.id} className='relative'>
+                      <a
+                        href={assetUrl(asset.id)}
+                        target='_blank'
+                        rel='noopener noreferrer'
+                        className='block size-24 overflow-hidden rounded border-2 border-bd-ink'
+                      >
+                        <img
+                          src={assetUrl(
+                            asset.id,
+                            asset.kind === 'video' ? 'poster' : 'thumb'
+                          )}
+                          alt=''
+                          loading='lazy'
+                          className='size-full object-cover'
+                        />
+                      </a>
+                      {asset.kind === 'video' && (
+                        <span className='pointer-events-none absolute inset-0 flex items-center justify-center'>
+                          <Play className='size-5 fill-white/90 text-white drop-shadow' />
+                        </span>
+                      )}
+                      {asset.durationMs && (
+                        <span className='absolute right-0.5 bottom-0.5 rounded bg-bd-ink/80 px-1 text-[0.5625rem] text-bd-cream'>
+                          {Math.round(asset.durationMs / 1000)}s
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
 
             {/* ------------------------------------------------ decisions */}
             {decidable && (

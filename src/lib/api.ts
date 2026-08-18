@@ -295,8 +295,102 @@ export type ContentApproval = {
   actorName: string | null
 }
 
+export type ContentDetailAsset = {
+  id: string
+  kind: 'image' | 'video'
+  durationMs: number | null
+  width: number | null
+  height: number | null
+  sortOrder: number
+}
+
 export type ContentDetail = {
   item: ContentItem
+  assets: ContentDetailAsset[]
   comments: ContentComment[]
   approvals: ContentApproval[]
+}
+
+/* ------------------------------------------------------------------- media */
+
+export type ContentAsset = {
+  id: string
+  contentItemId: string
+  kind: 'image' | 'video'
+  thumbKey: string | null
+  posterKey: string | null
+  durationMs: number | null
+  width: number | null
+  height: number | null
+  mime: string | null
+  sizeBytes: number | null
+}
+
+export type MoodboardItem = {
+  id: string
+  clientId: string
+  storageKey: string | null
+  url: string | null
+  caption: string | null
+  sortOrder: number
+}
+
+export type FeedCell = {
+  itemId: string
+  title: string
+  type: ContentType
+  status: ContentStatus
+  scheduledAt: string | null
+  feedOrder: number | null
+  assetId: string
+  assetKind: 'image' | 'video'
+}
+
+/**
+ * Media is streamed by the app, not served from a static path — the URL is an
+ * endpoint that checks who is asking. `variant` picks the derived thumbnail or
+ * video poster; both are webp and a fraction of the original.
+ */
+export function assetUrl(
+  assetId: string,
+  variant: 'original' | 'thumb' | 'poster' = 'original'
+): string {
+  return `/api/media/assets/${assetId}${variant === 'original' ? '' : `?variant=${variant}`}`
+}
+
+export function moodboardUrl(itemId: string): string {
+  return `/api/media/moodboard/${itemId}`
+}
+
+/**
+ * Uploads go as multipart, so this deliberately does not use `api.post` —
+ * setting Content-Type by hand would omit the multipart boundary.
+ */
+export async function uploadMedia(
+  file: File,
+  opts: {
+    clientId: string | null
+    target: 'content' | 'moodboard' | 'file'
+    contentItemId?: string
+    caption?: string
+  }
+): Promise<unknown> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('target', opts.target)
+  if (opts.contentItemId) form.append('contentItemId', opts.contentItemId)
+  if (opts.caption) form.append('caption', opts.caption)
+
+  const qs = opts.clientId ? `?client=${opts.clientId}` : ''
+  const res = await fetch(`/api/media/upload${qs}`, {
+    method: 'POST',
+    credentials: 'include',
+    body: form,
+  })
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new ApiError(body?.error ?? `Upload failed (${res.status})`, res.status)
+  }
+  return res.json()
 }

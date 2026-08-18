@@ -1,0 +1,174 @@
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Play, GripVertical } from 'lucide-react'
+import { toast } from 'sonner'
+import { api, assetUrl, type FeedCell } from '@/lib/api'
+import { useWorkspace, withClient } from '@/features/portal/use-workspace'
+import { WorkspaceSwitcher } from '@/features/portal/workspace-switcher'
+import { cn } from '@/lib/utils'
+import { Card, CardContent } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
+import { ConfigDrawer } from '@/components/config-drawer'
+import { Header } from '@/components/layout/header'
+import { Main } from '@/components/layout/main'
+import { PageHead } from '@/components/layout/page-head'
+import { QueryError } from '@/components/layout/query-error'
+import { ProfileDropdown } from '@/components/profile-dropdown'
+import { ThemeSwitch } from '@/components/theme-switch'
+import { ContentDetailDialog } from './detail-dialog'
+import { TYPE_LABEL } from './vocabulary'
+
+/**
+ * The 3×3 grid.
+ *
+ * Every cell is a real content item with a real uploaded asset. In the
+ * prototype this was nine independent text boxes holding pasted image URLs,
+ * connected to nothing — so in practice it stayed empty, because clients will
+ * not go and host images somewhere else first.
+ */
+export function FeedPreview() {
+  const { isStaff, clientId, setClientId, workspaces, isReady } = useWorkspace()
+  const queryClient = useQueryClient()
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+
+  const { data, isLoading, isError, error, refetch } = useQuery({
+    queryKey: ['feed', clientId ?? 'default'],
+    queryFn: () =>
+      api.get<{ clientId: string; cells: FeedCell[] }>(
+        withClient('/media/feed', clientId)
+      ),
+    enabled: isReady,
+  })
+
+  const reorder = useMutation({
+    mutationFn: (ids: string[]) =>
+      api.patch('/media/feed/reorder', { ids }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['feed'] })
+      queryClient.invalidateQueries({ queryKey: ['content'] })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const cells = data?.cells ?? []
+  const grid = cells.slice(0, 9)
+
+  function onDrop(targetIndex: number) {
+    if (dragIndex === null || dragIndex === targetIndex) return
+    const next = [...grid]
+    const [moved] = next.splice(dragIndex, 1)
+    next.splice(targetIndex, 0, moved)
+    setDragIndex(null)
+    reorder.mutate(next.map((c) => c.itemId))
+  }
+
+  return (
+    <>
+      <Header>
+        <div className='ms-auto flex items-center gap-2'>
+          {isStaff && (
+            <WorkspaceSwitcher
+              clientId={clientId}
+              workspaces={workspaces}
+              onChange={setClientId}
+            />
+          )}
+          <ThemeSwitch />
+          <ConfigDrawer />
+          <ProfileDropdown />
+        </div>
+      </Header>
+
+      <Main>
+        <PageHead
+          eyebrow='3×3 grid mock up'
+          title='Feed Preview'
+          stamp={{ top: 'GRID', big: '9', bottom: 'POST' }}
+        />
+
+        {isLoading ? (
+          <Skeleton className='aspect-square max-w-lg' />
+        ) : isError ? (
+          <QueryError
+            title='Could not load the feed'
+            error={error as Error}
+            onRetry={() => refetch()}
+          />
+        ) : (
+          <Card className='crate-card max-w-lg'>
+            <CardContent>
+              <div className='grid grid-cols-3 gap-1 border-2 border-bd-ink bg-bd-ink p-1'>
+                {Array.from({ length: 9 }).map((_, i) => {
+                  const cell = grid[i]
+                  if (!cell) {
+                    return (
+                      <div
+                        key={`empty-${i}`}
+                        className='flex aspect-square items-center justify-center bg-bd-sand text-[0.625rem] text-muted-foreground'
+                      >
+                        Post {i + 1}
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <button
+                      key={cell.itemId}
+                      type='button'
+                      draggable={isStaff}
+                      onDragStart={() => setDragIndex(i)}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={() => onDrop(i)}
+                      onClick={() => setOpenId(cell.itemId)}
+                      className={cn(
+                        'group relative aspect-square overflow-hidden bg-bd-sand',
+                        isStaff && 'cursor-grab active:cursor-grabbing',
+                        dragIndex === i && 'opacity-40'
+                      )}
+                      title={`${TYPE_LABEL[cell.type]}: ${cell.title}`}
+                    >
+                      <img
+                        src={assetUrl(
+                          cell.assetId,
+                          cell.assetKind === 'video' ? 'poster' : 'thumb'
+                        )}
+                        alt={cell.title}
+                        loading='lazy'
+                        className='size-full object-cover'
+                      />
+
+                      {/* Video reads as video at a glance, which is the whole
+                          reason a poster frame is extracted on upload. */}
+                      {cell.assetKind === 'video' && (
+                        <span className='absolute inset-0 flex items-center justify-center'>
+                          <Play className='size-6 fill-white/90 text-white drop-shadow' />
+                        </span>
+                      )}
+
+                      {isStaff && (
+                        <GripVertical className='absolute top-1 left-1 size-3.5 text-white opacity-0 drop-shadow group-hover:opacity-100' />
+                      )}
+
+                      <span className='absolute inset-x-0 bottom-0 truncate bg-bd-ink/75 px-1 py-0.5 text-[0.5625rem] text-bd-cream'>
+                        {cell.title}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+
+              <p className='mt-3 text-xs text-muted-foreground italic'>
+                {isStaff
+                  ? 'Drag to rearrange. Cells come from scheduled content with an uploaded asset — add one from a post to fill the grid.'
+                  : 'How the next nine posts will sit together.'}
+              </p>
+            </CardContent>
+          </Card>
+        )}
+      </Main>
+
+      <ContentDetailDialog itemId={openId} onClose={() => setOpenId(null)} />
+    </>
+  )
+}

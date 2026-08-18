@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { withTenant } from '../db/index.js'
 import {
   contentApprovals,
+  contentAssets,
   contentComments,
   contentItems,
 } from '../db/schema.js'
@@ -100,6 +101,19 @@ contentRoutes.get('/:id', async (c) => {
       .where(eq(contentComments.contentItemId, id))
       .orderBy(asc(contentComments.createdAt))
 
+    const assets = await tx
+      .select({
+        id: contentAssets.id,
+        kind: contentAssets.kind,
+        durationMs: contentAssets.durationMs,
+        width: contentAssets.width,
+        height: contentAssets.height,
+        sortOrder: contentAssets.sortOrder,
+      })
+      .from(contentAssets)
+      .where(eq(contentAssets.contentItemId, id))
+      .orderBy(asc(contentAssets.sortOrder))
+
     const approvals = await tx
       .select({
         id: contentApprovals.id,
@@ -113,7 +127,7 @@ contentRoutes.get('/:id', async (c) => {
       .where(eq(contentApprovals.contentItemId, id))
       .orderBy(desc(contentApprovals.decidedAt))
 
-    return { item, comments, approvals }
+    return { item, assets, comments, approvals }
   })
 
   if (!detail) return c.json({ error: 'Not found' }, 404)

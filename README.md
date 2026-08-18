@@ -93,6 +93,16 @@ from the body still parses back populated. That is how ticking off an internal
 task published it to the client. `server/__tests__/patch-schemas.test.ts`
 encodes the rule.
 
+**Uploads are typed by their bytes, not their Content-Type header.** A browser
+sets that from the file extension on the client's machine, so it is a hint.
+`sniffMime` in `server/lib/media.ts` reads the magic number; a text file
+renamed `.png` is rejected with 415.
+
+**Media is streamed by the app, never from a static path.** Caddy has no
+`secure_link` equivalent, so a signed URL would have nothing validating it.
+`/api/media/assets/:id` reads the key from a row the caller is allowed to see —
+the key never comes from the request.
+
 **User-supplied URLs go through `safeHref`.** The link stack and file folder
 are the only places a typed string becomes something the browser navigates to.
 Anything that is not http(s) renders as inert text — see
@@ -127,7 +137,7 @@ asset; do not "improve" the values.
 - [x] Phase 3 — CRM core: clients, contacts, deals pipeline
 - [x] Phase 4 — Client portal: links, files, notice board, tasks
 - [x] Phase 5 — Content engine: unified Ideas Bank + Calendar
-- [ ] Phase 6 — Media: uploads, thumbnails, feed preview, moodboard
+- [x] Phase 6 — Media: uploads, thumbnails, feed preview, moodboard
 - [ ] Phase 7 — Deploy to VPS4
 
 Auth is real as of Phase 2: Better Auth with httpOnly cookie sessions, a single
