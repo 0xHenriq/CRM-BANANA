@@ -56,8 +56,19 @@ export function UserAuthForm({
     setIsLoading(false)
 
     if (error) {
-      // Never distinguish "no such account" from "wrong password": that turns
-      // the form into an account-enumeration oracle.
+      // Being rate limited is a different problem from a wrong password, and
+      // saying "that did not match" sends the user to retype it — which is
+      // exactly what deepens the lockout. Distinguishing 429 leaks nothing:
+      // it is about the request, not about whether the account exists.
+      if (error.status === 429) {
+        toast.error(
+          'Too many sign-in attempts from this network. Please wait a few minutes and try again.'
+        )
+        return
+      }
+
+      // Otherwise never distinguish "no such account" from "wrong password":
+      // that turns the form into an account-enumeration oracle.
       toast.error('That email and password did not match.')
       form.setValue('password', '')
       return

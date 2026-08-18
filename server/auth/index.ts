@@ -57,9 +57,17 @@ export const auth = betterAuth({
     window: 60,
     max: 60,
     customRules: {
-      // Brute-force protection on the one endpoint that accepts a password.
-      // fail2ban runs on VPS4 but cannot see application-level auth failures.
-      '/sign-in/email': { window: 900, max: 5 },
+      /**
+       * Brute-force protection on the one endpoint that accepts a password.
+       * fail2ban runs on VPS4 but cannot see application-level auth failures.
+       *
+       * The limit is per IP, and an agency and its client sit behind one
+       * office connection — at five attempts per fifteen minutes they locked
+       * each other out while simply signing in. Twenty is still nowhere near
+       * enough to brute-force a ten-character minimum (it allows under two
+       * thousand guesses a day), and it stops punishing people for typos.
+       */
+      '/sign-in/email': { window: 900, max: 20 },
       '/organization/accept-invitation': { window: 900, max: 10 },
     },
   },
