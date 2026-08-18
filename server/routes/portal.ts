@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull } from 'drizzle-orm'
+import { asc, desc, eq } from 'drizzle-orm'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
 import { withTenant } from '../db/index.js'
@@ -138,11 +138,31 @@ portalRoutes.get('/workspaces', async (c) => {
 
 /* ------------------------------------------------------------------- links */
 
+/**
+ * Create and update schemas are defined SEPARATELY, and update schemas carry
+ * no defaults. This is not duplication for its own sake.
+ *
+ * `schema.partial()` does NOT strip `.default()` — a field left out of a PATCH
+ * body still comes back populated with its default. Verified: PATCH
+ * /portal/tasks/:id with body {"done":true} parsed to
+ * {done:true, visibleToClient:true} and flipped an internal task to
+ * client-visible. Ticking "INTERNAL: chase unpaid invoice" off her own list
+ * published it to the client.
+ *
+ * Any `.partial()` over a schema containing `.default()` has the same shape of
+ * bug, so the rule is: defaults belong to creates, never to updates.
+ */
 const linkSchema = z.object({
   label: z.string().min(1).max(120),
   // Deliberately permissive: she pastes Drive, Canva and Notion URLs. The
   // client component is what refuses to render anything but http(s).
   url: z.string().max(2000).default(''),
+  icon: z.string().max(60).nullish(),
+})
+
+export const linkPatchSchema = z.object({
+  label: z.string().min(1).max(120).optional(),
+  url: z.string().max(2000).optional(),
   icon: z.string().max(60).nullish(),
 })
 
@@ -171,7 +191,7 @@ portalRoutes.post('/links', requireStaff, async (c) => {
 })
 
 portalRoutes.patch('/links/:id', requireStaff, async (c) => {
-  const parsed = linkSchema.partial().safeParse(
+  const parsed = linkPatchSchema.safeParse(
     await c.req.json().catch(() => null)
   )
   if (!parsed.success) return c.json({ error: 'Invalid request' }, 400)
@@ -201,6 +221,11 @@ const fileSchema = z.object({
   externalUrl: z.string().max(2000).default(''),
 })
 
+export const filePatchSchema = z.object({
+  name: z.string().min(1).max(160).optional(),
+  externalUrl: z.string().max(2000).optional(),
+})
+
 portalRoutes.post('/files', requireStaff, async (c) => {
   const clientId = await resolveClientId(c)
   if (!clientId) return c.json({ error: 'No workspace selected' }, 400)
@@ -217,7 +242,7 @@ portalRoutes.post('/files', requireStaff, async (c) => {
 })
 
 portalRoutes.patch('/files/:id', requireStaff, async (c) => {
-  const parsed = fileSchema.partial().safeParse(
+  const parsed = filePatchSchema.safeParse(
     await c.req.json().catch(() => null)
   )
   if (!parsed.success) return c.json({ error: 'Invalid request' }, 400)
@@ -278,12 +303,17 @@ portalRoutes.post('/tasks', requireStaff, async (c) => {
  * The client's own context is what decides visibility; theirs is the SELECT
  * that has to succeed first.
  */
-const toggleSchema = z.object({ done: z.boolean() })
+export const taskPatchSchema = z.object({
+  done: z.boolean().optional(),
+  title: z.string().min(1).max(200).optional(),
+  dueDate: z.string().date().nullish(),
+  visibleToClient: z.boolean().optional(),
+})
 
 portalRoutes.patch('/tasks/:id', async (c) => {
-  const parsed = toggleSchema
-    .merge(taskSchema.partial())
-    .safeParse(await c.req.json().catch(() => null))
+  const parsed = taskPatchSchema.safeParse(
+    await c.req.json().catch(() => null)
+  )
   if (!parsed.success) return c.json({ error: 'Invalid request' }, 400)
 
   const currentUser = c.get('user')!
@@ -297,9 +327,17 @@ portalRoutes.patch('/tasks/:id', async (c) => {
   if (!visible) return c.json({ error: 'Not found' }, 404)
 
   // Clients may only flip `done`; title, due date and visibility are hers.
+  // Note `done` is optional now, so a client sending nothing changes nothing
+  // rather than writing undefined.
   const patch = currentUser.isStaff
     ? parsed.data
-    : { done: parsed.data.done }
+    : parsed.data.done === undefined
+      ? {}
+      : { done: parsed.data.done }
+
+  if (Object.keys(patch).length === 0) {
+    return c.json({ error: 'Nothing to update' }, 400)
+  }
 
   const [updated] = await withTenant(
     { userId: currentUser.id, isStaff: true },
@@ -350,17 +388,21 @@ portalRoutes.post('/notices', async (c) => {
   return c.json({ notice: created[0] }, 201)
 })
 
+/**
+ * Any post can be removed, root or reply.
+ *
+ * This previously matched `parent_id IS NULL`, so a reply could never be
+ * deleted at all — and a reply is precisely where something she needs to
+ * remove is most likely to appear. Deleting a root still cascades to its
+ * replies through the foreign key.
+ */
 portalRoutes.delete('/notices/:id', requireStaff, async (c) => {
-  await withTenant(c.get('tenant'), (tx) =>
+  const deleted = await withTenant(c.get('tenant'), (tx) =>
     tx
       .delete(noticePosts)
-      .where(
-        and(
-          eq(noticePosts.id, c.req.param('id')),
-          // Deleting a root post cascades to its replies via the FK.
-          isNull(noticePosts.parentId)
-        )
-      )
+      .where(eq(noticePosts.id, c.req.param('id')))
+      .returning({ id: noticePosts.id })
   )
+  if (!deleted.length) return c.json({ error: 'Not found' }, 404)
   return c.json({ ok: true })
 })

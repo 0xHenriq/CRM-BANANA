@@ -277,13 +277,22 @@ export function TaskList({
   const toggle = useMutation({
     mutationFn: ({ id, done }: { id: string; done: boolean }) =>
       api.patch(`/portal/tasks/${id}`, { done }),
-    // Optimistic: a checkbox that waits for a round trip feels broken.
+    /**
+     * Optimistic: a checkbox that waits for a round trip feels broken.
+     *
+     * Addressed by PREFIX, not by ['portal', clientId]. The page keys its
+     * query on the staff *selection* — ['portal', 'default'] until a
+     * workspace is picked — so writing to ['portal', <uuid>] landed on a
+     * cache entry that did not exist and the tick never appeared until the
+     * refetch returned. Only one portal query is ever live, so updating every
+     * match is both correct and simpler than threading the real key down.
+     */
     onMutate: async ({ id, done }) => {
       await queryClient.cancelQueries({ queryKey: ['portal'] })
-      const previous = queryClient.getQueryData(['portal', clientId])
-      queryClient.setQueryData(['portal', clientId], (old: unknown) => {
+      const previous = queryClient.getQueriesData({ queryKey: ['portal'] })
+      queryClient.setQueriesData({ queryKey: ['portal'] }, (old: unknown) => {
         const w = old as { tasks: PortalTask[] } | undefined
-        if (!w) return old
+        if (!w?.tasks) return old
         return {
           ...w,
           tasks: w.tasks.map((t) => (t.id === id ? { ...t, done } : t)),
@@ -292,8 +301,9 @@ export function TaskList({
       return { previous }
     },
     onError: (err: Error, _v, ctx) => {
-      if (ctx?.previous)
-        queryClient.setQueryData(['portal', clientId], ctx.previous)
+      for (const [key, data] of ctx?.previous ?? []) {
+        queryClient.setQueryData(key, data)
+      }
       toast.error(err.message)
     },
     onSettled: invalidate,
@@ -503,7 +513,11 @@ export function NoticeBoard({
                     .reverse()
                     .map((reply) => (
                       <li key={reply.id}>
-                        <NoticeItem note={reply} canModerate={false} />
+                        <NoticeItem
+                          note={reply}
+                          canModerate={canModerate}
+                          onDelete={() => remove.mutate(reply.id)}
+                        />
                       </li>
                     ))}
                 </ul>

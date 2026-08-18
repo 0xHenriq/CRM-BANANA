@@ -87,6 +87,12 @@ removing `missing_ok` from the helpers fails 9, and reverting the child-
 visibility policies fails 2. A test that cannot fail is not protecting
 anything — re-verify this way after touching any policy migration.
 
+**PATCH schemas carry no defaults, and are written separately from create
+schemas.** `schema.partial()` does not strip `.default()` — a field omitted
+from the body still parses back populated. That is how ticking off an internal
+task published it to the client. `server/__tests__/patch-schemas.test.ts`
+encodes the rule.
+
 **User-supplied URLs go through `safeHref`.** The link stack and file folder
 are the only places a typed string becomes something the browser navigates to.
 Anything that is not http(s) renders as inert text — see
