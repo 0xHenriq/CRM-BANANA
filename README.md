@@ -87,6 +87,11 @@ removing `missing_ok` from the helpers fails 9, and reverting the child-
 visibility policies fails 2. A test that cannot fail is not protecting
 anything — re-verify this way after touching any policy migration.
 
+**User-supplied URLs go through `safeHref`.** The link stack and file folder
+are the only places a typed string becomes something the browser navigates to.
+Anything that is not http(s) renders as inert text — see
+`src/lib/safe-href.test.ts` for the cases that must stay refused.
+
 **Money is integer pence until the moment it is displayed.** Deal values are
 `numeric(12,2)` carried as strings; use `toPence`/`sumPence`/`formatPence` from
 `src/lib/api.ts`. Summing them as floats drifted (1800.10 + 2400.20 + 99.30 =
@@ -114,7 +119,7 @@ asset; do not "improve" the values.
 - [x] Phase 1 — Foundation: scaffold, brand tokens, database roles
 - [x] Phase 2 — Auth, seats, tenancy (RLS + isolation tests)
 - [x] Phase 3 — CRM core: clients, contacts, deals pipeline
-- [ ] Phase 4 — Client portal: links, files, notice board, tasks
+- [x] Phase 4 — Client portal: links, files, notice board, tasks
 - [ ] Phase 5 — Content engine: unified Ideas Bank + Calendar
 - [ ] Phase 6 — Media: uploads, thumbnails, feed preview, moodboard
 - [ ] Phase 7 — Deploy to VPS4

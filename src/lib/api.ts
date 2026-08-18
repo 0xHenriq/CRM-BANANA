@@ -180,3 +180,59 @@ export function formatMoney(value: string | null, currency = 'GBP'): string {
   if (value === null) return '—'
   return formatPence(toPence(value), currency)
 }
+
+/* ------------------------------------------------------------------ portal */
+
+export type PortalLink = {
+  id: string
+  clientId: string
+  label: string
+  url: string
+  icon: string | null
+  sortOrder: number
+}
+
+export type PortalFile = {
+  id: string
+  clientId: string
+  name: string
+  storageKey: string | null
+  mime: string | null
+  sizeBytes: number | null
+  externalUrl: string | null
+  sortOrder: number
+}
+
+export type PortalTask = {
+  id: string
+  clientId: string
+  title: string
+  done: boolean
+  dueDate: string | null
+  assigneeId: string | null
+  /** False marks internal work; clients never receive those rows at all. */
+  visibleToClient: boolean
+  sortOrder: number
+}
+
+export type NoticePost = {
+  id: string
+  body: string
+  createdAt: string
+  parentId: string | null
+  authorId: string | null
+  authorName: string | null
+}
+
+export type PortalWorkspace = {
+  client: {
+    id: string
+    name: string
+    brandColor: string | null
+    portalEnabled: boolean
+  }
+  links: PortalLink[]
+  files: PortalFile[]
+  tasks: PortalTask[]
+  notices: NoticePost[]
+}
