@@ -109,12 +109,22 @@ export function Moodboard() {
           actions={
             isStaff ? (
               <>
+                {/*
+                  `sr-only`, never `hidden`. Tailwind's `hidden` is
+                  display:none, and a display:none file input does not reliably
+                  open its picker from a programmatic .click() — Safari and iOS
+                  in particular ignore it, so the button appears to do nothing
+                  at all: no picker, no request, no error. Nothing reaches the
+                  server, so there is not even a log line to find. `sr-only`
+                  keeps the input rendered and focusable while still invisible,
+                  which is the shape every browser honours.
+                */}
                 <input
                   ref={inputRef}
                   type='file'
                   accept='image/*'
                   multiple
-                  className='hidden'
+                  className='sr-only'
                   aria-label='Choose images to add'
                   onChange={(e) => {
                     if (e.target.files?.length) upload.mutate(e.target.files)

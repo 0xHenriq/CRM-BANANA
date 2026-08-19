@@ -275,12 +275,15 @@ export function ContentDetailDialog({
                 <p className='display text-sm'>Assets</p>
                 {isStaff && (
                   <>
+                    {/* sr-only, not hidden — see the note in moodboard.tsx:
+                        a display:none file input will not open its picker from
+                        a programmatic .click() on Safari or iOS. */}
                     <input
                       ref={fileInput}
                       type='file'
                       accept='image/*,video/*'
                       multiple
-                      className='hidden'
+                      className='sr-only'
                       aria-label='Choose files to attach'
                       onChange={(e) => {
                         if (e.target.files?.length) upload.mutate(e.target.files)
