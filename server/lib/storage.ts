@@ -1,5 +1,5 @@
 import { createReadStream, createWriteStream } from 'node:fs'
-import { mkdir, stat, unlink } from 'node:fs/promises'
+import { copyFile, mkdir, stat, unlink } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { pipeline } from 'node:stream/promises'
@@ -26,6 +26,16 @@ export interface StorageDriver {
   read(key: string, range?: { start: number; end: number }): NodeJS.ReadableStream
   size(key: string): Promise<number>
   remove(key: string): Promise<void>
+  /**
+   * A second, independent object with the same bytes.
+   *
+   * Duplicating a post copies its assets, and the copy must own its bytes
+   * rather than pointing at the original's. Sharing a key would make the two
+   * rows silently coupled: removing either one's bytes would break the other,
+   * which is exactly the aliasing bug that appears months later when someone
+   * tidies up an old post and an unrelated one loses its image.
+   */
+  copy(key: string, opts: { prefix: string }): Promise<StoredObject>
 }
 
 export class LocalDiskDriver implements StorageDriver {
@@ -88,6 +98,23 @@ export class LocalDiskDriver implements StorageDriver {
   async remove(key: string): Promise<void> {
     // A missing object is the desired end state, not a failure.
     await unlink(this.resolvePath(key)).catch(() => {})
+  }
+
+  async copy(key: string, opts: { prefix: string }): Promise<StoredObject> {
+    const from = this.resolvePath(key)
+    // Keep the original's extension: it is what decides how the bytes are
+    // served back, and a 200 MB .mov copied as .bin plays nowhere.
+    const dot = key.lastIndexOf('.')
+    const ext = dot >= 0 ? key.slice(dot + 1) : 'bin'
+
+    const newKeyPath = this.newKey(opts.prefix, ext)
+    const to = this.resolvePath(newKeyPath)
+    await mkdir(dirname(to), { recursive: true })
+    // copyFile rather than read-then-write: it stays in the kernel, so a large
+    // video never passes through this process's heap.
+    await copyFile(from, to)
+    const { size } = await stat(to)
+    return { key: newKeyPath, sizeBytes: size }
   }
 }
 

@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Check,
+  Copy,
   ImagePlus,
   Loader2,
   MessageSquare,
@@ -111,6 +112,28 @@ export function ContentDetailDialog({
       await invalidate()
       // The feed grid is built from these assets, so it is stale now too.
       await queryClient.invalidateQueries({ queryKey: ['feed'] })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  /**
+   * Repeat a post without retyping it or re-uploading its creative.
+   *
+   * The copy lands in the Ideas Bank as an unscheduled idea, so it is never
+   * mistaken for something already approved or already on the calendar.
+   */
+  const duplicate = useMutation({
+    mutationFn: () =>
+      api.post<{ assetsCopied: number }>(`/content/${itemId}/duplicate`),
+    onSuccess: async (result) => {
+      await invalidate()
+      await queryClient.invalidateQueries({ queryKey: ['feed'] })
+      toast.success(
+        result.assetsCopied
+          ? `Copied to the Ideas Bank with ${result.assetsCopied} asset${result.assetsCopied === 1 ? '' : 's'}.`
+          : 'Copied to the Ideas Bank.'
+      )
+      onClose()
     },
     onError: (err: Error) => toast.error(err.message),
   })
@@ -280,11 +303,26 @@ export function ContentDetailDialog({
                     }}
                   />
                 </div>
-                <p className='text-xs text-muted-foreground sm:col-span-3'>
-                  Giving this a date puts it on the calendar. It is the same
-                  record either way — there is no separate calendar entry to
-                  keep in step.
-                </p>
+                <div className='flex flex-wrap items-center justify-between gap-2 sm:col-span-3'>
+                  <p className='text-xs text-muted-foreground'>
+                    Giving this a date puts it on the calendar. It is the same
+                    record either way — there is no separate calendar entry to
+                    keep in step.
+                  </p>
+                  <Button
+                    size='sm'
+                    variant='outline'
+                    onClick={() => duplicate.mutate()}
+                    disabled={duplicate.isPending}
+                  >
+                    {duplicate.isPending ? (
+                      <Loader2 className='animate-spin' />
+                    ) : (
+                      <Copy />
+                    )}
+                    Duplicate
+                  </Button>
+                </div>
               </div>
             )}
 

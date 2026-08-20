@@ -12,6 +12,7 @@ import {
 import { user } from '../db/auth-schema.js'
 import { audit, hhmm, recordActivity } from '../lib/audit.js'
 import { requireAuth, requireStaff } from '../middleware/session.js'
+import { storage } from '../lib/storage.js'
 import { resolveClientId } from '../lib/resolve-client.js'
 
 export const contentRoutes = new Hono()
@@ -389,6 +390,156 @@ contentRoutes.delete('/:id', requireStaff, async (c) => {
 
   if (!deleted.length) return c.json({ error: 'Not found' }, 404)
   return c.json({ ok: true })
+})
+
+/* -------------------------------------------------------------- duplicate */
+
+/**
+ * Copy a post, creative and all.
+ *
+ * A content calendar is repetitive by nature — the same format, the same
+ * caption skeleton, the same assets, a month later — and without this every
+ * repeat meant retyping the post and re-uploading its images. It is the single
+ * biggest per-post time saving available in this screen.
+ *
+ * What the copy deliberately does NOT inherit:
+ *
+ *   status          -> back to `idea`. A copy has not been reviewed, and
+ *                      inheriting `approved` would let a post reach the
+ *                      calendar carrying an approval nobody gave it.
+ *   visibleToClient -> false, which follows from the status reset. Copying a
+ *                      shared post must not silently share the copy.
+ *   scheduledAt     -> null, with its time. Two posts on one slot is never
+ *                      what "duplicate" meant.
+ *   feedOrder       -> null, so it does not fight the original for a cell.
+ *
+ * Assets are copied as new objects rather than new rows pointing at the same
+ * keys. Sharing them would couple the two posts: deleting one's bytes would
+ * empty the other, months later and for no visible reason.
+ */
+
+/**
+ * What a copy inherits, and what it must not.
+ *
+ * Pulled out of the handler so the rule can be asserted directly. The two that
+ * matter are `status` and `visibleToClient`: a copy that inherited `approved`
+ * would reach the calendar carrying an approval nobody gave it, and one that
+ * inherited a shared flag would put unreviewed work in front of the client.
+ */
+export function duplicateFields(source: {
+  title: string
+  type: (typeof CONTENT_TYPES)[number]
+  caption: string | null
+}) {
+  return {
+    title: `${source.title} (copy)`.slice(0, 200),
+    type: source.type,
+    caption: source.caption,
+    status: 'idea' as const,
+    scheduledAt: null,
+    scheduledTime: null,
+    feedOrder: null,
+    visibleToClient: false,
+  }
+}
+contentRoutes.post('/:id/duplicate', requireStaff, async (c) => {
+  const id = c.req.param('id')
+  const actorId = c.get('user')?.id ?? null
+
+  const source = await withTenant(c.get('tenant'), async (tx) => {
+    const [item] = await tx
+      .select()
+      .from(contentItems)
+      .where(eq(contentItems.id, id))
+      .limit(1)
+    if (!item) return null
+
+    const assets = await tx
+      .select()
+      .from(contentAssets)
+      .where(eq(contentAssets.contentItemId, id))
+      .orderBy(asc(contentAssets.sortOrder))
+
+    return { item, assets }
+  })
+  if (!source) return c.json({ error: 'Not found' }, 404)
+
+  /**
+   * Bytes are copied BEFORE the transaction opens.
+   *
+   * Copying a 200 MB video inside the transaction would hold it open for the
+   * length of a disk copy, and a failure halfway would roll back rows while
+   * leaving the copied files behind. Doing it first means a failure leaves
+   * only orphaned bytes, which are cleaned up in the catch.
+   */
+  const copied: { key: string; thumb: string | null; poster: string | null }[] = []
+  const written: string[] = []
+  try {
+    for (const asset of source.assets) {
+      const main = await storage.copy(asset.storageKey, {
+        prefix: source.item.clientId,
+      })
+      written.push(main.key)
+      const thumb = asset.thumbKey
+        ? await storage.copy(asset.thumbKey, { prefix: source.item.clientId })
+        : null
+      if (thumb) written.push(thumb.key)
+      const poster = asset.posterKey
+        ? await storage.copy(asset.posterKey, { prefix: source.item.clientId })
+        : null
+      if (poster) written.push(poster.key)
+      copied.push({
+        key: main.key,
+        thumb: thumb?.key ?? null,
+        poster: poster?.key ?? null,
+      })
+    }
+
+    const created = await withTenant(c.get('tenant'), async (tx) => {
+      const [row] = await tx
+        .insert(contentItems)
+        .values({
+          clientId: source.item.clientId,
+          ...duplicateFields(source.item),
+          createdBy: actorId,
+        })
+        .returning()
+
+      for (const [index, asset] of source.assets.entries()) {
+        await tx.insert(contentAssets).values({
+          clientId: source.item.clientId,
+          contentItemId: row.id,
+          kind: asset.kind,
+          storageKey: copied[index].key,
+          thumbKey: copied[index].thumb,
+          posterKey: copied[index].poster,
+          durationMs: asset.durationMs,
+          width: asset.width,
+          height: asset.height,
+          mime: asset.mime,
+          sizeBytes: asset.sizeBytes,
+          sortOrder: asset.sortOrder,
+          uploadedBy: actorId,
+        })
+      }
+
+      await audit(tx, {
+        actorId,
+        action: 'content.duplicate',
+        entity: 'content_item',
+        entityId: row.id,
+        meta: { from: id, assets: source.assets.length },
+      })
+
+      return row
+    })
+
+    return c.json({ item: created, assetsCopied: source.assets.length }, 201)
+  } catch (err) {
+    // The rows never committed, so nothing points at these bytes.
+    for (const key of written) await storage.remove(key)
+    throw err
+  }
 })
 
 /* ---------------------------------------------------------------- comments */

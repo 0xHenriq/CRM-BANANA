@@ -4,6 +4,7 @@ import {
   linkPatchSchema,
   taskPatchSchema,
 } from '../routes/portal.js'
+import { duplicateFields } from '../routes/content.js'
 
 /**
  * PATCH schemas must not carry defaults.
@@ -44,5 +45,49 @@ describe('patch schemas do not invent fields', () => {
       label: 'A',
       url: 'https://x.test',
     })
+  })
+})
+
+/**
+ * A duplicate must not inherit approval.
+ *
+ * The copy is a fresh idea: nobody has reviewed it. Inheriting `approved` or
+ * `scheduled` would put a post on the calendar carrying a decision that was
+ * made about different creative, and inheriting `visibleToClient` would show
+ * the client unreviewed work — the same shape of bug as the PATCH defaults
+ * above, arrived at from the other direction.
+ */
+describe('duplicating a post resets what it must', () => {
+  const approvedAndShared = {
+    title: 'Autumn range hero',
+    type: 'carousel' as const,
+    caption: 'Shop the drop',
+  }
+
+  it('starts the copy as an unreviewed, unshared idea', () => {
+    const copy = duplicateFields(approvedAndShared)
+    expect(copy.status).toBe('idea')
+    expect(copy.visibleToClient).toBe(false)
+  })
+
+  it('takes the copy off the calendar and out of the feed', () => {
+    const copy = duplicateFields(approvedAndShared)
+    expect(copy.scheduledAt).toBeNull()
+    expect(copy.scheduledTime).toBeNull()
+    expect(copy.feedOrder).toBeNull()
+  })
+
+  it('keeps the creative but marks the title', () => {
+    const copy = duplicateFields(approvedAndShared)
+    expect(copy.title).toBe('Autumn range hero (copy)')
+    expect(copy.type).toBe('carousel')
+    expect(copy.caption).toBe('Shop the drop')
+  })
+
+  it('does not overflow the title column', () => {
+    // title is varchar-bounded at 200 by the create schema; " (copy)" on an
+    // already-long name has to be truncated rather than rejected at insert.
+    const copy = duplicateFields({ ...approvedAndShared, title: 'x'.repeat(200) })
+    expect(copy.title.length).toBe(200)
   })
 })
