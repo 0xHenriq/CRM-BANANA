@@ -10,7 +10,7 @@ import {
   contentItems,
 } from '../db/schema.js'
 import { user } from '../db/auth-schema.js'
-import { audit, recordActivity } from '../lib/audit.js'
+import { audit, hhmm, recordActivity } from '../lib/audit.js'
 import { requireAuth, requireStaff } from '../middleware/session.js'
 import { resolveClientId } from '../lib/resolve-client.js'
 
@@ -64,6 +64,7 @@ contentRoutes.get('/', async (c) => {
         type: contentItems.type,
         status: contentItems.status,
         scheduledAt: contentItems.scheduledAt,
+        scheduledTime: contentItems.scheduledTime,
         caption: contentItems.caption,
         feedOrder: contentItems.feedOrder,
         visibleToClient: contentItems.visibleToClient,
@@ -100,12 +101,17 @@ contentRoutes.get('/awaiting', async (c) => {
         title: contentItems.title,
         type: contentItems.type,
         scheduledAt: contentItems.scheduledAt,
+        scheduledTime: contentItems.scheduledTime,
         updatedAt: contentItems.updatedAt,
       })
       .from(contentItems)
       .innerJoin(clients, eq(clients.id, contentItems.clientId))
       .where(eq(contentItems.status, 'ready_for_review'))
-      .orderBy(asc(contentItems.scheduledAt), desc(contentItems.updatedAt))
+      .orderBy(
+        asc(contentItems.scheduledAt),
+        asc(contentItems.scheduledTime),
+        desc(contentItems.updatedAt)
+      )
   )
 
   // RLS already limits a client to their own workspace, so the same query
@@ -176,6 +182,14 @@ const createSchema = z.object({
   status: z.enum(CONTENT_STATUSES).default('idea'),
   /** Null means "an idea"; a date puts it on the calendar. Same row either way. */
   scheduledAt: z.string().date().nullish(),
+  /**
+   * HH:MM, 24-hour. A bare wall-clock time, so no timezone and no seconds —
+   * "post at 18:30" is an intent about the audience's clock, not an instant.
+   */
+  scheduledTime: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use a 24-hour time like 18:30')
+    .nullish(),
   caption: z.string().max(4000).nullish(),
 })
 
@@ -191,6 +205,10 @@ const patchSchema = z.object({
   type: z.enum(CONTENT_TYPES).optional(),
   status: z.enum(CONTENT_STATUSES).optional(),
   scheduledAt: z.string().date().nullish(),
+  scheduledTime: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use a 24-hour time like 18:30')
+    .nullish(),
   caption: z.string().max(4000).nullish(),
   feedOrder: z.number().int().nullish(),
 })
@@ -236,6 +254,7 @@ contentRoutes.post('/', requireStaff, async (c) => {
         type: data.type,
         status: data.status,
         scheduledAt: data.scheduledAt ?? null,
+        scheduledTime: data.scheduledTime ?? null,
         caption: data.caption ?? null,
         visibleToClient: shouldShare(data.status, false),
         createdBy: actorId,
@@ -274,10 +293,25 @@ contentRoutes.patch('/:id', requireStaff, async (c) => {
       .limit(1)
     if (!before) return null
 
+    /**
+     * A time without a date is not a thing.
+     *
+     * Taking a post off the calendar leaves "18:30, no date", which the UI
+     * would have to invent a way to render and which reappears if the post is
+     * later scheduled onto a different day at a time nobody chose. Clearing
+     * the date clears the time with it, unless the same request sets one.
+     */
+    const clearsDate = patch.scheduledAt === null
+    const timePatch =
+      clearsDate && patch.scheduledTime === undefined
+        ? { scheduledTime: null }
+        : {}
+
     const [row] = await tx
       .update(contentItems)
       .set({
         ...patch,
+        ...timePatch,
         visibleToClient: shouldShare(patch.status, before.visibleToClient),
         updatedAt: new Date(),
       })
@@ -297,17 +331,24 @@ contentRoutes.patch('/:id', requireStaff, async (c) => {
 
     // Rescheduling is the calendar's whole job, so it belongs in the timeline
     // as much as a status change does.
-    if (
+    const dateMoved =
       patch.scheduledAt !== undefined &&
       patch.scheduledAt !== before.scheduledAt
-    ) {
+    const timeMoved =
+      patch.scheduledTime !== undefined &&
+      patch.scheduledTime !== hhmm(before.scheduledTime)
+
+    if (dateMoved || timeMoved) {
+      const when = row.scheduledAt
+        ? `${row.scheduledAt}${row.scheduledTime ? ` at ${hhmm(row.scheduledTime)}` : ''}`
+        : 'no date'
       await recordActivity(tx, {
         clientId: row.clientId,
         entityType: 'content_item',
         entityId: row.id,
         actorId,
         kind: 'status_change',
-        body: `"${row.title}" scheduled for ${row.scheduledAt ?? 'no date'}`,
+        body: `"${row.title}" scheduled for ${when}`,
       })
     }
 

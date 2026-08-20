@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import {
   api,
   CONTENT_TYPES,
+  formatTime,
   type ContentItem,
   type ContentType,
 } from '@/lib/api'
@@ -89,6 +90,13 @@ export function ContentCalendar() {
       list.push(item)
       map.set(item.scheduledAt, list)
     }
+    // Within a day, earliest first. A zero-padded 'HH:MM:SS' sorts correctly as
+    // a string, and posts with no time yet go last rather than jumping to 00:00.
+    for (const list of map.values()) {
+      list.sort((a, b) =>
+        (a.scheduledTime ?? '99').localeCompare(b.scheduledTime ?? '99')
+      )
+    }
     return map
   }, [data])
 
@@ -96,7 +104,11 @@ export function ContentCalendar() {
     const prefix = `${cursor.year}-${String(cursor.month + 1).padStart(2, '0')}`
     return (data?.items ?? [])
       .filter((i) => i.scheduledAt?.startsWith(prefix))
-      .sort((a, b) => (a.scheduledAt ?? '').localeCompare(b.scheduledAt ?? ''))
+      .sort((a, b) =>
+        `${a.scheduledAt ?? ''} ${a.scheduledTime ?? '99'}`.localeCompare(
+          `${b.scheduledAt ?? ''} ${b.scheduledTime ?? '99'}`
+        )
+      )
   }, [data, cursor])
 
   const grid = useMemo(() => {
@@ -207,7 +219,9 @@ export function ContentCalendar() {
                             {item.title}
                           </span>
                           <span className='block text-xs text-muted-foreground'>
-                            {TYPE_LABEL[item.type]}
+                            {item.scheduledTime
+                              ? `${formatTime(item.scheduledTime)} · ${TYPE_LABEL[item.type]}`
+                              : TYPE_LABEL[item.type]}
                           </span>
                         </span>
                       </button>
@@ -283,8 +297,13 @@ export function ContentCalendar() {
                                 'text-[0.625rem] font-bold text-bd-ink hover:opacity-80',
                                 TYPE_TONE[item.type]
                               )}
-                              title={`${TYPE_LABEL[item.type]}: ${item.title}`}
+                              title={`${item.scheduledTime ? formatTime(item.scheduledTime) + ' ' : ''}${TYPE_LABEL[item.type]}: ${item.title}`}
                             >
+                              {item.scheduledTime && (
+                                <span className='font-extrabold'>
+                                  {formatTime(item.scheduledTime)}{' '}
+                                </span>
+                              )}
                               {item.title}
                             </button>
                           </li>
@@ -342,6 +361,9 @@ function SchedulePostDialog({
   const [title, setTitle] = useState('')
   const [type, setType] = useState<ContentType>('reel')
   const [pickedId, setPickedId] = useState('')
+  // Her most common slot, so the field is useful without being retyped every
+  // time. Blank is still allowed — the column is nullable on purpose.
+  const [time, setTime] = useState('09:00')
 
   const unscheduled = existing.filter((i) => !i.scheduledAt)
 
@@ -349,6 +371,7 @@ function SchedulePostDialog({
     setTitle('')
     setType('reel')
     setPickedId('')
+    setTime('09:00')
     setMode('new')
   }
 
@@ -358,6 +381,7 @@ function SchedulePostDialog({
         title: title.trim(),
         type,
         scheduledAt: date,
+        scheduledTime: time || null,
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['content'] })
@@ -368,7 +392,11 @@ function SchedulePostDialog({
   })
 
   const schedule = useMutation({
-    mutationFn: () => api.patch(`/content/${pickedId}`, { scheduledAt: date }),
+    mutationFn: () =>
+      api.patch(`/content/${pickedId}`, {
+        scheduledAt: date,
+        scheduledTime: time || null,
+      }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['content'] })
       reset()
@@ -453,6 +481,20 @@ function SchedulePostDialog({
             </p>
           </div>
         )}
+
+        <div className='grid gap-1.5'>
+          <Label htmlFor='cal-time'>Time of day</Label>
+          <Input
+            id='cal-time'
+            type='time'
+            className='w-32'
+            value={time}
+            onChange={(e) => setTime(e.target.value)}
+          />
+          <p className='text-xs text-muted-foreground'>
+            Leave blank if the slot is not decided yet.
+          </p>
+        </div>
 
         <DialogFooter>
           {mode === 'new' ? (

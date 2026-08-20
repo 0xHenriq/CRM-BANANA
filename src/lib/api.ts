@@ -272,6 +272,8 @@ export type ContentItem = {
   type: ContentType
   status: ContentStatus
   scheduledAt: string | null
+  /** 'HH:MM:SS' as Postgres returns it; render with `formatTime`. */
+  scheduledTime: string | null
   caption: string | null
   feedOrder: number | null
   visibleToClient: boolean
@@ -374,6 +376,16 @@ export function fileUrl(fileId: string): string {
   return `/api/media/files/${fileId}`
 }
 
+/**
+ * 'HH:MM:SS' from Postgres down to the 'HH:MM' people read and type.
+ *
+ * Seconds are noise for a posting time and the picker does not offer them, so
+ * showing them would imply a precision nobody set.
+ */
+export function formatTime(value: string | null | undefined): string {
+  return value ? value.slice(0, 5) : ''
+}
+
 /** Human file size. Bytes are never the useful unit above about a kilobyte. */
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes === null || bytes === undefined) return ''
@@ -430,5 +442,6 @@ export type AwaitingItem = {
   title: string
   type: ContentType
   scheduledAt: string | null
+  scheduledTime: string | null
   updatedAt: string
 }

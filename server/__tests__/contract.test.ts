@@ -5,11 +5,13 @@ import {
   CONTENT_TYPES as SERVER_TYPES,
 } from '../routes/content.js'
 import { contentStatus, contentType } from '../db/schema.js'
+import { hhmm } from '../lib/audit.js'
 import {
   CONTENT_STATUSES as CLIENT_STATUSES,
   CONTENT_TYPES as CLIENT_TYPES,
   DEAL_STAGES as CLIENT_STAGES,
   formatPence,
+  formatTime,
   sumPence,
   toPence,
 } from '../../src/lib/api.js'
@@ -52,6 +54,36 @@ describe('content vocabulary', () => {
   it('statuses match, and in the same pipeline order', () => {
     expect([...SERVER_STATUSES]).toEqual([...CLIENT_STATUSES])
     expect([...contentStatus.enumValues]).toEqual([...CLIENT_STATUSES])
+  })
+})
+
+/**
+ * Posting time.
+ *
+ * Postgres returns a `time` column as 'HH:MM:SS'; a picker sends 'HH:MM'. Two
+ * places have to agree on that: the server compares the stored value against
+ * what a PATCH sent, to decide whether the post actually moved, and the client
+ * renders it. If they disagree, '18:30' never equals '18:30:00' and every save
+ * writes a timeline entry claiming the post was rescheduled when nothing
+ * changed — noise in the one record she reads to answer "when did this move".
+ */
+describe('posting time', () => {
+  it('normalises the stored format to what a picker sends', () => {
+    expect(hhmm('18:30:00')).toBe('18:30')
+    expect(formatTime('18:30:00')).toBe('18:30')
+  })
+
+  it('agrees across the server and the client, including midnight', () => {
+    for (const stored of ['00:00:00', '09:05:00', '23:59:00', '18:30']) {
+      expect(hhmm(stored)).toBe(formatTime(stored))
+    }
+  })
+
+  it('treats an absent time as absent rather than as midnight', () => {
+    // Coercing null to '00:00' would put every undated idea at the top of a
+    // day and claim a slot nobody chose.
+    expect(hhmm(null)).toBeNull()
+    expect(formatTime(null)).toBe('')
   })
 })
 

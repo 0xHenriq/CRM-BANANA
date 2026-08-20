@@ -69,3 +69,15 @@ export function slugify(name: string): string {
       .slice(0, 60) || 'client'
   )
 }
+
+/**
+ * Postgres hands a `time` column back as 'HH:MM:SS'; people write 'HH:MM'.
+ *
+ * Normalising in one place matters because the value is compared against what
+ * a PATCH body sent — '18:30' never equals '18:30:00', so without this every
+ * save looks like a reschedule and writes a timeline entry saying so.
+ */
+export function hhmm(value: string | null | undefined): string | null {
+  if (!value) return null
+  return value.slice(0, 5)
+}

@@ -16,6 +16,7 @@ import {
   uploadMedia,
   CONTENT_STATUSES,
   CONTENT_TYPES,
+  formatTime,
   type ContentDetail,
   type ContentItem,
   type ContentStatus,
@@ -161,6 +162,9 @@ export function ContentDetailDialog({
                   {item.scheduledAt ? (
                     <span className='text-xs text-muted-foreground'>
                       Scheduled {item.scheduledAt}
+                      {item.scheduledTime
+                        ? ` at ${formatTime(item.scheduledTime)}`
+                        : ''}
                     </span>
                   ) : (
                     <span className='text-xs text-muted-foreground'>
@@ -230,15 +234,34 @@ export function ContentDetailDialog({
                 </div>
                 <div className='grid gap-1.5'>
                   <Label htmlFor='cd-date'>Scheduled for</Label>
-                  <Input
-                    id='cd-date'
-                    type='date'
-                    className='h-8'
-                    value={item.scheduledAt ?? ''}
-                    onChange={(e) =>
-                      patch.mutate({ scheduledAt: e.target.value || null })
-                    }
-                  />
+                  <div className='flex gap-1.5'>
+                    <Input
+                      id='cd-date'
+                      type='date'
+                      className='h-8 flex-1'
+                      value={item.scheduledAt ?? ''}
+                      onChange={(e) =>
+                        patch.mutate({ scheduledAt: e.target.value || null })
+                      }
+                    />
+                    {/*
+                      Posting time is a large part of what the agency is paid
+                      for, so it sits beside the date rather than behind an
+                      "advanced" disclosure. Disabled until there is a date:
+                      a time with no day is not a schedule, and the server
+                      clears it if the date goes away.
+                    */}
+                    <Input
+                      type='time'
+                      className='h-8 w-28'
+                      aria-label='Time of day'
+                      disabled={!item.scheduledAt}
+                      value={formatTime(item.scheduledTime)}
+                      onChange={(e) =>
+                        patch.mutate({ scheduledTime: e.target.value || null })
+                      }
+                    />
+                  </div>
                 </div>
                 <div className='grid gap-1.5 sm:col-span-3'>
                   <Label htmlFor='cd-caption'>Caption</Label>

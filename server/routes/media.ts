@@ -544,6 +544,7 @@ mediaRoutes.get('/feed', async (c) => {
         type,
         status,
         scheduled_at  as "scheduledAt",
+        scheduled_time as "scheduledTime",
         feed_order    as "feedOrder",
         asset_id      as "assetId",
         asset_kind    as "assetKind"
@@ -554,6 +555,7 @@ mediaRoutes.get('/feed', async (c) => {
           ci.type          as type,
           ci.status        as status,
           ci.scheduled_at  as scheduled_at,
+          ci.scheduled_time as scheduled_time,
           ci.feed_order    as feed_order,
           ca.id            as asset_id,
           ca.kind          as asset_kind
@@ -562,7 +564,9 @@ mediaRoutes.get('/feed', async (c) => {
         where ci.client_id = ${clientId}
         order by ci.id, ca.sort_order asc, ca.created_at asc
       ) first_assets
-      order by feed_order asc nulls last, scheduled_at asc nulls last
+      order by feed_order asc nulls last,
+               scheduled_at asc nulls last,
+               scheduled_time asc nulls last
     `)
   )
 

@@ -25,6 +25,7 @@ import {
   pgEnum,
   pgTable,
   text,
+  time,
   timestamp,
   uniqueIndex,
   uuid,
@@ -365,6 +366,21 @@ export const contentItems = pgTable(
     type: contentType('type').notNull().default('graphic'),
     status: contentStatus('status').notNull().default('idea'),
     scheduledAt: date('scheduled_at'),
+    /**
+     * Time of day, in the client's local reckoning, as a bare `time`.
+     *
+     * Posting time is a large part of what an agency is paid for — 9am on a
+     * Tuesday and 9pm on a Tuesday are different decisions — and a plain date
+     * could not express it, so two posts on the same day had no order at all
+     * beyond a manual feed position.
+     *
+     * Deliberately NOT a timestamptz. "Post at 18:30" means half six where the
+     * audience is; it is a wall-clock intent, not an instant, and storing it as
+     * an instant would silently shift it twice a year at the DST boundary.
+     * Nullable, because an undated idea has no time either and a dated post
+     * may genuinely not have been given one yet.
+     */
+    scheduledTime: time('scheduled_time'),
     caption: text('caption'),
     feedOrder: integer('feed_order'),
     /**

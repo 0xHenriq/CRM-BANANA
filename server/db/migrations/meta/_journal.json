@@ -57,6 +57,13 @@
       "when": 1786999621300,
       "tag": "0007_strict_staff_flag",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787224181417,
+      "tag": "0008_wild_harpoon",
+      "breakpoints": true
     }
   ]
 }
