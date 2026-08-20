@@ -11,8 +11,10 @@ import {
 import { audit } from '../lib/audit.js'
 import {
   MAX_UPLOAD_BYTES,
+  isAcceptedDocumentMime,
   isAcceptedMime,
   processUpload,
+  sniffDocumentMime,
   sniffMime,
 } from '../lib/media.js'
 import { isUuid, resolveClientId } from '../lib/resolve-client.js'
@@ -86,30 +88,47 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
 
   const buf = Buffer.from(await file.arrayBuffer())
 
-  /**
-   * Trust the bytes, not the browser.
-   *
-   * Content-Type comes from the file extension on the client's machine, so a
-   * renamed file arrives claiming whatever the browser inferred. The magic
-   * number is what actually decides.
-   */
-  const sniffed = sniffMime(buf)
-  if (!sniffed || !isAcceptedMime(sniffed)) {
-    return c.json(
-      {
-        error:
-          'That does not look like an image or a video we can handle. JPEG, PNG, WebP, GIF, AVIF, MP4, MOV and WebM are supported.',
-      },
-      415
-    )
-  }
-
   const target = String(form['target'] ?? 'moodboard')
   const contentItemId = form['contentItemId']
     ? String(form['contentItemId'])
     : null
   const caption = form['caption'] ? String(form['caption']) : null
   const name = file.name || 'Untitled'
+
+  /**
+   * Trust the bytes, not the browser.
+   *
+   * Content-Type comes from the file extension on the client's machine, so a
+   * renamed file arrives claiming whatever the browser inferred. The magic
+   * number is what actually decides.
+   *
+   * `target` widens the allowlist rather than replacing it. The File Folder
+   * holds proposals, agreements and invoices, so it takes documents as well as
+   * media; a content asset and a moodboard tile stay images and video, because
+   * a PDF in the 3x3 feed grid is not a thing. Deciding this per target rather
+   * than globally is what keeps the folder useful without letting a document
+   * reach the feed.
+   */
+  const sniffed =
+    sniffMime(buf) ??
+    (target === 'file' ? sniffDocumentMime(buf, name) : null)
+
+  const accepted =
+    !!sniffed &&
+    (isAcceptedMime(sniffed) ||
+      (target === 'file' && isAcceptedDocumentMime(sniffed)))
+
+  if (!accepted) {
+    return c.json(
+      {
+        error:
+          target === 'file'
+            ? 'That file type is not supported. PDF, Word, Excel, PowerPoint, CSV and plain text are, along with images and video.'
+            : 'That does not look like an image or a video we can handle. JPEG, PNG, WebP, GIF, AVIF, MP4, MOV and WebM are supported.',
+      },
+      415
+    )
+  }
 
   /**
    * Which workspace these bytes belong to.
@@ -170,6 +189,16 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
       if (target === 'content') {
 
         if (!contentItemId) throw new Error('contentItemId is required')
+
+        // Unreachable: sniffDocumentMime is only consulted for target=file, so
+        // a document cannot get this far. Asserted rather than cast because
+        // content_assets.kind is an image|video enum, and the one way to end
+        // up writing a PDF into the feed grid is for a future edit to widen
+        // the sniff and for this to be a silent `as` instead of a check.
+        if (processed.kind === 'document') {
+          throw new Error('A document cannot be attached to a content item')
+        }
+
         const [item] = await tx
           .select({ id: contentItems.id })
           .from(contentItems)
@@ -313,8 +342,51 @@ export function parseRange(
   return { start, end }
 }
 
-async function streamKey(c: Context, key: string, mime: string | null) {
+/**
+ * RFC 6266 `filename*`, so a download keeps the name she gave it.
+ *
+ * The plain `filename=` parameter is a quoted ASCII string: a quote or a
+ * backslash in the name breaks out of it, and anything non-ASCII — an em dash
+ * in "Acme — Agreement.pdf", say — is not representable at all. Both forms are
+ * emitted, the ASCII one scrubbed as a fallback for anything that cannot read
+ * the encoded one.
+ */
+export function contentDisposition(filename: string): string {
+  const scrubbed = filename.replace(/[^\w.\- ]+/g, '_').trim()
+  // A name that is entirely non-ASCII — "документ.pdf", or a string of em
+  // dashes — scrubs down to nothing but separators, and "_.pdf" is no more
+  // useful to the person saving it than "download" is. Require at least one
+  // alphanumeric before trusting the fallback; the RFC 6266 form below still
+  // carries the real name for every browser of the last decade.
+  const fallback = /[a-z0-9]/i.test(scrubbed) ? scrubbed : 'download'
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+}
+
+async function streamKey(
+  c: Context,
+  key: string,
+  mime: string | null,
+  /**
+   * Set for File Folder downloads.
+   *
+   * These are arbitrary uploaded documents served from the application's own
+   * origin, so rendering one inline would run it there — an uploaded .html or
+   * .svg becomes stored XSS against a signed-in session, with the session
+   * cookie in scope. `attachment` makes the browser save rather than render,
+   * and `nosniff` stops it second-guessing the declared type. Images, video
+   * and posters are unaffected: they must render inline, and their types are
+   * fixed by magic-number sniffing rather than taken from the request.
+   */
+  download?: { filename: string }
+) {
   const total = await storage.size(key)
+
+  const extra: Record<string, string> = download
+    ? {
+        'Content-Disposition': contentDisposition(download.filename),
+        'X-Content-Type-Options': 'nosniff',
+      }
+    : {}
 
   // Range support is what makes video seekable; without it Safari refuses to
   // play at all.
@@ -328,6 +400,7 @@ async function streamKey(c: Context, key: string, mime: string | null) {
     const { start, end } = range
     const stream = storage.read(key, { start, end })
     return c.body(stream as unknown as ReadableStream, 206, {
+      ...extra,
       'Content-Type': mime ?? 'application/octet-stream',
       'Content-Length': String(end - start + 1),
       'Content-Range': `bytes ${start}-${end}/${total}`,
@@ -338,6 +411,7 @@ async function streamKey(c: Context, key: string, mime: string | null) {
 
 
   return c.body(storage.read(key) as unknown as ReadableStream, 200, {
+    ...extra,
     'Content-Type': mime ?? 'application/octet-stream',
     'Content-Length': String(total),
     'Accept-Ranges': 'bytes',
@@ -390,7 +464,7 @@ mediaRoutes.get('/files/:id', async (c) => {
     tx.select().from(files).where(eq(files.id, c.req.param('id'))).limit(1)
   )
   if (!row?.storageKey) return c.json({ error: 'Not found' }, 404)
-  return streamKey(c, row.storageKey, row.mime)
+  return streamKey(c, row.storageKey, row.mime, { filename: row.name })
 })
 
 /* --------------------------------------------------------------- moodboard */

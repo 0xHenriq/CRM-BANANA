@@ -1,17 +1,23 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
+  CornerDownRight,
+  Download,
   ExternalLink,
   EyeOff,
   FileText,
+  Loader2,
   Plus,
   Send,
   Trash2,
-  CornerDownRight,
+  Upload,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   api,
+  fileUrl,
+  formatBytes,
+  uploadMedia,
   type NoticePost,
   type PortalFile,
   type PortalTask,
@@ -56,9 +62,33 @@ export function FileFolder({
   const queryClient = useQueryClient()
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ name: '', externalUrl: '' })
+  const fileInput = useRef<HTMLInputElement>(null)
+  const [dragging, setDragging] = useState(false)
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ['portal'] })
+
+  /**
+   * Real uploads, not just pasted links.
+   *
+   * The folder is where proposals, agreements, invoices and reports live, and
+   * until now it could only hold a URL to somewhere else — so the documents
+   * themselves stayed in Drive and the portal described them rather than
+   * holding them. The pipeline always supported `target=file`; nothing called
+   * it, and it refused anything that was not an image or a video anyway.
+   *
+   * Sequential rather than parallel: each upload is written and hashed on the
+   * server, and a dozen at once would contend for the same cores for no gain.
+   */
+  const upload = useMutation({
+    mutationFn: async (chosen: FileList | File[]) => {
+      for (const file of Array.from(chosen)) {
+        await uploadMedia(file, { clientId, target: 'file' })
+      }
+    },
+    onSuccess: invalidate,
+    onError: (err: Error) => toast.error(err.message),
+  })
 
   const create = useMutation({
     mutationFn: () =>
@@ -84,25 +114,93 @@ export function FileFolder({
   const remove = useMutation({
     mutationFn: (id: string) => api.del(`/portal/files/${id}`),
     onSuccess: invalidate,
+    onError: (err: Error) => toast.error(err.message),
   })
 
   return (
-    <Card className='crate-card'>
+    <Card
+      className={cn(
+        'crate-card transition-colors',
+        // Drop anywhere on the card, which is where people aim. Only for
+        // staff: a client has no write access to this table.
+        dragging && 'bg-bd-cream ring-2 ring-bd-yellow-deep'
+      )}
+      onDragOver={
+        canEdit
+          ? (e) => {
+              e.preventDefault()
+              setDragging(true)
+            }
+          : undefined
+      }
+      onDragLeave={canEdit ? () => setDragging(false) : undefined}
+      onDrop={
+        canEdit
+          ? (e) => {
+              e.preventDefault()
+              setDragging(false)
+              if (e.dataTransfer.files?.length) {
+                upload.mutate(e.dataTransfer.files)
+              }
+            }
+          : undefined
+      }
+    >
       <CardTitleRow
         title='File Folder'
         action={
-          canEdit &&
-          !adding && (
-            <Button size='sm' variant='outline' onClick={() => setAdding(true)}>
-              <Plus /> Add file
-            </Button>
+          canEdit && (
+            <span className='flex items-center gap-2'>
+              {/*
+                sr-only, never `hidden`: a display:none file input does not
+                reliably open its picker from a programmatic .click() on Safari
+                or iOS, and the failure is completely silent.
+              */}
+              <input
+                ref={fileInput}
+                type='file'
+                multiple
+                className='sr-only'
+                aria-label='Choose files to upload'
+                onChange={(e) => {
+                  if (e.target.files?.length) upload.mutate(e.target.files)
+                  // Reset so choosing the same file twice still fires.
+                  e.target.value = ''
+                }}
+              />
+              <Button
+                size='sm'
+                onClick={() => fileInput.current?.click()}
+                disabled={upload.isPending}
+              >
+                {upload.isPending ? (
+                  <Loader2 className='animate-spin' />
+                ) : (
+                  <Upload />
+                )}
+                Upload
+              </Button>
+              {!adding && (
+                <Button
+                  size='sm'
+                  variant='outline'
+                  onClick={() => setAdding(true)}
+                >
+                  <Plus /> Link
+                </Button>
+              )}
+            </span>
           )
         }
       />
       <CardContent>
         <div className='crate-rule mb-3' />
         {files.length === 0 && !adding ? (
-          <p className='text-sm text-muted-foreground'>No files yet.</p>
+          <p className='text-sm text-muted-foreground'>
+            {canEdit
+              ? 'No files yet. Upload a proposal or an agreement, or drop one here.'
+              : 'No files yet.'}
+          </p>
         ) : (
           <ul className='divide-y divide-bd-rule-soft'>
             {files.map((file) => (
@@ -158,12 +256,12 @@ export function FileFolder({
           </form>
         )}
 
-        {/* Real uploads land in Phase 6. Until then a file is a link, which is
-            exactly what the prototype did — so nothing is lost, and the empty
-            slots she seeds are honest about being slots. */}
-        <p className='mt-3 text-xs text-muted-foreground italic'>
-          Files are links for now. Uploads arrive with the media work.
-        </p>
+        {canEdit && (
+          <p className='mt-3 text-xs text-muted-foreground italic'>
+            Drop files here to upload. PDF, Word, Excel, PowerPoint, CSV, images
+            and video, up to 200 MB each.
+          </p>
+        )}
       </CardContent>
     </Card>
   )
@@ -183,6 +281,9 @@ function FileRow({
   const [editing, setEditing] = useState(false)
   const [url, setUrl] = useState(file.externalUrl ?? '')
   const href = safeHref(file.externalUrl ?? '')
+  // A row holds bytes we stored, or a link to somewhere else, or neither (one
+  // of the five slots seeded when the portal opens).
+  const uploaded = !!file.storageKey
 
   return (
     <li className='group flex items-center gap-2.5 py-2'>
@@ -211,10 +312,31 @@ function FileRow({
         </form>
       ) : (
         <>
-          <span className='min-w-0 flex-1 truncate text-sm font-semibold'>
-            {file.name}
+          <span className='min-w-0 flex-1'>
+            <span className='block truncate text-sm font-semibold'>
+              {file.name}
+            </span>
+            {uploaded && (
+              <span className='block text-[0.6875rem] text-muted-foreground'>
+                {formatBytes(file.sizeBytes)}
+              </span>
+            )}
           </span>
-          {href ? (
+
+          {/*
+            An uploaded file wins over a pasted link: the bytes we hold are
+            more authoritative than a URL to somewhere else, and a row can
+            legitimately have both once she uploads over a link she had
+            previously pasted.
+          */}
+          {uploaded ? (
+            <a
+              href={fileUrl(file.id)}
+              className='flex shrink-0 items-center gap-1 text-xs text-muted-foreground hover:underline'
+            >
+              Download <Download className='size-3' />
+            </a>
+          ) : href ? (
             <a
               href={href}
               target='_blank'
@@ -225,7 +347,7 @@ function FileRow({
             </a>
           ) : (
             <span className='shrink-0 text-xs text-muted-foreground'>
-              Not uploaded yet
+              Empty slot
             </span>
           )}
         </>
@@ -233,14 +355,21 @@ function FileRow({
 
       {canEdit && !editing && (
         <span className='flex shrink-0 gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100'>
-          <Button
-            size='sm'
-            variant='ghost'
-            className='h-7 px-2 text-xs'
-            onClick={() => setEditing(true)}
-          >
-            {href ? 'Change' : 'Add link'}
-          </Button>
+          {/*
+            A row that already holds the bytes is not missing a link, so
+            offering "Add link" on it reads as though the upload had not
+            worked. The link controls belong to link-only rows.
+          */}
+          {!uploaded && (
+            <Button
+              size='sm'
+              variant='ghost'
+              className='h-7 px-2 text-xs'
+              onClick={() => setEditing(true)}
+            >
+              {href ? 'Change' : 'Add link'}
+            </Button>
+          )}
           <Button
             size='icon'
             variant='ghost'

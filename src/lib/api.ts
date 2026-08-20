@@ -363,6 +363,34 @@ export function moodboardUrl(itemId: string): string {
 }
 
 /**
+ * A File Folder download.
+ *
+ * The server answers this with `Content-Disposition: attachment`, so the
+ * browser saves it under its original name rather than rendering it — these
+ * are arbitrary uploaded documents served from our own origin, and rendering
+ * one inline would run it there.
+ */
+export function fileUrl(fileId: string): string {
+  return `/api/media/files/${fileId}`
+}
+
+/** Human file size. Bytes are never the useful unit above about a kilobyte. */
+export function formatBytes(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined) return ''
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB']
+  let value = bytes / 1024
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  // One decimal below 10 so "1.4 MB" does not read as "1 MB"; none above,
+  // where the extra digit is noise.
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
+}
+
+/**
  * Uploads go as multipart, so this deliberately does not use `api.post` —
  * setting Content-Type by hand would omit the multipart boundary.
  */

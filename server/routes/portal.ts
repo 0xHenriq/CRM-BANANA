@@ -6,6 +6,7 @@ import { clients, files, links, noticePosts, tasks } from '../db/schema.js'
 import { user } from '../db/auth-schema.js'
 import { audit } from '../lib/audit.js'
 import { requireAuth, requireStaff } from '../middleware/session.js'
+import { storage } from '../lib/storage.js'
 import { resolveClientId } from '../lib/resolve-client.js'
 
 export const portalRoutes = new Hono()
@@ -214,10 +215,30 @@ portalRoutes.patch('/files/:id', requireStaff, async (c) => {
   return c.json({ file: updated[0] })
 })
 
+/**
+ * Removing a file removes its bytes too.
+ *
+ * The row used to be deleted on its own, so every uploaded document left a
+ * copy on disk that nothing referenced and nothing would ever collect — the
+ * moodboard delete has always cleaned up after itself and this did not. The
+ * key is returned by the delete so the unlink acts on a row that was really
+ * removed, and it happens after the transaction commits: a file left on disk
+ * is waste, but a row whose bytes were deleted underneath it is a broken
+ * download.
+ */
 portalRoutes.delete('/files/:id', requireStaff, async (c) => {
-  await withTenant(c.get('tenant'), (tx) =>
-    tx.delete(files).where(eq(files.id, c.req.param('id')))
+  const removed = await withTenant(c.get('tenant'), (tx) =>
+    tx
+      .delete(files)
+      .where(eq(files.id, c.req.param('id')))
+      .returning({ storageKey: files.storageKey })
   )
+  if (!removed.length) return c.json({ error: 'Not found' }, 404)
+
+  const key = removed[0].storageKey
+  // Link-only rows have no bytes to remove.
+  if (key) await storage.remove(key)
+
   return c.json({ ok: true })
 })
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { sniffMime } from '../lib/media.js'
-import { parseRange } from '../routes/media.js'
+import { sniffDocumentMime, sniffMime } from '../lib/media.js'
+import { contentDisposition, parseRange } from '../routes/media.js'
 
 /**
  * The two pieces of the media path that are pure arithmetic and pure byte
@@ -118,5 +118,99 @@ describe('parseRange', () => {
     expect(parseRange('items=0-99', 1000)).toBeNull()
     expect(parseRange('bytes=-', 1000)).toBeNull()
     expect(parseRange('', 1000)).toBeNull()
+  })
+})
+
+/**
+ * Document sniffing, which the File Folder depends on.
+ *
+ * The folder holds proposals, agreements and invoices, so refusing everything
+ * that is not an image or a video made "upload a file" impossible. These are
+ * the formats she actually sends, and the two cases that matter most are the
+ * ones with no signature of their own: a zip could be any Office format or
+ * none, and CSV/TXT have no magic number at all, so the extension is a claim
+ * that has to be checked rather than believed.
+ */
+
+/** A zip whose central directory names the given OOXML part. */
+function ooxml(part: string): Buffer {
+  const head = Buffer.from([0x50, 0x4b, 0x03, 0x04])
+  return Buffer.concat([head, Buffer.from(`\0\0junk${part}more`, 'latin1')])
+}
+
+describe('sniffDocumentMime', () => {
+  it('reads a PDF from its signature, whatever it is called', () => {
+    const pdf = Buffer.from('%PDF-1.7\n%âãÏÓ\n', 'latin1')
+    expect(sniffDocumentMime(pdf, 'Agreement.pdf')).toBe('application/pdf')
+    // The signature wins over the extension, so a mislabelled file still works.
+    expect(sniffDocumentMime(pdf, 'Agreement.txt')).toBe('application/pdf')
+  })
+
+  it.each([
+    ['docx', 'word/document.xml', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+    ['xlsx', 'xl/workbook.xml', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+    ['pptx', 'ppt/presentation.xml', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+  ])('identifies %s from its OOXML part', (ext, part, expected) => {
+    expect(sniffDocumentMime(ooxml(part), `Social Strategy.${ext}`)).toBe(expected)
+  })
+
+  it('refuses a zip that is not the Office format it claims to be', () => {
+    // A plain .zip renamed to .docx. PK alone cannot tell them apart, which is
+    // exactly why the part name is checked rather than the signature only.
+    const plainZip = Buffer.concat([
+      Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+      Buffer.from('\0\0holiday-photos/img1.jpg', 'latin1'),
+    ])
+    expect(sniffDocumentMime(plainZip, 'Strategy.docx')).toBeNull()
+    // And an Office file whose extension does not match its content.
+    expect(sniffDocumentMime(ooxml('xl/workbook.xml'), 'Notes.docx')).toBeNull()
+  })
+
+  it('accepts csv and txt only when the bytes really are text', () => {
+    const csv = Buffer.from('date,impressions\n2026-08-01,1200\n')
+    expect(sniffDocumentMime(csv, 'August report.csv')).toBe('text/csv')
+    expect(sniffDocumentMime(Buffer.from('hello'), 'notes.txt')).toBe('text/plain')
+
+    // A renamed binary. Without the text check this is how an executable gets
+    // stored as "notes.txt" and handed back to whoever clicks it.
+    const binary = Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0x00, 0x01, 0x02])
+    expect(sniffDocumentMime(binary, 'notes.txt')).toBeNull()
+    // Invalid UTF-8 is refused too.
+    expect(sniffDocumentMime(Buffer.from([0xff, 0xfe, 0xfd]), 'notes.csv')).toBeNull()
+  })
+
+  it('refuses an extension it does not know, however innocent the bytes', () => {
+    expect(sniffDocumentMime(Buffer.from('#!/bin/sh\necho hi\n'), 'run.sh')).toBeNull()
+    expect(sniffDocumentMime(Buffer.from('<script>alert(1)</script>'), 'x.html')).toBeNull()
+    expect(sniffDocumentMime(Buffer.from('<svg onload=alert(1)>'), 'x.svg')).toBeNull()
+  })
+})
+
+/**
+ * Downloads are served from the application's own origin, so the header that
+ * makes the browser save rather than render is the whole defence against an
+ * uploaded document executing against a signed-in session.
+ */
+describe('contentDisposition', () => {
+  it('always marks the response as an attachment', () => {
+    expect(contentDisposition('Agreement.pdf')).toMatch(/^attachment;/)
+  })
+
+  it('survives a quote in the filename without breaking out of the header', () => {
+    const header = contentDisposition('Ac"me\\Agreement.pdf')
+    // The ASCII fallback must not contain a bare quote or backslash, or the
+    // rest of the header is attacker-controlled.
+    const fallback = /filename="([^"]*)"/.exec(header)?.[1] ?? ''
+    expect(fallback).not.toMatch(/["\\]/)
+  })
+
+  it('carries a non-ASCII name through the RFC 6266 form', () => {
+    const header = contentDisposition('Acme — Agreement.pdf')
+    expect(header).toContain("filename*=UTF-8''")
+    expect(header).toContain(encodeURIComponent('Acme — Agreement.pdf'))
+  })
+
+  it('never emits an empty filename', () => {
+    expect(contentDisposition('———')).toMatch(/filename="download"/)
   })
 })

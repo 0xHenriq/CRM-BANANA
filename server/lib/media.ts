@@ -26,6 +26,49 @@ export const VIDEO_MIME: Record<string, string> = {
 }
 
 /**
+ * Documents, accepted ONLY by the File Folder.
+ *
+ * The folder's whole job is proposals, agreements, invoices and reports, and
+ * those are PDFs and Office files — so a pipeline that took images and video
+ * only made "upload a file" impossible. A content asset or a moodboard tile is
+ * a different thing: a PDF in the 3x3 feed grid is meaningless, so `target`
+ * decides which of these maps applies rather than one global allowlist.
+ */
+export const DOCUMENT_MIME: Record<string, string> = {
+  'application/pdf': 'pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+    'docx',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation':
+    'pptx',
+  'text/csv': 'csv',
+  'text/plain': 'txt',
+}
+
+/**
+ * The OOXML part that identifies each Office format.
+ *
+ * docx/xlsx/pptx are all just zip archives — the PK signature alone cannot
+ * tell them apart, and it cannot tell any of them from a plain .zip either.
+ * The archive names one of these parts, and the central directory at the tail
+ * lists it, so a substring scan settles it without unzipping anything.
+ */
+const OOXML_MARKERS: Record<string, string> = {
+  docx: 'word/document.xml',
+  xlsx: 'xl/workbook.xml',
+  pptx: 'ppt/presentation.xml',
+}
+
+const EXT_TO_DOCUMENT_MIME: Record<string, string> = {
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  csv: 'text/csv',
+  txt: 'text/plain',
+}
+
+/**
  * HEIC/HEIF major brands — an iPhone's default photo format.
  *
  * Not accepted: sharp's prebuilt binaries decode AVIF but not HEIC, so these
@@ -54,7 +97,13 @@ const HEIF_IMAGE_BRANDS = new Set([
 export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 
 export type ProcessedMedia = {
-  kind: 'image' | 'video'
+  /**
+   * `document` deliberately widens this beyond content_assets.kind, which is a
+   * Postgres enum of image|video. That mismatch is the point: it makes the
+   * compiler refuse to let a PDF be written as a content asset, so documents
+   * can only ever land in the File Folder.
+   */
+  kind: 'image' | 'video' | 'document'
   storageKey: string
   thumbKey: string | null
   posterKey: string | null
@@ -202,6 +251,34 @@ async function processVideo(
   }
 }
 
+/**
+ * Documents are stored and nothing else.
+ *
+ * No thumbnail (sharp cannot render a PDF without a full PDFium build) and no
+ * probe. A first-page preview is a nice-to-have that needs poppler on the
+ * host; the folder is useful without it and the absence is visible rather than
+ * broken — the row shows a file icon, a size and a download.
+ */
+async function processDocument(
+  buf: Buffer,
+  mime: string,
+  prefix: string
+): Promise<ProcessedMedia> {
+  const ext = DOCUMENT_MIME[mime] ?? 'bin'
+  const stored = await storage.putBuffer(buf, { prefix, ext })
+  return {
+    kind: 'document',
+    storageKey: stored.key,
+    thumbKey: null,
+    posterKey: null,
+    width: null,
+    height: null,
+    durationMs: null,
+    mime,
+    sizeBytes: stored.sizeBytes,
+  }
+}
+
 export async function processUpload(
   buf: Buffer,
   mime: string,
@@ -209,11 +286,85 @@ export async function processUpload(
 ): Promise<ProcessedMedia> {
   if (IMAGE_MIME[mime]) return processImage(buf, mime, prefix)
   if (VIDEO_MIME[mime]) return processVideo(buf, mime, prefix)
+  if (DOCUMENT_MIME[mime]) return processDocument(buf, mime, prefix)
   throw new Error(`Unsupported file type: ${mime}`)
 }
 
 export function isAcceptedMime(mime: string): boolean {
   return Boolean(IMAGE_MIME[mime] || VIDEO_MIME[mime])
+}
+
+/** Whether a document mime is one the File Folder will store. */
+export function isAcceptedDocumentMime(mime: string): boolean {
+  return Boolean(DOCUMENT_MIME[mime])
+}
+
+/** Lowercase extension without the dot, or '' when there is none. */
+function extensionOf(filename: string): string {
+  const dot = filename.lastIndexOf('.')
+  if (dot < 0 || dot === filename.length - 1) return ''
+  return filename.slice(dot + 1).toLowerCase()
+}
+
+/**
+ * Whether a buffer is plain UTF-8 text.
+ *
+ * CSV and TXT have no magic number, so nothing can identify them from bytes
+ * alone. The extension is a claim; this is the check on it. A NUL byte means
+ * binary — that is what stops a renamed executable being stored as "notes.txt"
+ * — and the strict decode rejects anything that is not valid UTF-8.
+ */
+function looksLikeText(buf: Buffer): boolean {
+  const sample = buf.subarray(0, 64 * 1024)
+  if (sample.includes(0)) return false
+  try {
+    new TextDecoder('utf-8', { fatal: true }).decode(sample)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * What a document upload actually is.
+ *
+ * Same principle as sniffMime: trust the bytes. PDF and the OOXML formats are
+ * identified from their content, and the filename is consulted only to
+ * disambiguate zip containers and to authorise the two text formats that have
+ * no signature at all. Returns null for anything unrecognised, which the route
+ * turns into a 415 naming the formats she can send.
+ */
+export function sniffDocumentMime(
+  buf: Buffer,
+  filename: string
+): string | null {
+  const ext = extensionOf(filename)
+
+  // %PDF- — the only document format with an unambiguous signature.
+  if (buf.subarray(0, 5).toString('ascii') === '%PDF-') {
+    return 'application/pdf'
+  }
+
+  // PK\x03\x04 — a zip. Which Office format (if any) comes from the parts.
+  if (
+    buf[0] === 0x50 &&
+    buf[1] === 0x4b &&
+    buf[2] === 0x03 &&
+    buf[3] === 0x04
+  ) {
+    const marker = OOXML_MARKERS[ext]
+    if (!marker) return null
+    // Scan as text; the part names are stored uncompressed in the headers and
+    // again in the central directory, so a plain substring search finds them.
+    const haystack = buf.toString('latin1')
+    return haystack.includes(marker) ? EXT_TO_DOCUMENT_MIME[ext] : null
+  }
+
+  if ((ext === 'csv' || ext === 'txt') && looksLikeText(buf)) {
+    return EXT_TO_DOCUMENT_MIME[ext]
+  }
+
+  return null
 }
 
 /**
