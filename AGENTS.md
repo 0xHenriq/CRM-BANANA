@@ -74,8 +74,15 @@ drizzle-kit push    # see Rule: migrations
 
 ## Git Branch Policy
 
-- Default branch: `master`. There is **no remote**; this repository is local only.
-- Commit when the human asks, or when completing a phase of work. Never push (there is nowhere to push).
+- Default branch: `master`. The remote is `origin`
+  (`github.com/0xHenriq/bd-portal`), and it is **private**. This file used to
+  say there was no remote; that stopped being true and the note was wrong for
+  several sessions.
+- Commit when the human asks, or when completing a phase of work. Pushing to
+  `origin` is the offsite copy of the code, so push once a phase is green.
+  `.env` is gitignored and has never been committed — check that it still is
+  not before any push, because the remote being private is not a licence to
+  put production secrets in it.
 - End every commit message with:
 
 ```
@@ -493,6 +500,46 @@ ssh vps4 sudo /home/yota/apps/bd-portal/scripts/restore-check.sh   # monthly
 ```
 
 **Pitfall that already bit:** `postgres` cannot read dumps inside `/home/yota` (0750). The restore check stages the dump in `/tmp` first. It once reported "restored but empty" because `pg_restore`'s stderr was discarded — **never swallow errors in a verification script**.
+
+**The backups live on the same disk as the data.** They survive a mistake, not
+a disk failure. Copy the newest pair off the box after any session that
+mattered:
+
+```bash
+mkdir -p ~/Documents/bd-portal-backups
+scp vps4:/home/yota/data/bd-portal/backups/bd_portal-<stamp>.dump      ~/Documents/bd-portal-backups/
+scp vps4:/home/yota/data/bd-portal/backups/uploads-<stamp>.tar.zst     ~/Documents/bd-portal-backups/
+# and confirm the copy is not truncated
+ssh vps4 md5sum /home/yota/data/bd-portal/backups/bd_portal-<stamp>.dump
+md5 -q ~/Documents/bd-portal-backups/bd_portal-<stamp>.dump
+```
+
+### Rollback — how to actually go back
+
+Three separate things can be rolled back, and they are **not** interchangeable.
+Restoring one without the others gives a portal whose rows point at files that
+are not there, or files nothing references.
+
+| What went wrong | How to go back |
+|---|---|
+| Bad code shipped | `git revert <sha>` then `npm run deploy`. Never `reset --hard` on a pushed commit. |
+| Bad data written | Restore from the newest dump *taken before it* — procedure below. |
+| Uploaded files lost | `tar --zstd -xf uploads-<stamp>.tar.zst` into `/home/yota/data/bd-portal/`. |
+
+Restoring the database is **destructive and manual on purpose** — there is no
+script for it, because a script that can overwrite production is a loaded gun
+sitting in the repository. Take a fresh dump first, so the state you are
+abandoning is itself recoverable:
+
+```bash
+ssh vps4 /home/yota/apps/bd-portal/scripts/backup.sh   # 1. snapshot NOW, before anything
+ssh vps4 sudo /home/yota/apps/bd-portal/scripts/restore-check.sh  # 2. prove the target dump is good
+# 3. only then, with the row counts from step 2 in front of you, restore for real
+```
+
+Always run step 2 first. It restores into a throwaway database and prints the
+row counts, which is how you find out the dump you were about to trust is empty
+*before* you have overwritten anything.
 
 ### Tool Selection Matrix
 
