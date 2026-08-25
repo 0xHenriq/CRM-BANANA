@@ -1,15 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { DEAL_STAGES as SERVER_STAGES } from '../routes/deals.js'
+import {
+  DEAL_STAGES as SERVER_STAGES,
+  PAYMENT_STATUSES as SERVER_PAYMENTS,
+} from '../routes/deals.js'
 import {
   CONTENT_STATUSES as SERVER_STATUSES,
   CONTENT_TYPES as SERVER_TYPES,
 } from '../routes/content.js'
-import { contentStatus, contentType } from '../db/schema.js'
+import { contentStatus, contentType, paymentStatus } from '../db/schema.js'
 import { hhmm } from '../lib/audit.js'
 import {
   CONTENT_STATUSES as CLIENT_STATUSES,
   CONTENT_TYPES as CLIENT_TYPES,
   DEAL_STAGES as CLIENT_STAGES,
+  PAYMENT_STATUSES as CLIENT_PAYMENTS,
+  paymentState,
   formatPence,
   formatTime,
   sumPence,
@@ -54,6 +59,48 @@ describe('content vocabulary', () => {
   it('statuses match, and in the same pipeline order', () => {
     expect([...SERVER_STATUSES]).toEqual([...CLIENT_STATUSES])
     expect([...contentStatus.enumValues]).toEqual([...CLIENT_STATUSES])
+  })
+})
+
+/**
+ * Payment vocabulary, and the state that is NOT in it.
+ *
+ * Three stored values across three places — the Postgres enum, the API's zod
+ * enum, the client's menu. `overdue` is deliberately absent from all of them:
+ * it is derived from the due date, so it becomes true at midnight on its own
+ * rather than waiting to be marked. A stored "overdue" would be a status that
+ * silently goes stale, which is worse than none.
+ */
+describe('payment status', () => {
+  it('matches across the enum, the API and the client', () => {
+    expect([...SERVER_PAYMENTS]).toEqual([...CLIENT_PAYMENTS])
+    expect([...paymentStatus.enumValues]).toEqual([...CLIENT_PAYMENTS])
+  })
+
+  it('never stores overdue', () => {
+    expect(CLIENT_PAYMENTS).not.toContain('overdue')
+    expect([...paymentStatus.enumValues]).not.toContain('overdue')
+  })
+
+  it('derives overdue from a due date that has passed', () => {
+    const past = new Date(Date.now() - 3 * 86_400_000)
+    const future = new Date(Date.now() + 3 * 86_400_000)
+    const iso = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+    expect(paymentState({ paymentStatus: 'awaiting', paymentDue: iso(past) })).toBe('overdue')
+    expect(paymentState({ paymentStatus: 'awaiting', paymentDue: iso(future) })).toBe('awaiting')
+  })
+
+  it('never calls a paid or untracked deal overdue, however old the date', () => {
+    // The bug this guards: colouring a settled invoice red because its due
+    // date is in the past. Only `awaiting` can become overdue.
+    expect(paymentState({ paymentStatus: 'paid', paymentDue: '2020-01-01' })).toBe('paid')
+    expect(paymentState({ paymentStatus: 'none', paymentDue: '2020-01-01' })).toBe('none')
+  })
+
+  it('leaves an awaiting deal with no due date simply awaiting', () => {
+    expect(paymentState({ paymentStatus: 'awaiting', paymentDue: null })).toBe('awaiting')
   })
 })
 

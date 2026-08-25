@@ -17,6 +17,12 @@ dealRoutes.use('*', requireStaff)
  * Proposal → Kick Off Meeting → Agreement. `won` is the point the retainer
  * starts and the portal opens.
  */
+/**
+ * Payment states she can set. `overdue` is not one of them — see the note on
+ * the enum in schema.ts. The client derives it from `paymentDue`.
+ */
+export const PAYMENT_STATUSES = ['none', 'awaiting', 'paid'] as const
+
 export const DEAL_STAGES = [
   'lead',
   'contacted',
@@ -36,6 +42,9 @@ dealRoutes.get('/', async (c) => {
         currency: deals.currency,
         stage: deals.stage,
         expectedClose: deals.expectedClose,
+        paymentStatus: deals.paymentStatus,
+        paymentDue: deals.paymentDue,
+        paidAt: deals.paidAt,
         clientId: deals.clientId,
         clientName: clients.name,
         updatedAt: deals.updatedAt,
@@ -57,6 +66,8 @@ const createSchema = z.object({
   currency: z.string().length(3).default('GBP'),
   stage: z.enum(DEAL_STAGES).default('lead'),
   expectedClose: z.string().date().nullish(),
+  paymentStatus: z.enum(PAYMENT_STATUSES).default('none'),
+  paymentDue: z.string().date().nullish(),
 })
 
 dealRoutes.post('/', async (c) => {
@@ -77,6 +88,9 @@ dealRoutes.post('/', async (c) => {
         currency: data.currency,
         stage: data.stage,
         expectedClose: data.expectedClose ?? null,
+        paymentStatus: data.paymentStatus,
+        paymentDue: data.paymentDue ?? null,
+        paidAt: data.paymentStatus === 'paid' ? today() : null,
         ownerId: actorId,
       })
       .returning()
@@ -108,7 +122,36 @@ const updateSchema = z.object({
   value: z.string().regex(/^\d+(\.\d{1,2})?$/).nullable().optional(),
   stage: z.enum(DEAL_STAGES).optional(),
   expectedClose: z.string().date().nullable().optional(),
+  paymentStatus: z.enum(PAYMENT_STATUSES).optional(),
+  paymentDue: z.string().date().nullable().optional(),
 })
+
+/**
+ * Today as a local calendar date.
+ *
+ * Not toISOString().slice(0,10): that converts to UTC first, so an evening in
+ * London stamps a payment as received the previous day. Same reasoning as
+ * isoDate() on the calendar.
+ */
+function today(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/**
+ * `paid_at` is stamped by the server, never sent by the client.
+ *
+ * It is the answer to "when did they actually pay", which is a fact about the
+ * moment she marked it, not something worth trusting a request body for. It is
+ * cleared if a payment is un-marked, so a mistaken tick leaves no false record.
+ */
+function paidAtFor(
+  next: (typeof PAYMENT_STATUSES)[number] | undefined,
+  before: { paymentStatus: string; paidAt: string | null }
+): { paidAt?: string | null } {
+  if (next === undefined || next === before.paymentStatus) return {}
+  return { paidAt: next === 'paid' ? today() : null }
+}
 
 /**
  * Also the drag-and-drop endpoint: moving a card between columns is a stage
@@ -129,9 +172,29 @@ dealRoutes.patch('/:id', async (c) => {
 
     const [row] = await tx
       .update(deals)
-      .set({ ...patch, updatedAt: new Date() })
+      .set({
+        ...patch,
+        ...paidAtFor(patch.paymentStatus, before),
+        updatedAt: new Date(),
+      })
       .where(eq(deals.id, id))
       .returning()
+
+    if (patch.paymentStatus && patch.paymentStatus !== before.paymentStatus) {
+      await recordActivity(tx, {
+        clientId: row.clientId,
+        entityType: 'deal',
+        entityId: row.id,
+        actorId,
+        kind: 'status_change',
+        body:
+          patch.paymentStatus === 'paid'
+            ? `"${row.title}" marked paid`
+            : patch.paymentStatus === 'awaiting'
+              ? `"${row.title}" awaiting payment${row.paymentDue ? `, due ${row.paymentDue}` : ''}`
+              : `"${row.title}" payment tracking cleared`,
+      })
+    }
 
     if (patch.stage && patch.stage !== before.stage) {
       await recordActivity(tx, {

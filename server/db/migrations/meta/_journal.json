@@ -64,6 +64,13 @@
       "when": 1787224181417,
       "tag": "0008_wild_harpoon",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787693679938,
+      "tag": "0009_gigantic_shocker",
+      "breakpoints": true
     }
   ]
 }

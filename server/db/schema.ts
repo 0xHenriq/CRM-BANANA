@@ -80,6 +80,21 @@ export const contentStatus = pgEnum('content_status', [
   'published',
 ])
 
+/**
+ * Where a deal's money has got to.
+ *
+ * Three stored states, not four. "Overdue" is deliberately NOT one of them:
+ * it is `awaiting` plus a due date in the past, so it becomes true on its own
+ * at midnight rather than waiting for someone to remember to mark it. A state
+ * she has to maintain by hand is a state that silently goes stale, and the
+ * whole point of the red box is that it is true without being tended.
+ */
+export const paymentStatus = pgEnum('payment_status', [
+  'none',
+  'awaiting',
+  'paid',
+])
+
 export const activityKind = pgEnum('activity_kind', [
   'note',
   'call',
@@ -182,6 +197,11 @@ export const deals = pgTable(
     currency: text('currency').notNull().default('GBP'),
     stage: dealStage('stage').notNull().default('lead'),
     expectedClose: date('expected_close'),
+    /** `none` until she raises an invoice for it. */
+    paymentStatus: paymentStatus('payment_status').notNull().default('none'),
+    /** When the money is due. What turns `awaiting` into overdue. */
+    paymentDue: date('payment_due'),
+    paidAt: date('paid_at'),
     ownerId: text('owner_id').references(() => user.id, {
       onDelete: 'set null',
     }),

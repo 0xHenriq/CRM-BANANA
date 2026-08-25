@@ -26,6 +26,15 @@
   --bd-sidebar-rule: #2a2622;
   --bd-sidebar-dim: #a89f8e;
 
+  /* Payment states. Deliberately BRIGHTER and more saturated than the tag
+     fills above: she asked for boxes her "tired self can see", and the whole
+     job of these three is to be readable across a room at the end of a long
+     day. New tokens rather than edits to the fills above — the crate palette
+     is the brand asset and stays exactly as it was. */
+  --pay-paid: #2e7d32;
+  --pay-awaiting: #ef8a17;
+  --pay-overdue: #d32f2f;
+
   /* Content-type tag fills — her exact five */
   --tag-video: #dcebdd;
   --tag-reel: #dce3f5;
@@ -170,6 +179,10 @@
   --color-bd-rule: var(--bd-rule);
   --color-bd-rule-soft: var(--bd-rule-soft);
   --color-bd-sand: var(--bd-sand);
+
+  --color-pay-paid: var(--pay-paid);
+  --color-pay-awaiting: var(--pay-awaiting);
+  --color-pay-overdue: var(--pay-overdue);
 
   --color-tag-video: var(--tag-video);
   --color-tag-reel: var(--tag-reel);

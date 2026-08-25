@@ -22,11 +22,14 @@ import {
   api,
   formatMoney,
   formatPence,
+  paymentState,
   sumPence,
   DEAL_STAGES,
   type ClientSummary,
   type DealStage,
   type DealWithClient,
+  type PaymentState,
+  type PaymentStatus,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -44,6 +47,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
@@ -133,6 +137,29 @@ export function Pipeline() {
     },
   })
 
+  /**
+   * Marking a deal paid or awaiting.
+   *
+   * Same endpoint as a stage change, so it inherits the timeline entry and the
+   * client-list invalidation. Not optimistic: unlike a drag, there is no
+   * gesture whose result has to appear instantly, and money is the one thing
+   * worth showing only once the server has agreed.
+   */
+  const setPayment = useMutation({
+    mutationFn: ({
+      id,
+      paymentStatus,
+    }: {
+      id: string
+      paymentStatus: PaymentStatus
+    }) => api.patch(`/deals/${id}`, { paymentStatus }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['deals'] })
+      queryClient.invalidateQueries({ queryKey: ['client'] })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
   const sensors = useSensors(
     // A small activation distance keeps a click on the card from being read as
     // a drag — otherwise every attempt to select text starts one.
@@ -209,6 +236,9 @@ export function Pipeline() {
                   stage={stage}
                   deals={byStage.get(stage) ?? []}
                   onMove={(id, next) => move.mutate({ id, stage: next })}
+                  onPayment={(id, paymentStatus) =>
+                    setPayment.mutate({ id, paymentStatus })
+                  }
                 />
               ))}
             </div>
@@ -227,10 +257,12 @@ function StageColumn({
   stage,
   deals,
   onMove,
+  onPayment,
 }: {
   stage: DealStage
   deals: DealWithClient[]
   onMove: (id: string, stage: DealStage) => void
+  onPayment: (id: string, paymentStatus: PaymentStatus) => void
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage })
 
@@ -257,7 +289,12 @@ function StageColumn({
 
       <div className='flex flex-1 flex-col gap-2'>
         {deals.map((deal) => (
-          <DealCard key={deal.id} deal={deal} onMove={onMove} />
+          <DealCard
+            key={deal.id}
+            deal={deal}
+            onMove={onMove}
+            onPayment={onPayment}
+          />
         ))}
         {deals.length === 0 && (
           <p className='py-6 text-center text-xs text-muted-foreground'>
@@ -269,14 +306,54 @@ function StageColumn({
   )
 }
 
+/**
+ * The payment box.
+ *
+ * Bright and filled rather than a pastel outline — she asked for something her
+ * "tired self can see", and the money state is the one thing on this board she
+ * scans for. `overdue` is derived from the due date rather than stored, so it
+ * turns red on its own the morning it becomes true.
+ */
+const PAY_TONE: Record<Exclude<PaymentState, 'none'>, string> = {
+  paid: 'bg-pay-paid text-white',
+  awaiting: 'bg-pay-awaiting text-bd-ink',
+  overdue: 'bg-pay-overdue text-white',
+}
+
+function PaymentBadge({ deal }: { deal: DealWithClient }) {
+  const state = paymentState(deal)
+  if (state === 'none') return null
+
+  const label =
+    state === 'paid'
+      ? 'Paid'
+      : state === 'overdue'
+        ? `Overdue${deal.paymentDue ? ` · ${deal.paymentDue}` : ''}`
+        : `Awaiting${deal.paymentDue ? ` · due ${deal.paymentDue}` : ''}`
+
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded border-[1.5px] border-bd-ink px-1.5 py-0.5',
+        'text-[0.625rem] font-bold whitespace-nowrap',
+        PAY_TONE[state]
+      )}
+    >
+      {label}
+    </span>
+  )
+}
+
 function DealCard({
   deal,
   overlay = false,
   onMove,
+  onPayment,
 }: {
   deal: DealWithClient
   overlay?: boolean
   onMove?: (id: string, stage: DealStage) => void
+  onPayment?: (id: string, paymentStatus: PaymentStatus) => void
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({ id: deal.id, disabled: overlay })
@@ -331,6 +408,33 @@ function DealCard({
                     {STAGE_LABEL[s]}
                   </DropdownMenuItem>
                 ))}
+                {onPayment && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>Payment</DropdownMenuLabel>
+                    {deal.paymentStatus !== 'paid' && (
+                      <DropdownMenuItem
+                        onSelect={() => onPayment(deal.id, 'paid')}
+                      >
+                        Mark paid
+                      </DropdownMenuItem>
+                    )}
+                    {deal.paymentStatus !== 'awaiting' && (
+                      <DropdownMenuItem
+                        onSelect={() => onPayment(deal.id, 'awaiting')}
+                      >
+                        Awaiting payment
+                      </DropdownMenuItem>
+                    )}
+                    {deal.paymentStatus !== 'none' && (
+                      <DropdownMenuItem
+                        onSelect={() => onPayment(deal.id, 'none')}
+                      >
+                        Clear payment status
+                      </DropdownMenuItem>
+                    )}
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -344,6 +448,9 @@ function DealCard({
               {deal.expectedClose}
             </span>
           )}
+        </div>
+        <div className='mt-1.5 empty:mt-0'>
+          <PaymentBadge deal={deal} />
         </div>
       </CardContent>
     </Card>

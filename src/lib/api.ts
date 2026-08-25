@@ -95,6 +95,35 @@ export type Contact = {
   isPrimary: boolean
 }
 
+export const PAYMENT_STATUSES = ['none', 'awaiting', 'paid'] as const
+export type PaymentStatus = (typeof PAYMENT_STATUSES)[number]
+
+/**
+ * What the card actually shows, which is not what is stored.
+ *
+ * `overdue` is derived, never persisted: it is `awaiting` with a due date that
+ * has passed. Storing it would mean something had to run at midnight to keep
+ * it true, and a status that goes stale is worse than no status.
+ */
+export type PaymentState = PaymentStatus | 'overdue'
+
+export function paymentState(deal: {
+  paymentStatus: PaymentStatus
+  paymentDue: string | null
+}): PaymentState {
+  if (deal.paymentStatus !== 'awaiting' || !deal.paymentDue) {
+    return deal.paymentStatus
+  }
+  // Local calendar comparison. 'YYYY-MM-DD' through Date.parse is UTC
+  // midnight, which would call an invoice overdue a day early west of
+  // Greenwich and a day late east of it.
+  const [y, m, d] = deal.paymentDue.split('-').map(Number)
+  const due = new Date(y, m - 1, d)
+  const now = new Date()
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  return due < midnight ? 'overdue' : 'awaiting'
+}
+
 export type Deal = {
   id: string
   clientId: string
@@ -104,6 +133,9 @@ export type Deal = {
   currency: string
   stage: DealStage
   expectedClose: string | null
+  paymentStatus: PaymentStatus
+  paymentDue: string | null
+  paidAt: string | null
   updatedAt: string
 }
 

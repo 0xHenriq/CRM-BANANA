@@ -83,10 +83,37 @@ export function ClientsList() {
             </CardContent>
           </Card>
         ) : (
-          <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-3'>
-            {data.clients.map((client) => (
-              <ClientCard key={client.id} client={client} />
-            ))}
+          /*
+            Grouped by status, not one mixed grid.
+            
+            Twelve cards in creation order, each with a small pill in the
+            corner, meant reading every card to answer "who is actually
+            active" — which is the first question she asks this page. The
+            groups are ordered by how much attention each state wants: live
+            work, then things she is chasing, then the dormant ones.
+          */
+          <div className='space-y-8'>
+            {STATUS_ORDER.map((status) => {
+              const group = data.clients.filter((c) => c.status === status)
+              if (group.length === 0) return null
+              return (
+                <section key={status}>
+                  <div className='crate-underline mb-4 flex items-baseline gap-3 pb-1.5'>
+                    <h2 className='display text-xl'>{CLIENT_LABEL[status]}</h2>
+                    <span className='text-xs text-muted-foreground'>
+                      {group.length}
+                      {status === 'active' &&
+                        ` · ${group.filter((c) => c.awaitingReviewCount > 0).length} waiting on a decision`}
+                    </span>
+                  </div>
+                  <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-3'>
+                    {group.map((client) => (
+                      <ClientCard key={client.id} client={client} />
+                    ))}
+                  </div>
+                </section>
+              )
+            })}
           </div>
         )}
       </Main>
@@ -165,6 +192,22 @@ const STATUSES: ClientStatus[] = [
   'lead',
   'proposal',
   'active',
+  'paused',
+  'churned',
+]
+
+/**
+ * Display order for the grouped list, which is NOT the order of the enum.
+ *
+ * The enum runs lead -> churned because that is the lifecycle. This runs by
+ * how much attention each state deserves on a Monday morning: the clients she
+ * is delivering for, then the ones she is chasing, then the dormant ones she
+ * only needs to see to know they are still there.
+ */
+const STATUS_ORDER: ClientStatus[] = [
+  'active',
+  'proposal',
+  'lead',
   'paused',
   'churned',
 ]
