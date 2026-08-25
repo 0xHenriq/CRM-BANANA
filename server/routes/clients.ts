@@ -38,6 +38,8 @@ clientRoutes.get('/', async (c) => {
         slug: clients.slug,
         status: clients.status,
         portalEnabled: clients.portalEnabled,
+        logoKey: clients.logoKey,
+        brandColor: clients.brandColor,
         createdAt: clients.createdAt,
         // Every correlated subquery below is written with explicit aliases,
         // and that is not stylistic. Interpolating Drizzle columns —

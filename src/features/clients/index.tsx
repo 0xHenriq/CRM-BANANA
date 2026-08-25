@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Link } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import { Plus, Users, ClipboardList, Eye, ExternalLink } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, type ClientStatus, type ClientSummary } from '@/lib/api'
@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ClientLogo } from '@/components/client-logo'
 import { ConfigDrawer } from '@/components/config-drawer'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
@@ -98,7 +99,7 @@ export function ClientsList() {
               if (group.length === 0) return null
               return (
                 <section key={status}>
-                  <div className='crate-underline mb-4 flex items-baseline gap-3 pb-1.5'>
+                  <div className='mb-4 flex items-baseline gap-3 pb-1.5 crate-underline'>
                     <h2 className='display text-xl'>{CLIENT_LABEL[status]}</h2>
                     <span className='text-xs text-muted-foreground'>
                       {group.length}
@@ -128,14 +129,28 @@ function ClientCard({ client }: { client: ClientSummary }) {
       params={{ clientId: client.id }}
       className='group'
     >
-      <Card className='crate-card h-full gap-0 py-5 transition-transform group-hover:-translate-y-0.5'>
+      <Card className='h-full gap-0 crate-card py-5 transition-transform group-hover:-translate-y-0.5'>
         <CardContent className='px-5'>
           <div className='mb-3 flex items-start justify-between gap-3'>
-            <h2 className='display truncate text-xl'>{client.name}</h2>
+            {/*
+              The mark before the name: with the list grouped by status there
+              are a lot of near-identical cards on this screen, and a logo is
+              recognised faster than a name is read.
+            */}
+            <div className='flex min-w-0 items-center gap-2.5'>
+              <ClientLogo
+                clientId={client.id}
+                name={client.name}
+                logoKey={client.logoKey}
+                brandColor={client.brandColor}
+                markOnly
+              />
+              <h2 className='truncate display text-xl'>{client.name}</h2>
+            </div>
             <ClientStatusPill status={client.status} />
           </div>
 
-          <div className='crate-rule mb-3' />
+          <div className='mb-3 crate-rule' />
 
           <dl className='grid grid-cols-3 gap-2 text-center'>
             <Metric icon={Users} value={client.seatCount} label='Seats' />

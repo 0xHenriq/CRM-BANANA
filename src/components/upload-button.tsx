@@ -20,7 +20,9 @@ import { Button } from '@/components/ui/button'
  * screen at once — the calendar and the review queue both mount the content
  * dialog — and duplicate ids would make one button drive the other's input.
  *
- * Three call sites shared it precisely so the mechanics cannot diverge again.
+ * Every call site shares it precisely so the mechanics cannot diverge again —
+ * the count is deliberately not written here, because the last time it was, a
+ * fourth site was added and the comment quietly became a lie.
  */
 export function UploadButton({
   onFiles,

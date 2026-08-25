@@ -489,3 +489,33 @@ describe('append-only approvals', () => {
     expect(rows[0].note).toBe('looks good')
   })
 })
+
+describe('client logos', () => {
+/**
+ * The logo route is the first place a stored key becomes a file read via a
+ * column, rather than via an id the policy already filtered. It answers with
+ * whatever `clients.logo_key` points at, so if a client could write that
+ * column they could aim it at another client's bytes and read them. The
+ * defence is that clients_write is staff-only — assert it, because the whole
+ * route rests on it.
+ */
+it('a client cannot repoint their own logo at another client\'s bytes', async () => {
+  // RLS filters an UPDATE rather than raising on it, so this is a silent
+  // zero-row write, not an error. Assert the row COUNT and then the stored
+  // value: asserting a throw here would pass today for the wrong reason and
+  // keep passing if the policy were ever replaced by a WHERE clause.
+  const updated = await asActor(
+    { kind: 'client', userId: f.clientUserA },
+    "update clients set logo_key = 'uploads/somebody-else.webp' where id = $1 returning id",
+    [f.clientA]
+  )
+  expect(updated).toHaveLength(0)
+
+  const [row] = await asActor<{ logo_key: string | null }>(
+    { kind: 'staff', userId: f.staffUser },
+    'select logo_key from clients where id = $1',
+    [f.clientA]
+  )
+  expect(row?.logo_key).not.toBe('uploads/somebody-else.webp')
+})
+})

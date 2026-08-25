@@ -29,6 +29,7 @@ portalRoutes.get('/', async (c) => {
         id: clients.id,
         name: clients.name,
         brandColor: clients.brandColor,
+        logoKey: clients.logoKey,
         portalEnabled: clients.portalEnabled,
       })
       .from(clients)

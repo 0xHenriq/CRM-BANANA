@@ -3,6 +3,7 @@ import { Hono, type Context } from 'hono'
 import { z } from 'zod'
 import { withTenant } from '../db/index.js'
 import {
+  clients,
   contentAssets,
   contentItems,
   files,
@@ -10,6 +11,7 @@ import {
 } from '../db/schema.js'
 import { audit } from '../lib/audit.js'
 import {
+  IMAGE_MIME,
   MAX_UPLOAD_BYTES,
   isAcceptedDocumentMime,
   isAcceptedMime,
@@ -144,6 +146,20 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
     !!sniffed &&
     (isAcceptedMime(sniffed) ||
       (target === 'file' && isAcceptedDocumentMime(sniffed)))
+
+  /**
+   * A logo is an image, never a video.
+   *
+   * The general allowlist accepts MP4 for content and moodboard tiles, and a
+   * client's mark rendered as an unplayable video tile in the corner of their
+   * own portal would be a strange thing to have shipped.
+   */
+  if (target === 'logo' && (!sniffed || !IMAGE_MIME[sniffed])) {
+    return c.json(
+      { error: 'A logo needs to be an image — JPEG, PNG, WebP, GIF or AVIF.' },
+      415
+    )
+  }
 
   if (!accepted) {
     return c.json(
@@ -280,6 +296,37 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
         return { file: row }
       }
 
+      /**
+       * A client's own mark, shown on their portal.
+       *
+       * Stored as the 400px thumbnail rather than the original: it is rendered
+       * at 40px and nobody needs a 4 MB PNG for that. The PREVIOUS logo's
+       * bytes are removed after the transaction commits — replacing a logo
+       * five times should not leave five files nothing references.
+       */
+      if (target === 'logo') {
+        if (processed.kind !== 'image') {
+          throw new Error('A logo needs to be an image')
+        }
+        const [before] = await tx
+          .select({ logoKey: clients.logoKey })
+          .from(clients)
+          .where(eq(clients.id, clientId))
+          .limit(1)
+        if (!before) throw new Error('That client does not exist')
+
+        const [row] = await tx
+          .update(clients)
+          .set({
+            logoKey: processed.thumbKey ?? processed.storageKey,
+            updatedAt: new Date(),
+          })
+          .where(eq(clients.id, clientId))
+          .returning({ id: clients.id, logoKey: clients.logoKey })
+
+        return { client: row, replaced: before.logoKey }
+      }
+
       // Moodboard tiles append to the end.
       const [{ next }] = await tx
         .select({ next: sql<number>`coalesce(max(sort_order), -1) + 1` })
@@ -297,6 +344,12 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
         .returning()
       return { moodboardItem: row }
     })
+
+    // After the commit, never inside it: a logo removed by a transaction that
+    // then rolled back would leave a client with a broken image.
+    if (result && 'replaced' in result && result.replaced) {
+      await storage.remove(result.replaced)
+    }
 
     return c.json(result, 201)
 
@@ -500,6 +553,25 @@ mediaRoutes.get('/moodboard/:id', async (c) => {
   )
   if (!row?.storageKey) return c.json({ error: 'Not found' }, 404)
   return streamKey(c, row.storageKey, 'image/webp')
+})
+
+/**
+ * A client's logo.
+ *
+ * Read from the row rather than taking a key from the URL, like every other
+ * media route here — a caller who cannot see the client cannot see their mark.
+ */
+mediaRoutes.get('/clients/:id/logo', async (c) => {
+  const [row] = await withTenant(c.get('tenant'), (tx) =>
+    tx
+      .select({ logoKey: clients.logoKey })
+      .from(clients)
+      .where(eq(clients.id, c.req.param('id')))
+      .limit(1)
+  )
+  if (!row?.logoKey) return c.json({ error: 'Not found' }, 404)
+  // Always the derived webp, so the type is ours rather than the uploader's.
+  return streamKey(c, row.logoKey, 'image/webp')
 })
 
 mediaRoutes.get('/files/:id', async (c) => {

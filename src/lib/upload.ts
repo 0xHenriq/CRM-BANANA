@@ -25,7 +25,7 @@ export async function uploadMedia(
   file: File,
   opts: {
     clientId: string | null
-    target: 'content' | 'moodboard' | 'file'
+    target: 'content' | 'moodboard' | 'file' | 'logo'
     contentItemId?: string
     caption?: string
     /** 0..1, or null once the bytes are sent and the server is working. */

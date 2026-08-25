@@ -35,8 +35,13 @@ async function request<T>(
     // Surface the server's message where there is one — it is written for a
     // human ("All 10 seats are taken…"), and replacing it with "Request
     // failed" throws away the only useful part.
-    const body = (await res.json().catch(() => null)) as { error?: string } | null
-    throw new ApiError(body?.error ?? `Request failed (${res.status})`, res.status)
+    const body = (await res.json().catch(() => null)) as {
+      error?: string
+    } | null
+    throw new ApiError(
+      body?.error ?? `Request failed (${res.status})`,
+      res.status
+    )
   }
 
   if (res.status === 204) return undefined as T
@@ -78,6 +83,8 @@ export type ClientSummary = {
   slug: string
   status: ClientStatus
   portalEnabled: boolean
+  logoKey: string | null
+  brandColor: string | null
   createdAt: string
   contactCount: number
   openTaskCount: number
@@ -146,12 +153,7 @@ export type InvoiceStatus = (typeof INVOICE_STATUSES)[number]
  * it is late, rather than waiting for someone to remember to mark it.
  */
 export type InvoiceState =
-  | 'draft'
-  | 'sent'
-  | 'part_paid'
-  | 'paid'
-  | 'overdue'
-  | 'void'
+  'draft' | 'sent' | 'part_paid' | 'paid' | 'overdue' | 'void'
 
 export type Invoice = {
   id: string
@@ -241,6 +243,7 @@ export type ClientDetail = {
     slug: string
     status: ClientStatus
     brandColor: string | null
+    logoKey: string | null
     portalEnabled: boolean
     createdAt: string
   }
@@ -345,6 +348,7 @@ export type PortalWorkspace = {
     id: string
     name: string
     brandColor: string | null
+    logoKey: string | null
     portalEnabled: boolean
   }
   links: PortalLink[]
@@ -490,6 +494,20 @@ export function moodboardUrl(itemId: string): string {
  */
 export function fileUrl(fileId: string): string {
   return `/api/media/files/${fileId}`
+}
+
+/**
+ * A client's logo.
+ *
+ * The path carries no key, so it cannot be used to read arbitrary storage —
+ * the server looks the key up on the row and answers only if the caller can
+ * see that client. `logoKey` rides along as a cache-buster: the URL is
+ * otherwise identical after a replacement, and she would upload a new mark and
+ * keep seeing the old one until a hard refresh.
+ */
+export function logoUrl(clientId: string, logoKey: string): string {
+  const version = logoKey.slice(logoKey.lastIndexOf('/') + 1)
+  return `/api/media/clients/${clientId}/logo?v=${encodeURIComponent(version)}`
 }
 
 /**
