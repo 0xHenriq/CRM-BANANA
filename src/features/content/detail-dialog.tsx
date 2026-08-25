@@ -23,7 +23,6 @@ import {
   type ContentType,
 } from '@/lib/api'
 import { uploadMedia } from '@/lib/upload'
-import { UploadButton } from '@/components/upload-button'
 import { useCurrentUser } from '@/hooks/use-current-user'
 import { Button } from '@/components/ui/button'
 import {
@@ -44,6 +43,8 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
+import { UploadButton } from '@/components/upload-button'
+import { HashtagEditor } from './hashtag-editor'
 import { StatusPill, TypePill } from './pills'
 import { STATUS_LABEL, TYPE_LABEL } from './vocabulary'
 
@@ -91,7 +92,8 @@ export function ContentDetailDialog({
   })
 
   const addComment = useMutation({
-    mutationFn: () => api.post(`/content/${itemId}/comments`, { body: comment.trim() }),
+    mutationFn: () =>
+      api.post(`/content/${itemId}/comments`, { body: comment.trim() }),
     onSuccess: async () => {
       await invalidate()
       setComment('')
@@ -163,7 +165,7 @@ export function ContentDetailDialog({
 
   return (
     <Dialog open={!!itemId} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className='crate-card max-h-[85vh] overflow-y-auto sm:max-w-2xl'>
+      <DialogContent className='max-h-[85vh] overflow-y-auto crate-card sm:max-w-2xl'>
         {isLoading || (!data && !isError) ? (
           <div className='space-y-3 py-4'>
             <Skeleton className='h-8 w-2/3' />
@@ -179,7 +181,7 @@ export function ContentDetailDialog({
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle className='display pe-6 text-2xl'>
+              <DialogTitle className='pe-6 display text-2xl'>
                 {item.title}
               </DialogTitle>
               <DialogDescription asChild>
@@ -217,7 +219,8 @@ export function ContentDetailDialog({
                     key={`title-${item.id}-${item.updatedAt}`}
                     onBlur={(e) => {
                       const next = e.target.value.trim()
-                      if (next && next !== item.title) patch.mutate({ title: next })
+                      if (next && next !== item.title)
+                        patch.mutate({ title: next })
                     }}
                   />
                 </div>
@@ -225,7 +228,9 @@ export function ContentDetailDialog({
                   <Label htmlFor='cd-type'>Type</Label>
                   <Select
                     value={item.type}
-                    onValueChange={(v) => patch.mutate({ type: v as ContentType })}
+                    onValueChange={(v) =>
+                      patch.mutate({ type: v as ContentType })
+                    }
                   >
                     <SelectTrigger id='cd-type' className='h-8'>
                       <SelectValue />
@@ -307,6 +312,12 @@ export function ContentDetailDialog({
                     }}
                   />
                 </div>
+                <div className='sm:col-span-3'>
+                  <HashtagEditor
+                    value={item.hashtags ?? []}
+                    onChange={(next) => patch.mutate({ hashtags: next })}
+                  />
+                </div>
                 <div className='flex flex-wrap items-center justify-between gap-2 sm:col-span-3'>
                   <p className='text-xs text-muted-foreground'>
                     Giving this a date puts it on the calendar. It is the same
@@ -330,13 +341,25 @@ export function ContentDetailDialog({
               </div>
             )}
 
-            {!isStaff && item.caption && (
-              <p className='text-sm whitespace-pre-wrap'>{item.caption}</p>
+            {!isStaff && (item.caption || item.hashtags?.length) && (
+              <div className='grid gap-2'>
+                {item.caption && (
+                  <p className='text-sm whitespace-pre-wrap'>{item.caption}</p>
+                )}
+                {/* The client sees the tags that will go out with their post —
+                    read-only, but visible: approving a caption without them is
+                    approving half of what gets published. */}
+                <HashtagEditor
+                  value={item.hashtags ?? []}
+                  onChange={() => {}}
+                  readOnly
+                />
+              </div>
             )}
 
             {/* ---------------------------------------------------- assets */}
             <div>
-              <div className='crate-rule mb-2 flex items-center justify-between pb-1'>
+              <div className='mb-2 flex items-center justify-between pb-1 crate-rule'>
                 <p className='display text-sm'>Assets</p>
                 {isStaff && (
                   <UploadButton
@@ -437,7 +460,7 @@ export function ContentDetailDialog({
 
             {data.approvals.length > 0 && (
               <div>
-                <p className='display crate-rule mb-2 pb-1 text-sm'>
+                <p className='mb-2 pb-1 display text-sm crate-rule'>
                   Decision history
                 </p>
                 <ul className='space-y-1.5'>
@@ -457,7 +480,9 @@ export function ContentDetailDialog({
                         })}
                       </span>
                       {a.note && (
-                        <p className='text-sm text-muted-foreground'>{a.note}</p>
+                        <p className='text-sm text-muted-foreground'>
+                          {a.note}
+                        </p>
                       )}
                     </li>
                   ))}
@@ -467,7 +492,7 @@ export function ContentDetailDialog({
 
             {/* ------------------------------------------------- comments */}
             <div>
-              <p className='display crate-rule mb-2 flex items-center gap-1.5 pb-1 text-sm'>
+              <p className='mb-2 flex items-center gap-1.5 pb-1 display text-sm crate-rule'>
                 <MessageSquare className='size-3.5' />
                 Comments
               </p>
@@ -506,7 +531,10 @@ export function ContentDetailDialog({
                   className='h-8'
                   aria-label='Add a comment'
                 />
-                <Button size='sm' disabled={!comment.trim() || addComment.isPending}>
+                <Button
+                  size='sm'
+                  disabled={!comment.trim() || addComment.isPending}
+                >
                   <Send />
                 </Button>
               </form>

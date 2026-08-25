@@ -1,0 +1,1 @@
+ALTER TABLE "content_items" ADD COLUMN "hashtags" text[] DEFAULT '{}'::text[] NOT NULL;

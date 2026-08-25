@@ -395,6 +395,7 @@ export type ContentItem = {
   /** 'HH:MM:SS' as Postgres returns it; render with `formatTime`. */
   scheduledTime: string | null
   caption: string | null
+  hashtags: string[]
   feedOrder: number | null
   visibleToClient: boolean
   createdAt: string
@@ -454,6 +455,7 @@ export type MoodboardItem = {
   storageKey: string | null
   url: string | null
   caption: string | null
+  hashtags: string[]
   sortOrder: number
 }
 

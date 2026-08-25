@@ -2,6 +2,7 @@ import { asc, desc, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { withTenant } from '../db/index.js'
+import { HASHTAG_LIMIT, normaliseHashtags } from '../lib/hashtags.js'
 import {
   clients,
   contentApprovals,
@@ -67,6 +68,7 @@ contentRoutes.get('/', async (c) => {
         scheduledAt: contentItems.scheduledAt,
         scheduledTime: contentItems.scheduledTime,
         caption: contentItems.caption,
+        hashtags: contentItems.hashtags,
         feedOrder: contentItems.feedOrder,
         visibleToClient: contentItems.visibleToClient,
         createdAt: contentItems.createdAt,
@@ -79,6 +81,18 @@ contentRoutes.get('/', async (c) => {
 
   return c.json({ clientId, items })
 })
+
+/**
+ * Hashtags arrive as an array and are normalised server-side regardless.
+ *
+ * The cap is generous on purpose. HASHTAG_LIMIT (30) is Instagram's rule and
+ * the UI warns at it, but the API does not refuse at 31: she may be drafting,
+ * and a tool that rejects her work mid-thought because a platform she has not
+ * chosen yet would reject it is a tool that is wrong more often than it is
+ * right. The hard cap here only exists to stop something absurd reaching the
+ * database.
+ */
+const hashtagSchema = z.array(z.string().max(140)).max(HASHTAG_LIMIT * 4)
 
 /**
  * What is waiting on a decision, across every workspace.
@@ -192,6 +206,7 @@ const createSchema = z.object({
     .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use a 24-hour time like 18:30')
     .nullish(),
   caption: z.string().max(4000).nullish(),
+  hashtags: hashtagSchema.optional(),
 })
 
 /**
@@ -211,6 +226,7 @@ const patchSchema = z.object({
     .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use a 24-hour time like 18:30')
     .nullish(),
   caption: z.string().max(4000).nullish(),
+  hashtags: hashtagSchema.optional(),
   feedOrder: z.number().int().nullish(),
 })
 
@@ -291,6 +307,7 @@ contentRoutes.post('/', requireStaff, async (c) => {
         scheduledAt: data.scheduledAt ?? null,
         scheduledTime: timeForNewItem(data.scheduledAt, data.scheduledTime),
         caption: data.caption ?? null,
+        hashtags: normaliseHashtags(data.hashtags ?? []),
         visibleToClient: shouldShare(data.status, false),
         createdBy: actorId,
       })
@@ -343,10 +360,26 @@ contentRoutes.patch('/:id', requireStaff, async (c) => {
      */
     const timePatch = scheduleOverrides(before.scheduledAt, patch)
 
+    /*
+     * Normalised HERE as well as on create, not only in the browser.
+     *
+     * The spread below would otherwise write whatever arrived — and the field
+     * is an array, so a client sending ['#one', '#One', ' one '] would store
+     * three tags that are one tag. The rule has to sit where the row is
+     * written, or it is enforced by whichever caller happens to remember it.
+     * Guarded on `undefined` rather than truthiness: an explicit [] is how the
+     * UI clears every tag, and `!patch.hashtags` would silently ignore that.
+     */
+    const hashtagPatch =
+      patch.hashtags === undefined
+        ? {}
+        : { hashtags: normaliseHashtags(patch.hashtags) }
+
     const [row] = await tx
       .update(contentItems)
       .set({
         ...patch,
+        ...hashtagPatch,
         ...timePatch,
         visibleToClient: shouldShare(patch.status, before.visibleToClient),
         updatedAt: new Date(),
@@ -465,11 +498,16 @@ export function duplicateFields(source: {
   title: string
   type: (typeof CONTENT_TYPES)[number]
   caption: string | null
+  hashtags: string[]
 }) {
   return {
     title: `${source.title} (copy)`.slice(0, 200),
     type: source.type,
     caption: source.caption,
+    // Carried over, like the caption: a duplicate exists to be the same post
+    // again with a new date, and retyping thirty tags is the reason she would
+    // stop using the button.
+    hashtags: source.hashtags,
     status: 'idea' as const,
     scheduledAt: null,
     scheduledTime: null,

@@ -66,6 +66,7 @@ describe('duplicating a post resets what it must', () => {
     title: 'Autumn range hero',
     type: 'carousel' as const,
     caption: 'Shop the drop',
+    hashtags: ['AutumnRange', 'LDN'],
   }
 
   it('starts the copy as an unreviewed, unshared idea', () => {
@@ -86,6 +87,10 @@ describe('duplicating a post resets what it must', () => {
     expect(copy.title).toBe('Autumn range hero (copy)')
     expect(copy.type).toBe('carousel')
     expect(copy.caption).toBe('Shop the drop')
+    // Carried over for the same reason as the caption: a duplicate is the same
+    // post again on a new date, and retyping thirty tags is why she would stop
+    // using the button.
+    expect(copy.hashtags).toEqual(['AutumnRange', 'LDN'])
   })
 
   it('does not overflow the title column', () => {

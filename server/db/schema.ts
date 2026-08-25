@@ -417,6 +417,22 @@ export const contentItems = pgTable(
      */
     scheduledTime: time('scheduled_time'),
     caption: text('caption'),
+    /**
+     * Hashtags, as an array rather than a blob of text.
+     *
+     * She pastes them as one string, but stored that way the same tag exists
+     * four spellings deep and nothing can count them — and counting is the
+     * point, because Instagram rejects a post with more than 30 and she needs
+     * to see that before she schedules, not after it fails.
+     *
+     * Normalised on the way in: no hashes, no punctuation, deduped
+     * case-insensitively with the first spelling kept. Empty array rather than
+     * null, so "no hashtags" has exactly one representation.
+     */
+    hashtags: text('hashtags')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     feedOrder: integer('feed_order'),
     /**
      * Her Ideas Bank is a raw backlog, rejected pitches included. Default

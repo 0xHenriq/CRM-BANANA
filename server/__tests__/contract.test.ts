@@ -17,6 +17,16 @@ import { INVOICE_STATUSES as SERVER_INVOICE_STATUSES } from '../routes/invoices.
 import { hhmm } from '../lib/audit.js'
 import { compareSteps } from '../routes/next-steps.js'
 import {
+  HASHTAG_LIMIT as SERVER_HASHTAG_LIMIT,
+  normaliseHashtags as serverNormalise,
+  parseHashtagInput as serverParse,
+} from '../lib/hashtags.js'
+import {
+  HASHTAG_LIMIT as CLIENT_HASHTAG_LIMIT,
+  normaliseHashtags as clientNormalise,
+  parseHashtagInput as clientParse,
+} from '../../src/lib/hashtags.js'
+import {
   CONTENT_STATUSES as CLIENT_STATUSES,
   CONTENT_TYPES as CLIENT_TYPES,
   DEAL_STAGES as CLIENT_STAGES,
@@ -301,5 +311,62 @@ describe('compareSteps', () => {
         { due: '2026-09-30', title: 'september' },
       ])
     ).toEqual(['september', 'october'])
+  })
+})
+
+/**
+ * Hashtag normalisation, on both sides of the wire.
+ *
+ * There are two copies of this function because the server cannot import from
+ * src and the browser should not import from server. That is a real risk: a
+ * client that normalises differently from the server shows her a tag list that
+ * is not what was saved, and she would only find out by reloading. So every
+ * case below runs through BOTH implementations and asserts they agree.
+ */
+describe('hashtag normalisation', () => {
+  const cases: [string, string[], string[]][] = [
+    ['strips the hash', ['#LDN'], ['LDN']],
+    ['strips punctuation and spaces', [' #social media! '], ['socialmedia']],
+    [
+      'dedupes case-insensitively, keeping the first spelling',
+      ['BananaDigital', 'bananadigital', 'BANANADIGITAL'],
+      ['BananaDigital'],
+    ],
+    ['drops entries that are only punctuation', ['#', '  ', '###'], []],
+    ['keeps underscores and digits', ['#top_10'], ['top_10']],
+    ['keeps non-latin letters', ['#café', '#東京'], ['café', '東京']],
+    ['preserves order', ['#b', '#a', '#c'], ['b', 'a', 'c']],
+  ]
+
+  for (const [name, input, expected] of cases) {
+    it(name, () => {
+      expect(serverNormalise(input)).toEqual(expected)
+      expect(clientNormalise(input)).toEqual(expected)
+    })
+  }
+
+  it('case-folds with locale rules on both sides', () => {
+    // Two spellings that differ only in case must collapse to one.
+    expect(serverNormalise(['Straße', 'straße'])).toEqual(['Straße'])
+    expect(clientNormalise(['Straße', 'straße'])).toEqual(['Straße'])
+  })
+
+  it('parses a pasted blob the same way on both sides', () => {
+    const blob = '#one #two,#three\n#one  four'
+    const expected = ['one', 'two', 'three', 'four']
+    expect(serverParse(blob)).toEqual(expected)
+    expect(clientParse(blob)).toEqual(expected)
+  })
+
+  it('splits tags written with no spaces between them', () => {
+    // How they arrive when copied straight out of a caption.
+    expect(serverParse('#one#two#three')).toEqual(['one', 'two', 'three'])
+    expect(clientParse('#one#two#three')).toEqual(['one', 'two', 'three'])
+  })
+
+  it('agrees on the limit', () => {
+    expect(SERVER_HASHTAG_LIMIT).toBe(CLIENT_HASHTAG_LIMIT)
+    // Instagram's cap. If this changes, it changed on purpose.
+    expect(SERVER_HASHTAG_LIMIT).toBe(30)
   })
 })
