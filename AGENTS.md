@@ -107,7 +107,14 @@ The database is shared with production. **There is no separate development datab
 
 4. **NEVER run raw `UPDATE`/`DELETE` without a `WHERE`.** State the row count you expect before running it.
 
-5. **Hand-written migrations must be registered** in `server/db/migrations/meta/_journal.json`, or `db:migrate` silently skips them.
+5. **Hand-written migrations must be registered** in `server/db/migrations/meta/_journal.json`, or `db:migrate` silently skips them. Drizzle does NOT generate RLS policies — every policy is hand-written.
+
+6. **A new tenant table is not finished when the migration is written.** It must be added to THREE places or it is silently unprotected:
+   - the RLS migration (`ENABLE ROW LEVEL SECURITY` + policies)
+   - the table list in `server/db/guard.ts`, or the boot guard never checks it
+   - `TENANT_TABLES` and the class lists in `server/__tests__/fixtures.ts`, or the isolation suite passes vacuously
+
+   Seed rows for it in the fixture too. A table with no fixture rows makes every isolation assertion trivially true.
 
 ---
 
@@ -259,9 +266,12 @@ npm run test:coverage
 |---|---|---|
 | Tenancy isolation | `server/__tests__/isolation.test.ts` | Cross-tenant, class confusion, fail-closed |
 | API/client contract | `server/__tests__/contract.test.ts` | Deal stages match on both sides; money arithmetic |
-| Patch schemas | `server/__tests__/patch-schemas.test.ts` | PATCH bodies invent no fields |
-| URL safety | `src/lib/safe-href.test.ts` | `javascript:`/`data:` refused |
+| Patch schemas | `server/__tests__/patch-schemas.test.ts` | PATCH bodies invent no fields; duplicate resets; schedule invariants |
+| Media | `server/__tests__/media.test.ts` | Magic-number sniffing, range arithmetic, download headers, size messages |
+| URL safety | `src/lib/safe-href.test.ts` | `javascript:`/`data:` refused; `//evil.com` is not an internal path |
 | Components | `src/**/*.test.tsx` | Sign-in, config drawer, search palette |
+
+Current counts: **90 component tests, 156 server tests.** If a change drops either number, you deleted a test.
 
 ### The Isolation Suite Covers Three Distinct Failure Modes
 
@@ -347,22 +357,34 @@ server/
     resolve-client.ts    Which workspace a request is for (staff vs client)
     audit.ts             audit() + recordActivity(), both take the tx
     storage.ts           StorageDriver; LocalDiskDriver; path-escape guard
-    media.ts             sharp thumbnails, ffmpeg posters, magic-number sniffing
-    seed-workspace.ts    Her 8 links / 5 file slots / 4 onboarding to-dos
+    media.ts             sharp thumbnails, ffmpeg posters, magic-number sniffing,
+                         document sniffing (PDF/OOXML/CSV), 1 GB ceiling
+    seed-workspace.ts    Her 10 links (TikTok/Instagram/Facebook first) /
+                         5 file slots / 4 onboarding to-dos
   middleware/
     session.ts           withSession, requireAuth, requireStaff
     rate-limit.ts        In-process fixed-window limiter
-  routes/                clients, deals, portal, content, media, seats, invitations
-  __tests__/             isolation, contract, patch-schemas, fixtures
+  routes/                clients, deals, invoices, portal, content, media,
+                         seats, invitations
+  __tests__/             isolation, contract, patch-schemas, media, fixtures
 
 src/
-  lib/api.ts             API client + shared types + money helpers
-  lib/safe-href.ts       URL sanitiser for anything that becomes an href
+  lib/api.ts             API client + shared types + money helpers + derived
+                         state (paymentState, invoiceState, outstandingPence)
+  lib/upload.ts          XHR multipart upload with progress. Browser-only, and
+                         SEPARATE from api.ts because the server project
+                         typechecks api.ts and has no DOM lib.
+  lib/safe-href.ts       safeHref() for external URLs, internalPath() for
+                         in-app ones. Both refuse `//evil.com`.
   lib/route-guards.ts    requireStaffRoute()
   hooks/use-current-user.ts   /api/me — the single authority on isStaff
+  components/upload-button.tsx  THE way this app opens a file picker. A native
+                         <label for>, never a scripted .click().
   features/
     portal/use-workspace.ts   Persisted workspace selection (shared, derived)
-    content/                  Ideas Bank, Calendar, Feed, Moodboard, Review Queue
+    content/                  Ideas Bank, Calendar, Feed, Moodboard, Review
+                              Queue, moodboard-preview (strip, reused)
+    invoices/panel.tsx        Invoices + receipts. ONE panel for both audiences.
     clients/ pipeline/ dashboard/ auth/
   routes/                TanStack file-based routes
 
@@ -385,7 +407,9 @@ scripts/
 | `content_items` | **Both** the Ideas Bank and the Calendar. Unscheduled = idea; dated = calendar. | `server/db/schema.ts` |
 | `content_assets` | Uploaded media for an item. First asset (by `sortOrder`) fills the feed cell. | `server/db/schema.ts` |
 | `content_approvals` | Append-only decision record. No UPDATE/DELETE policy exists. | `server/db/schema.ts` |
-| `tasks` | To-dos, with `visibleToClient` separating internal work. | `server/db/schema.ts` |
+| `tasks` | To-dos, with `visibleToClient` separating internal work and `dueDate` for deadlines. | `server/db/schema.ts` |
+| `invoices` | A demand for money. Many per deal — a retainer is billed in stages. Client sees it only once `issuedOn` is set. | `server/db/schema.ts` |
+| `invoice_payments` | Money received. **Each row IS a receipt.** No UPDATE policy. | `server/db/schema.ts` |
 | `TenantContext` | `{ userId, isStaff }` — what `withTenant` writes into the transaction. | `server/db/index.ts` |
 | `StorageDriver` | Put/read/remove for uploaded bytes. | `server/lib/storage.ts` |
 
@@ -397,6 +421,10 @@ scripts/
 - **`content_items` is one table serving three views.** The prototype's two disconnected stores meant approving an idea did nothing to the calendar.
 - **Media streams through the app.** Caddy has no `secure_link` equivalent, so a signed URL would have nothing validating it.
 - **Local disk over object storage.** 416 GB free on VPS4.
+- **Derived state is never stored.** `overdue`, `paid` and `part paid` are computed from the payments and today's date; a deal's `overdue` likewise. Storing them would need something running at midnight to keep them honest, and a status that silently goes stale is worse than no status. Only what she DECIDES is persisted: `draft`/`sent`/`void`, `none`/`awaiting`/`paid`.
+- **Invoices, not a flag on the deal.** She bills a retainer in stages, so one deal carries many invoices and an invoice can be half settled. `deals.payment_status` remains as lightweight per-deal marking, but **invoices are the book** — anything totalling "owed" reads from them.
+- **A payment row IS the receipt.** A separate receipts table would hold the same facts twice. The row carries its own number and that is what the client quotes back.
+- **The upload picker uses a native `<label for>`.** A scripted `.click()` on a hidden input fails silently on Safari and iOS, and cost a full day. There is no JavaScript in that path now.
 
 ### Non-Negotiable Invariants
 
@@ -411,7 +439,11 @@ scripts/
 | 7 | Money is integer pence until display | Float sums drift; rounding to pounds misstates a contract |
 | 8 | Child rows inherit their parent's visibility | `client_id` alone leaks a hidden item's assets and comments |
 | 9 | `visible_to_client` is **sticky** once granted | A status reset must not yank a thread from a client mid-conversation |
-| 10 | Her design tokens are verbatim | The art direction in `src/styles/theme.css` is the brand asset |
+| 10 | Her design tokens are verbatim | The art direction in `src/styles/theme.css` is the brand asset. NEW tokens beside it are fine; edits to the existing crate palette are not |
+| 11 | `invoices.amount_pence` is an **integer**, not numeric | A new table is the one place invariant 7 can be honoured exactly. `deals.value` stays `numeric(12,2)` for history; convert at the boundary, never mix units in one sum |
+| 12 | `issued_on` is the client-visibility gate on invoices, **not** the status | A draft must never reach the client, and a later void must not retroactively hide a document they already hold |
+| 13 | A rule is judged on the row as it will BE, not on what the request mentions | Checking only the fields present in a PATCH leaves the other direction wide open. See Failure Mode 15 |
+| 14 | File inputs are `sr-only`, never `hidden` | `display:none` inputs do not reliably open a picker; the failure is completely silent |
 
 ### Performance Requirements
 
@@ -426,6 +458,8 @@ All under `/api`, same-origin, cookie-authenticated.
 | `/api/auth/*` | public | Better Auth. Sign-up is **disabled**. |
 | `/api/me` | authed | The single authority on `isStaff` |
 | `/api/clients`, `/api/deals` | **staff only** | 403 for clients, including their own client |
+| `/api/invoices` | authed | Staff see all (and every client's, unfiltered — that is what a payment view needs); a client sees only their own **issued** ones. Writes are staff only. |
+| `/api/invoices/:id/payments` | staff only | Records a payment and issues a receipt number. Overpayment is refused |
 | `/api/portal`, `/api/content`, `/api/media` | authed | `?client=<uuid>` honoured for staff, **ignored** for clients |
 | `/api/content/awaiting` | authed | Registered **before** `/:id`, or "awaiting" parses as an id |
 | `/api/seats` | staff only | Seat cap of 10, counting members + pending invitations |
@@ -541,6 +575,35 @@ Always run step 2 first. It restores into a throwaway database and prints the
 row counts, which is how you find out the dump you were about to trust is empty
 *before* you have overwritten anything.
 
+### The Ingress (Caddy on VPS4)
+
+**What it does.** Caddy listens on `:8100`, serves the built SPA from
+`/srv/http/bd-portal`, and proxies `/api` and `/healthz` to the Node process on
+`127.0.0.1:4300`. **It is part of the application** and it has caused a full
+day of debugging that looked like an application bug and was not.
+
+**When to look here.** When a request never reaches the server at all. If
+`journalctl` shows NO log line for the thing the user says is broken, the
+application never saw it — suspect the browser or the ingress, not the code.
+
+```bash
+ssh vps4 'sudo cat /etc/caddy/Caddyfile'          # read it
+ssh vps4 'sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile'
+ssh vps4 'sudo systemctl reload caddy'            # apply; never restart blindly
+curl -s -D - -o /dev/null http://161.97.76.197:8100/portal | grep -i cache-control
+```
+
+**Common pitfalls.**
+- **`:80` on that box is a different site.** `http://161.97.76.197` with no port
+  serves an unrelated application. Every URL given to a human MUST include
+  `:8100`, or they land somewhere else and no password will ever work.
+- **A path matcher matches the REQUEST path, not what `try_files` rewrote to.**
+  `header /index.html Cache-Control "no-cache"` matched literally nothing,
+  because a browser asks for `/`, `/portal`, `/clients` — never `/index.html`.
+  The SPA shell was cached for hours and deploys were invisible to the user.
+  Verify a header by fetching a real route, never by reasoning about the config.
+- Back the file up before editing it and `validate` before reloading.
+
 ### Tool Selection Matrix
 
 | Scenario | Tool | Why |
@@ -551,6 +614,9 @@ row counts, which is how you find out the dump you were about to trust is empty
 | Change the schema | `db:generate` → review SQL → `db:migrate` | `push` drops columns |
 | Change an RLS policy | Hand-written migration + journal entry | Drizzle does not generate policies |
 | Inspect production data | `psql "$DATABASE_URL_OWNER"` via the tunnel | `bd_app` cannot see across tenants without session vars |
+| A request never reaches the server | `journalctl` first, then the Caddy config | No log line means the app never saw it — the fault is in front of it |
+| Verify a change reached the user | `curl -D -` on a real route | A deployed file is not a served file; caching sits in between |
+| Exercise a route without touching production | Boot a second instance on `:4399` against `bd_portal_test` | The only safe way to drive the real API end to end |
 
 ---
 
@@ -688,6 +754,99 @@ These are **observed** on this codebase, not hypothetical. Each one shipped a re
 
 **The correct behavior:** Branch on `isError` **before** `isEmpty`. Use `QueryError`. Give the user a way out.
 
+**The same bug, second form:** a stat tile rendered its VALUE inside the loading
+branch but its HINT outside it, so before the queries returned the dashboard
+read "Nothing outstanding" over an empty array — a confident, wrong answer to
+the one number on that screen worth acting on. Everything derived from a query
+belongs inside the loading branch, not just the headline number.
+
+---
+
+### Failure Mode 13: Writing to a tenant table without a tenant context
+
+**The bad behavior:** `await db.insert(invitationGrants).values(...)` — a bare
+`db` call against a table that carries RLS.
+
+**What happened:** `POST /api/seats/invite` created the invitation through
+Better Auth, committed it, then hit `42501` staging the workspace grants. A
+bare `db` call has no session variables at all, which is indistinguishable from
+an anonymous request, so `app_is_staff()` is false and the `WITH CHECK` refuses
+the row. She saw "Internal server error", a seat was consumed, the invitee got a
+working link, and accepting it granted them nothing. Every client invitation was
+broken; nobody noticed because there is no UI for that endpoint.
+
+**The correct behavior:** `db` directly is ONLY for tables with no policies —
+the Better Auth tables and `system_meta`. Everything else goes through
+`withTenant()`. This is invariant 2 and it is not a style preference.
+
+---
+
+### Failure Mode 14: Affordances that depend on JavaScript
+
+**The bad behavior:** a `hidden` file input plus `ref.current.click()`.
+
+**What happened:** Tailwind's `hidden` is `display:none`, and a `display:none`
+file input does not reliably open its picker from a programmatic click —
+Safari and iOS ignore it. No picker, no request, no error, and NOTHING in
+`journalctl` because nothing ever reached the server. It read as "uploads are
+broken" for two weeks. Changing `hidden` to `sr-only` narrowed it without
+removing it.
+
+**The correct behavior:** use `src/components/upload-button.tsx`. It is a native
+`<label for>`, which every browser honours with no script at all. When an
+affordance can be native, make it native — it then survives a stale bundle, a
+blocked script, and a browser nobody tested.
+
+---
+
+### Failure Mode 15: Judging a rule on the request instead of the resulting row
+
+**The bad behavior:** `if (patch.scheduledAt === null) clearTheTime()`.
+
+**What happened:** the rule "a time cannot exist without a date" only fired when
+a request explicitly said `scheduledAt: null`. Sending just a time to an undated
+idea stored "18:30, no date" — a row the calendar cannot place, whose time
+resurfaces at a slot nobody chose the day the post is finally scheduled. The
+hole was in the direction nobody thought to check.
+
+**The correct behavior:** compute what the row will BE (`patch.x !== undefined ?
+patch.x : before.x`), then apply the rule to that. Extract it as a pure function
+so it can be asserted rather than read. See `scheduleOverrides` and
+`timeForNewItem` in `server/routes/content.ts`.
+
+---
+
+### Failure Mode 16: Announcing a refactor without checking every call site
+
+**The bad behavior:** a commit message reading "all three call sites now share
+this" when there were four.
+
+**What happened:** three upload sites were converted to the shared button and
+the content detail dialog was missed — the one place she uploads video to a
+post, left on exactly the broken pattern the change existed to remove. The
+commit claimed the problem was solved.
+
+**The correct behavior:** grep for the pattern before writing the claim, and
+again after. `grep -rn "type='file'" src/` takes two seconds and is the
+difference between a true and a false commit message.
+
+---
+
+### Failure Mode 17: Assuming a standard-library function implements the standard
+
+**The bad behavior:** `filename*=UTF-8''${encodeURIComponent(name)}`.
+
+**What happened:** `encodeURIComponent` deliberately leaves `!*'()` unescaped,
+and the apostrophe is the DELIMITER in `UTF-8'<lang>'<value>`. "Sofia's
+Agreement.pdf" produced a header a strict parser may truncate at that quote.
+Near-miss, not a miss: the function is 95% of RFC 5987 and the missing 5% is the
+delimiter itself.
+
+**The correct behavior:** when emitting a wire format, read what the format
+requires and check the encoder against it. Test with input containing the
+awkward characters — an apostrophe in a client's filename is not an edge case
+for a London agency.
+
 ---
 
 ## Appendix A: Environment Variables
@@ -717,6 +876,9 @@ These are **observed** on this codebase, not hypothetical. Each one shipped a re
 | Create the first account | `npm run bootstrap -- --email … --password …` |
 | Rotate a password | `npm run set-password -- --email … --password …` |
 | Check tenancy still holds | `npm run test:isolation` |
+| Add a tenant table | migration + RLS policy + `guard.ts` list + `fixtures.ts` lists + fixture rows |
+| Drive the API without touching production | boot a second instance on `:4399` against `bd_portal_test` |
+| Find out why a request "did nothing" | `ssh vps4 journalctl --user -u bd-portal -n 50` — no line means it never arrived |
 | Deploy | `npm run deploy` |
 | Read production logs | `ssh vps4 journalctl --user -u bd-portal -n 50` |
 | Restart production | `ssh vps4 systemctl --user restart bd-portal.service` |
@@ -729,8 +891,14 @@ State these plainly when relevant. Do not paper over them.
 - **The site is HTTP.** Passwords cross the wire in plaintext. `COOKIE_SECURE=false` follows from this.
 - **No self-service password change.** Rotation requires `scripts/set-password.ts` on the server.
 - **No email.** Invitations are copyable links; nothing notifies a client that content awaits them except the in-app review queue.
-- **Backups sit on the same disk as the data.** They survive a mistake, not a disk failure.
-- **Mobile layout is unverified.** The browser harness cannot resize.
-- **Files in the File Folder are links, not uploads** — the upload pipeline supports `target=file`, but the UI does not use it yet.
+- **Backups sit on the same disk as the data.** They survive a mistake, not a disk failure. Copy the newest pair off the box after any session that mattered — see Backups above.
+- **Mobile layout is unverified.** The browser harness cannot resize, and it cannot switch engine either: **nothing here has been verified on Safari or iOS**, which is where the upload picker failed. Say so rather than implying coverage.
+- **No per-client timezone.** `content_items.scheduled_time` is a bare wall-clock time and means her local reckoning. Correct for a London agency today; it is the thing to revisit before an international client.
+- **No platform model.** `content_type` is a FORMAT (video/reel/story/graphic/carousel), not a channel. There is no Instagram-vs-TikTok distinction, one caption for all destinations, and no hashtag field. The Feed Preview is a hardcoded 3x3 Instagram grid.
+- **Approvals do not bind to an asset version.** `content_assets.version` and `content_approvals.version` are always 1. A client approves, the creative is replaced, and the approval row still says approved.
+- **`review_links` is schema only.** The table and its policy exist; there are no routes. Stakeholders outside the 10 seats cannot review anything.
+- **`clients.logo_key` is unused.** The column exists; nothing uploads or renders a client logo.
+- **The seat cap counts client users.** `MAX_SEATS` is 10 across staff AND every client's users, because clients are modelled as members of the agency org.
+- **`audit_log` is write-only.** Every mutation writes one; nothing reads them back. There is no screen and no export.
 
 </INSTRUCTIONS>
