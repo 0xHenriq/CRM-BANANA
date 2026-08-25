@@ -17,6 +17,7 @@ import { dealRoutes } from './routes/deals.js'
 import { invoiceRoutes } from './routes/invoices.js'
 import { portalRoutes } from './routes/portal.js'
 import { contentRoutes } from './routes/content.js'
+import { nextStepRoutes } from './routes/next-steps.js'
 import { mediaRoutes } from './routes/media.js'
 
 const app = new Hono()
@@ -96,6 +97,7 @@ app.route('/api/invoices', invoiceRoutes)
 
 app.route('/api/portal', portalRoutes)
 app.route('/api/content', contentRoutes)
+app.route('/api/next-steps', nextStepRoutes)
 app.route('/api/media', mediaRoutes)
 
 // Must not call c.notFound() — that re-enters this very handler and blows the

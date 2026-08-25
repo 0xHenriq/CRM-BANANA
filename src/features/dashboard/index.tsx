@@ -27,7 +27,7 @@ import {
   DealStagePill,
   PaymentBadge,
 } from '../clients/status-pill'
-import { ReviewQueue } from '../content/review-queue'
+import { NextSteps } from '../content/review-queue'
 
 /**
  * Agency overview.
@@ -148,7 +148,7 @@ export function Dashboard() {
 
         {/* What is actually blocked, before the summary numbers. Her Monday
             question is "who owes me a decision", not "how many". */}
-        <ReviewQueue variant='agency' />
+        <NextSteps variant='agency' />
 
         <div className='grid gap-5 sm:grid-cols-2 lg:grid-cols-5'>
           {stats.map(({ label, icon: Icon, value, hint, alarm }) => (

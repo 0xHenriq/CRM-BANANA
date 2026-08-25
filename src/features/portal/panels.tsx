@@ -807,7 +807,7 @@ function NoticeItem({
  * unmissable, so it gets the destructive colour; due today or tomorrow is
  * amber; anything further out is quiet.
  */
-function DueDate({ date }: { date: string }) {
+export function DueDate({ date }: { date: string }) {
   // Compared as local calendar days, never through Date.parse of the whole
   // string: 'YYYY-MM-DD' parses as UTC midnight, so east of Greenwich an
   // evening check would call today's deadline yesterday's.

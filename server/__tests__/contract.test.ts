@@ -15,6 +15,7 @@ import {
 } from '../db/schema.js'
 import { INVOICE_STATUSES as SERVER_INVOICE_STATUSES } from '../routes/invoices.js'
 import { hhmm } from '../lib/audit.js'
+import { compareSteps } from '../routes/next-steps.js'
 import {
   CONTENT_STATUSES as CLIENT_STATUSES,
   CONTENT_TYPES as CLIENT_TYPES,
@@ -239,5 +240,66 @@ describe('money', () => {
     expect(formatPence(240050)).toBe('£2,400.50')
     expect(formatPence(75)).toBe('£0.75')
     expect(formatPence(-10050)).toBe('-£100.50')
+  })
+})
+
+/**
+ * Next-step ordering.
+ *
+ * The panel leads the page, so whatever sorts first is what she reads first.
+ * The failure that matters is an undated item sorting to the top: null sorts
+ * before everything in most naive comparators, which would put a post with no
+ * schedule above one due tomorrow and make the panel actively misleading.
+ */
+describe('compareSteps', () => {
+  const sorted = (steps: { due: string | null; title: string }[]) =>
+    [...steps].sort(compareSteps).map((s) => s.title)
+
+  it('puts the soonest deadline first', () => {
+    expect(
+      sorted([
+        { due: '2026-09-01', title: 'later' },
+        { due: '2026-08-20', title: 'sooner' },
+      ])
+    ).toEqual(['sooner', 'later'])
+  })
+
+  it('sorts undated LAST, not first', () => {
+    expect(
+      sorted([
+        { due: null, title: 'no date' },
+        { due: '2026-08-20', title: 'due soon' },
+      ])
+    ).toEqual(['due soon', 'no date'])
+  })
+
+  it('keeps overdue above everything still to come', () => {
+    expect(
+      sorted([
+        { due: '2026-12-01', title: 'future' },
+        { due: '2020-01-01', title: 'overdue' },
+        { due: null, title: 'undated' },
+      ])
+    ).toEqual(['overdue', 'future', 'undated'])
+  })
+
+  it('breaks a tie on title so the order is stable between requests', () => {
+    expect(
+      sorted([
+        { due: '2026-08-20', title: 'beta' },
+        { due: '2026-08-20', title: 'alpha' },
+      ])
+    ).toEqual(['alpha', 'beta'])
+  })
+
+  it('compares dates as strings, which is chronological for YYYY-MM-DD', () => {
+    // The trap: '2026-9-1' would break this, which is why the column is a date
+    // and the value is never hand-built.
+    expect(
+      sorted([
+        { due: '2026-10-01', title: 'october' },
+        { due: '2026-09-30', title: 'september' },
+      ])
+    ).toEqual(['september', 'october'])
   })
 })

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link, useParams } from '@tanstack/react-router'
 import {
   ArrowLeft,
   Mail,
@@ -20,13 +20,16 @@ import {
   type ClientStatus,
   type PortalWorkspace,
 } from '@/lib/api'
-import { MoodboardPreview } from '@/features/content/moodboard-preview'
-import { InvoicesPanel } from '@/features/invoices/panel'
-import { useWorkspace } from '@/features/portal/use-workspace'
-import { LinkStack } from '@/features/portal/link-stack'
-import { FileFolder, TaskList } from '@/features/portal/panels'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -39,14 +42,6 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog'
 import { ConfigDrawer } from '@/components/config-drawer'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
@@ -54,6 +49,12 @@ import { PageHead } from '@/components/layout/page-head'
 import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
+import { MoodboardPreview } from '@/features/content/moodboard-preview'
+import { NextSteps } from '@/features/content/review-queue'
+import { InvoicesPanel } from '@/features/invoices/panel'
+import { LinkStack } from '@/features/portal/link-stack'
+import { FileFolder, TaskList } from '@/features/portal/panels'
+import { useWorkspace } from '@/features/portal/use-workspace'
 import {
   ClientStatusPill,
   DealStagePill,
@@ -183,6 +184,17 @@ export function ClientDetailPage() {
         />
 
         {/*
+          This client's next actions, before anything else on the page.
+
+          Sofia asked for "waiting on clients" to be individual to each client:
+          the dashboard list answers "what is outstanding everywhere", which is
+          the wrong question once she has opened one client's page. Same
+          component and same endpoint as the dashboard, narrowed by id, so the
+          two cannot disagree about what counts as a step.
+        */}
+        <NextSteps variant='agency' clientId={clientId} />
+
+        {/*
           The workspace, on the agency's own client page.
           
           She asked to see "the same kind of info as the homepage" here, and she
@@ -205,7 +217,7 @@ export function ClientDetailPage() {
             boxes — but silently omitting them reads as a missing feature. The
             toggle that fixes it is a few lines further down this same page.
           */
-          <Card className='crate-card mb-5 border-dashed'>
+          <Card className='mb-5 crate-card border-dashed'>
             <CardContent className='py-4 text-sm text-muted-foreground'>
               <strong>{client.name}</strong> has no workspace yet. Turn on{' '}
               <strong>Client portal</strong> below to create their link stack,
@@ -218,7 +230,7 @@ export function ClientDetailPage() {
           <div className='space-y-5 lg:col-span-2'>
             <Card className='crate-card'>
               <CardHeader>
-                <CardTitle className='display crate-rule pb-2 text-lg'>
+                <CardTitle className='pb-2 display text-lg crate-rule'>
                   Account
                 </CardTitle>
               </CardHeader>
@@ -269,7 +281,7 @@ export function ClientDetailPage() {
 
             <Card className='crate-card'>
               <CardHeader>
-                <CardTitle className='display crate-rule pb-2 text-lg'>
+                <CardTitle className='pb-2 display text-lg crate-rule'>
                   Deals
                 </CardTitle>
               </CardHeader>
@@ -508,9 +520,9 @@ function TimelineCard({
   })
 
   return (
-    <Card className='crate-card h-fit'>
+    <Card className='h-fit crate-card'>
       <CardHeader>
-        <CardTitle className='display crate-rule pb-2 text-lg'>
+        <CardTitle className='pb-2 display text-lg crate-rule'>
           Activity
         </CardTitle>
       </CardHeader>

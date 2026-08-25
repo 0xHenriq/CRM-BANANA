@@ -11,7 +11,7 @@ import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { MoodboardPreview } from '@/features/content/moodboard-preview'
-import { ReviewQueue } from '@/features/content/review-queue'
+import { NextSteps } from '@/features/content/review-queue'
 import { InvoicesPanel } from '@/features/invoices/panel'
 import { LinkStack } from './link-stack'
 import { FileFolder, NoticeBoard, TaskList } from './panels'
@@ -113,7 +113,7 @@ export function PortalHome() {
 
         {/* Above everything: the reason they opened the portal, if there is
             one. Buried below a link stack it may as well not exist. */}
-        <ReviewQueue variant={isStaff ? 'agency' : 'client'} />
+        <NextSteps variant={isStaff ? 'agency' : 'client'} />
 
         {/*
           Money first. "A client owes her 5k, so it should be visually on top
