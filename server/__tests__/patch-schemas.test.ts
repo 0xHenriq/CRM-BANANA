@@ -4,7 +4,11 @@ import {
   linkPatchSchema,
   taskPatchSchema,
 } from '../routes/portal.js'
-import { duplicateFields } from '../routes/content.js'
+import {
+  duplicateFields,
+  scheduleOverrides,
+  timeForNewItem,
+} from '../routes/content.js'
 
 /**
  * PATCH schemas must not carry defaults.
@@ -89,5 +93,46 @@ describe('duplicating a post resets what it must', () => {
     // already-long name has to be truncated rather than rejected at insert.
     const copy = duplicateFields({ ...approvedAndShared, title: 'x'.repeat(200) })
     expect(copy.title.length).toBe(200)
+  })
+})
+
+/**
+ * A posting time cannot exist without a day.
+ *
+ * The first version of this rule only looked at whether the request said
+ * `scheduledAt: null`, which left the other direction open: sending just a
+ * time to an undated idea stored "18:30, no date". The calendar cannot place
+ * that row, and the time reappears at a slot nobody chose the day the post is
+ * finally scheduled. The rule has to be judged on the row as it will be, not
+ * on what the request happens to mention.
+ */
+describe('a posting time needs a date', () => {
+  it('refuses a time on a create with no date', () => {
+    expect(timeForNewItem(null, '18:30')).toBeNull()
+    expect(timeForNewItem(undefined, '18:30')).toBeNull()
+  })
+
+  it('keeps a time on a create that has a date', () => {
+    expect(timeForNewItem('2026-09-20', '18:30')).toBe('18:30')
+    expect(timeForNewItem('2026-09-20', null)).toBeNull()
+  })
+
+  it('clears the time when a patch clears the date', () => {
+    expect(scheduleOverrides('2026-09-20', { scheduledAt: null })).toEqual({
+      scheduledTime: null,
+    })
+  })
+
+  it('clears the time when a patch sets one on a row that has no date', () => {
+    // The hole. The request never mentions scheduledAt, so the old check saw
+    // nothing to act on and wrote the time anyway.
+    expect(scheduleOverrides(null, {})).toEqual({ scheduledTime: null })
+  })
+
+  it('leaves the time alone when the row keeps a date', () => {
+    // `{}` and not `{scheduledTime: undefined}` — an omitted key is what makes
+    // Drizzle skip the column instead of writing null over a real value.
+    expect(scheduleOverrides('2026-09-20', {})).toEqual({})
+    expect(scheduleOverrides(null, { scheduledAt: '2026-09-20' })).toEqual({})
   })
 })

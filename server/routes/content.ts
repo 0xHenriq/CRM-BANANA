@@ -214,6 +214,40 @@ const patchSchema = z.object({
   feedOrder: z.number().int().nullish(),
 })
 
+
+/**
+ * A posting time only exists if the row has a day to sit on.
+ *
+ * Two entry points need this and they need it differently, so it is two small
+ * functions rather than one clever one. Both are exported because the rule is
+ * worth asserting directly: it was wrong once already, in the direction nobody
+ * thought to check.
+ */
+
+/** For a create: the time to store, given the date being stored with it. */
+export function timeForNewItem(
+  scheduledAt: string | null | undefined,
+  scheduledTime: string | null | undefined
+): string | null {
+  return scheduledAt ? (scheduledTime ?? null) : null
+}
+
+/**
+ * For a PATCH: the schedule fields to force, on top of whatever was sent.
+ *
+ * Judged on the row as it will BE, not on what the request mentions —
+ * `{}` when the row keeps a date, so an omitted `scheduledTime` stays omitted
+ * and Drizzle leaves the column alone.
+ */
+export function scheduleOverrides(
+  beforeScheduledAt: string | null,
+  patch: { scheduledAt?: string | null }
+): { scheduledTime?: null } {
+  const next =
+    patch.scheduledAt !== undefined ? patch.scheduledAt : beforeScheduledAt
+  return next === null ? { scheduledTime: null } : {}
+}
+
 /**
  * Visibility is granted once and never revoked by a status change.
  *
@@ -255,7 +289,7 @@ contentRoutes.post('/', requireStaff, async (c) => {
         type: data.type,
         status: data.status,
         scheduledAt: data.scheduledAt ?? null,
-        scheduledTime: data.scheduledTime ?? null,
+        scheduledTime: timeForNewItem(data.scheduledAt, data.scheduledTime),
         caption: data.caption ?? null,
         visibleToClient: shouldShare(data.status, false),
         createdBy: actorId,
@@ -297,16 +331,17 @@ contentRoutes.patch('/:id', requireStaff, async (c) => {
     /**
      * A time without a date is not a thing.
      *
-     * Taking a post off the calendar leaves "18:30, no date", which the UI
-     * would have to invent a way to render and which reappears if the post is
-     * later scheduled onto a different day at a time nobody chose. Clearing
-     * the date clears the time with it, unless the same request sets one.
+     * Judged on the row as it will BE, not on what this request happens to
+     * mention. The first version only handled an explicit `scheduledAt: null`,
+     * which left the other way in wide open: sending just a time to an undated
+     * idea stored "18:30, no date" — a state the calendar cannot place, the
+     * detail dialog renders as an enabled time on a blank date, and which
+     * reappears at a time nobody chose the day the post is finally scheduled.
+     *
+     * The UI disables the time field until there is a date, but the invariant
+     * belongs here: a rule only the client enforces is not enforced.
      */
-    const clearsDate = patch.scheduledAt === null
-    const timePatch =
-      clearsDate && patch.scheduledTime === undefined
-        ? { scheduledTime: null }
-        : {}
+    const timePatch = scheduleOverrides(before.scheduledAt, patch)
 
     const [row] = await tx
       .update(contentItems)

@@ -245,3 +245,33 @@ describe('humanSize', () => {
     expect(humanSize(1536 * 1024)).toBe('2 MB')
   })
 })
+
+/**
+ * RFC 5987 encoding, which encodeURIComponent does not quite do.
+ *
+ * It leaves `!*'()~` unescaped, and the apostrophe is the delimiter in
+ * `UTF-8'<lang>'<value>` — so a filename containing one produced a header a
+ * strict parser may truncate at that quote. "Sofia's Agreement.pdf" is not a
+ * hypothetical filename for this client.
+ */
+describe('contentDisposition escaping', () => {
+  it('percent-encodes the characters that are not attr-char', () => {
+    const header = contentDisposition("Sofia's Agreement.pdf")
+    const encoded = /filename\*=UTF-8''(.*)$/.exec(header)?.[1] ?? ''
+    expect(encoded).not.toContain("'")
+    expect(encoded).toContain('%27')
+  })
+
+  it('encodes parentheses and asterisks too', () => {
+    const encoded =
+      /filename\*=UTF-8''(.*)$/.exec(contentDisposition('Q4 (final)*.pdf'))?.[1] ?? ''
+    expect(encoded).not.toMatch(/[()*]/)
+  })
+
+  it('still round-trips to the original name', () => {
+    for (const name of ["Sofia's Agreement.pdf", 'Acme — Agreement.pdf', 'Q4 (final).pdf']) {
+      const encoded = /filename\*=UTF-8''(.*)$/.exec(contentDisposition(name))?.[1] ?? ''
+      expect(decodeURIComponent(encoded)).toBe(name)
+    }
+  })
+})

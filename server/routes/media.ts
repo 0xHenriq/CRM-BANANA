@@ -379,6 +379,22 @@ export function parseRange(
  * the encoded one.
  */
 export function contentDisposition(filename: string): string {
+  /**
+   * encodeURIComponent is not quite RFC 5987.
+   *
+   * It deliberately leaves `!*'()~` alone, and of those only `!`, `~`, `-`,
+   * `_` and `.` are valid attr-char. The apostrophe is the one that actually
+   * bites: it is the delimiter in `UTF-8'<lang>'<value>`, so "Sofia's
+   * Agreement.pdf" emitted `filename*=UTF-8''Sofia's%20Agreement.pdf` and a
+   * strict parser is entitled to stop reading at that quote. An apostrophe in
+   * a client's filename is not an edge case for a London agency.
+   */
+  const rfc5987 = (value: string) =>
+    encodeURIComponent(value).replace(
+      /[!'()*]/g,
+      (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase()
+    )
+
   const scrubbed = filename.replace(/[^\w.\- ]+/g, '_').trim()
   // A name that is entirely non-ASCII — "документ.pdf", or a string of em
   // dashes — scrubs down to nothing but separators, and "_.pdf" is no more
@@ -386,7 +402,7 @@ export function contentDisposition(filename: string): string {
   // alphanumeric before trusting the fallback; the RFC 6266 form below still
   // carries the real name for every browser of the last decade.
   const fallback = /[a-z0-9]/i.test(scrubbed) ? scrubbed : 'download'
-  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${rfc5987(filename)}`
 }
 
 async function streamKey(

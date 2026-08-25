@@ -165,9 +165,17 @@ portalRoutes.patch('/links/:id', requireStaff, async (c) => {
 })
 
 portalRoutes.delete('/links/:id', requireStaff, async (c) => {
-  await withTenant(c.get('tenant'), (tx) =>
-    tx.delete(links).where(eq(links.id, c.req.param('id')))
+  // 404 when nothing matched, as files and notices already did. Answering
+  // {ok:true} to a delete that removed nothing tells the caller the row is
+  // gone when it may simply be invisible to them, and the UI then quietly
+  // drops it from the list until the next refetch puts it back.
+  const removed = await withTenant(c.get('tenant'), (tx) =>
+    tx
+      .delete(links)
+      .where(eq(links.id, c.req.param('id')))
+      .returning({ id: links.id })
   )
+  if (!removed.length) return c.json({ error: 'Not found' }, 404)
   return c.json({ ok: true })
 })
 
@@ -325,9 +333,13 @@ portalRoutes.patch('/tasks/:id', async (c) => {
 })
 
 portalRoutes.delete('/tasks/:id', requireStaff, async (c) => {
-  await withTenant(c.get('tenant'), (tx) =>
-    tx.delete(tasks).where(eq(tasks.id, c.req.param('id')))
+  const removed = await withTenant(c.get('tenant'), (tx) =>
+    tx
+      .delete(tasks)
+      .where(eq(tasks.id, c.req.param('id')))
+      .returning({ id: tasks.id })
   )
+  if (!removed.length) return c.json({ error: 'Not found' }, 404)
   return c.json({ ok: true })
 })
 

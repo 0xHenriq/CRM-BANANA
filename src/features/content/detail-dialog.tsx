@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Check,
@@ -23,6 +23,7 @@ import {
   type ContentType,
 } from '@/lib/api'
 import { uploadMedia } from '@/lib/upload'
+import { UploadButton } from '@/components/upload-button'
 import { useCurrentUser } from '@/hooks/use-current-user'
 import { Button } from '@/components/ui/button'
 import {
@@ -62,7 +63,7 @@ export function ContentDetailDialog({
   const queryClient = useQueryClient()
   const [comment, setComment] = useState('')
   const [note, setNote] = useState('')
-  const fileInput = useRef<HTMLInputElement>(null)
+  const [progress, setProgress] = useState<number | null>(null)
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['content-item', itemId],
@@ -101,10 +102,12 @@ export function ContentDetailDialog({
   const upload = useMutation({
     mutationFn: async (files: FileList) => {
       for (const file of Array.from(files)) {
+        setProgress(0)
         await uploadMedia(file, {
           clientId: null,
           target: 'content',
           contentItemId: itemId ?? undefined,
+          onProgress: setProgress,
         })
       }
     },
@@ -114,6 +117,7 @@ export function ContentDetailDialog({
       await queryClient.invalidateQueries({ queryKey: ['feed'] })
     },
     onError: (err: Error) => toast.error(err.message),
+    onSettled: () => setProgress(null),
   })
 
   /**
@@ -335,36 +339,16 @@ export function ContentDetailDialog({
               <div className='crate-rule mb-2 flex items-center justify-between pb-1'>
                 <p className='display text-sm'>Assets</p>
                 {isStaff && (
-                  <>
-                    {/* sr-only, not hidden — see the note in moodboard.tsx:
-                        a display:none file input will not open its picker from
-                        a programmatic .click() on Safari or iOS. */}
-                    <input
-                      ref={fileInput}
-                      type='file'
-                      accept='image/*,video/*'
-                      multiple
-                      className='sr-only'
-                      aria-label='Choose files to attach'
-                      onChange={(e) => {
-                        if (e.target.files?.length) upload.mutate(e.target.files)
-                        e.target.value = ''
-                      }}
-                    />
-                    <Button
-                      size='sm'
-                      variant='outline'
-                      onClick={() => fileInput.current?.click()}
-                      disabled={upload.isPending}
-                    >
-                      {upload.isPending ? (
-                        <Loader2 className='animate-spin' />
-                      ) : (
-                        <ImagePlus />
-                      )}
-                      Add
-                    </Button>
-                  </>
+                  <UploadButton
+                    size='sm'
+                    variant='outline'
+                    label='Add'
+                    icon={<ImagePlus />}
+                    accept='image/*,video/*'
+                    pending={upload.isPending}
+                    progress={progress}
+                    onFiles={(files) => upload.mutate(files)}
+                  />
                 )}
               </div>
 

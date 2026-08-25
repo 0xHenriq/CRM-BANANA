@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from '@tanstack/react-router'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -21,6 +21,7 @@ import {
   type PortalWorkspace,
 } from '@/lib/api'
 import { MoodboardPreview } from '@/features/content/moodboard-preview'
+import { useWorkspace } from '@/features/portal/use-workspace'
 import { LinkStack } from '@/features/portal/link-stack'
 import { FileFolder, TaskList } from '@/features/portal/panels'
 import { Button } from '@/components/ui/button'
@@ -189,7 +190,23 @@ export function ClientDetailPage() {
           ['portal', clientId], which is the key the panels invalidate, so an
           edit made here refreshes there and the other way round.
         */}
-        {client.portalEnabled && <ClientWorkspace clientId={clientId} />}
+        {client.portalEnabled ? (
+          <ClientWorkspace clientId={clientId} />
+        ) : (
+          /*
+            Say why rather than showing nothing. A client at proposal or paused
+            has no seeded workspace at all, so the panels would be four empty
+            boxes — but silently omitting them reads as a missing feature. The
+            toggle that fixes it is a few lines further down this same page.
+          */
+          <Card className='crate-card mb-5 border-dashed'>
+            <CardContent className='py-4 text-sm text-muted-foreground'>
+              <strong>{client.name}</strong> has no workspace yet. Turn on{' '}
+              <strong>Client portal</strong> below to create their link stack,
+              file folder and onboarding to-do&rsquo;s.
+            </CardContent>
+          </Card>
+        )}
 
         <div className='grid gap-5 lg:grid-cols-3'>
           <div className='space-y-5 lg:col-span-2'>
@@ -545,6 +562,26 @@ function TimelineCard({
  * start disagreeing about the same client.
  */
 function ClientWorkspace({ clientId }: { clientId: string }) {
+  const { setClientId } = useWorkspace()
+
+  /**
+   * Opening a client's page makes that client the active workspace.
+   *
+   * Without this the panels here show client X while every link out of them —
+   * "Open board", the Content Calendar row in the link stack — lands on
+   * whichever workspace was last persisted, which may be a different client
+   * entirely. That is precisely the defect use-workspace.ts was written to end:
+   * a selection living in one place and guessed in another, so you approve or
+   * schedule against the wrong client without anything on screen saying so.
+   *
+   * Setting it rather than threading `?client=` through every destination
+   * keeps one source of truth, and it matches what opening a client's page
+   * means: this is the client I am working on now.
+   */
+  useEffect(() => {
+    setClientId(clientId)
+  }, [clientId, setClientId])
+
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['portal', clientId],
     queryFn: () => api.get<PortalWorkspace>(`/portal?client=${clientId}`),

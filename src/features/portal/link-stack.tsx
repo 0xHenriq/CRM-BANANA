@@ -1,15 +1,26 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
+  Aperture,
   ArrowRight,
+  CalendarDays,
+  Camera,
   ExternalLink,
+  FileText,
+  Folder,
   Link2,
+  MessageCircle,
+  Music2,
+  NotebookPen,
+  Palette,
   Pencil,
   Plus,
+  Star,
   Trash2,
   Check,
   X,
 } from 'lucide-react'
+import { IconFacebook } from '@/assets/brand-icons'
 import { toast } from 'sonner'
 import { api, type PortalLink } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -18,6 +29,35 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { internalPath, safeHref } from '@/lib/safe-href'
 import { Link } from '@tanstack/react-router'
+
+/**
+ * `links.icon` finally means something.
+ *
+ * The column has been written since the first seed and never read — every row
+ * rendered the same generic chain icon, so a stack of nine links was nine
+ * identical rows and the one she wanted needed reading rather than spotting.
+ * She asked for the social entries to be distinguishable at a glance; this is
+ * the mechanism that was already half-built for it.
+ *
+ * Kept local and explicit rather than resolved dynamically from the lucide
+ * export map: an unknown name falls back to the chain instead of crashing, and
+ * lucide 1.x has dropped its brand icons — there is no Instagram or TikTok to
+ * look up, which is why those two borrow the closest neutral glyph and
+ * Facebook uses the brand icon this repo already carries.
+ */
+const LINK_ICONS: Record<string, React.ElementType> = {
+  'music-2': Music2, // TikTok
+  instagram: Aperture,
+  facebook: IconFacebook,
+  folder: Folder,
+  'notebook-pen': NotebookPen,
+  'file-text': FileText,
+  palette: Palette,
+  'calendar-days': CalendarDays,
+  star: Star,
+  camera: Camera,
+  'message-circle': MessageCircle,
+}
 
 export function LinkStack({
   links,
@@ -148,9 +188,11 @@ function LinkRow({
   const internal = internalPath(link.url)
   const href = internal ? null : safeHref(link.url)
 
+  const Icon = (link.icon && LINK_ICONS[link.icon]) || Link2
+
   return (
     <div className='flex items-center gap-2 rounded-md px-2 py-2 hover:bg-bd-cream'>
-      <Link2 className='size-4 shrink-0 text-muted-foreground' />
+      <Icon className='size-4 shrink-0 text-muted-foreground' />
 
       {/*
         The prototype rendered two <input> elements here and no anchor at all,
