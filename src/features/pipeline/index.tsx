@@ -22,13 +22,11 @@ import {
   api,
   formatMoney,
   formatPence,
-  paymentState,
   sumPence,
   DEAL_STAGES,
   type ClientSummary,
   type DealStage,
   type DealWithClient,
-  type PaymentState,
   type PaymentStatus,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -67,7 +65,7 @@ import { PageHead } from '@/components/layout/page-head'
 import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
-import { STAGE_LABEL } from '../clients/status-pill'
+import { PaymentBadge, STAGE_LABEL } from '../clients/status-pill'
 
 /**
  * Follow the cursor, not the card's rectangle.
@@ -95,6 +93,16 @@ const STAGES: readonly DealStage[] = DEAL_STAGES
 export function Pipeline() {
   const queryClient = useQueryClient()
   const [dragging, setDragging] = useState<DealWithClient | null>(null)
+  /**
+   * Which deal is having its payment due date set.
+   *
+   * Without this the red state was unreachable: the dropdown could mark a deal
+   * `awaiting`, but nothing in the UI could give it a due date, and overdue is
+   * derived from that date. So "Awaiting" sat there permanently orange and no
+   * invoice ever went red — the feature looked complete and could not actually
+   * do the thing she asked for.
+   */
+  const [dueFor, setDueFor] = useState<DealWithClient | null>(null)
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['deals'],
@@ -148,11 +156,12 @@ export function Pipeline() {
   const setPayment = useMutation({
     mutationFn: ({
       id,
-      paymentStatus,
+      ...body
     }: {
       id: string
-      paymentStatus: PaymentStatus
-    }) => api.patch(`/deals/${id}`, { paymentStatus }),
+      paymentStatus?: PaymentStatus
+      paymentDue?: string | null
+    }) => api.patch(`/deals/${id}`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['deals'] })
       queryClient.invalidateQueries({ queryKey: ['client'] })
@@ -239,6 +248,7 @@ export function Pipeline() {
                   onPayment={(id, paymentStatus) =>
                     setPayment.mutate({ id, paymentStatus })
                   }
+                  onSetDue={setDueFor}
                 />
               ))}
             </div>
@@ -249,7 +259,79 @@ export function Pipeline() {
           </DndContext>
         )}
       </Main>
+
+      <PaymentDueDialog
+        deal={dueFor}
+        onClose={() => setDueFor(null)}
+        onSave={(paymentDue) => {
+          if (!dueFor) return
+          // Setting a date implies she is chasing it, so an untracked deal
+          // moves to awaiting in the same request rather than needing two.
+          setPayment.mutate({
+            id: dueFor.id,
+            paymentDue,
+            ...(dueFor.paymentStatus === 'none'
+              ? { paymentStatus: 'awaiting' as const }
+              : {}),
+          })
+          setDueFor(null)
+        }}
+      />
     </>
+  )
+}
+
+/** Picks the date that decides when a deal turns red. */
+function PaymentDueDialog({
+  deal,
+  onClose,
+  onSave,
+}: {
+  deal: DealWithClient | null
+  onClose: () => void
+  onSave: (paymentDue: string | null) => void
+}) {
+  const [value, setValue] = useState('')
+
+  return (
+    <Dialog
+      open={!!deal}
+      onOpenChange={(open) => {
+        if (!open) onClose()
+      }}
+    >
+      <DialogContent className='crate-card sm:max-w-sm'>
+        <DialogHeader>
+          <DialogTitle className='display text-xl'>Payment due</DialogTitle>
+        </DialogHeader>
+        <div className='grid gap-1.5'>
+          <Label htmlFor='pay-due'>Due date</Label>
+          <Input
+            id='pay-due'
+            type='date'
+            // Keyed on the deal so opening a second card does not inherit the
+            // date typed for the first.
+            key={deal?.id ?? 'none'}
+            defaultValue={deal?.paymentDue ?? ''}
+            onChange={(e) => setValue(e.target.value)}
+          />
+          <p className='text-xs text-muted-foreground'>
+            It turns red on its own the day after this.
+          </p>
+        </div>
+        <DialogFooter className='gap-2'>
+          <Button variant='outline' size='sm' onClick={() => onSave(null)}>
+            Clear date
+          </Button>
+          <Button
+            size='sm'
+            onClick={() => onSave(value || deal?.paymentDue || null)}
+          >
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -258,11 +340,13 @@ function StageColumn({
   deals,
   onMove,
   onPayment,
+  onSetDue,
 }: {
   stage: DealStage
   deals: DealWithClient[]
   onMove: (id: string, stage: DealStage) => void
   onPayment: (id: string, paymentStatus: PaymentStatus) => void
+  onSetDue: (deal: DealWithClient) => void
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: stage })
 
@@ -294,6 +378,7 @@ function StageColumn({
             deal={deal}
             onMove={onMove}
             onPayment={onPayment}
+            onSetDue={onSetDue}
           />
         ))}
         {deals.length === 0 && (
@@ -306,54 +391,18 @@ function StageColumn({
   )
 }
 
-/**
- * The payment box.
- *
- * Bright and filled rather than a pastel outline — she asked for something her
- * "tired self can see", and the money state is the one thing on this board she
- * scans for. `overdue` is derived from the due date rather than stored, so it
- * turns red on its own the morning it becomes true.
- */
-const PAY_TONE: Record<Exclude<PaymentState, 'none'>, string> = {
-  paid: 'bg-pay-paid text-white',
-  awaiting: 'bg-pay-awaiting text-bd-ink',
-  overdue: 'bg-pay-overdue text-white',
-}
-
-function PaymentBadge({ deal }: { deal: DealWithClient }) {
-  const state = paymentState(deal)
-  if (state === 'none') return null
-
-  const label =
-    state === 'paid'
-      ? 'Paid'
-      : state === 'overdue'
-        ? `Overdue${deal.paymentDue ? ` · ${deal.paymentDue}` : ''}`
-        : `Awaiting${deal.paymentDue ? ` · due ${deal.paymentDue}` : ''}`
-
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center rounded border-[1.5px] border-bd-ink px-1.5 py-0.5',
-        'text-[0.625rem] font-bold whitespace-nowrap',
-        PAY_TONE[state]
-      )}
-    >
-      {label}
-    </span>
-  )
-}
-
 function DealCard({
   deal,
   overlay = false,
   onMove,
   onPayment,
+  onSetDue,
 }: {
   deal: DealWithClient
   overlay?: boolean
   onMove?: (id: string, stage: DealStage) => void
   onPayment?: (id: string, paymentStatus: PaymentStatus) => void
+  onSetDue?: (deal: DealWithClient) => void
 }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
     useDraggable({ id: deal.id, disabled: overlay })
@@ -426,6 +475,11 @@ function DealCard({
                         Awaiting payment
                       </DropdownMenuItem>
                     )}
+                    {onSetDue && (
+                      <DropdownMenuItem onSelect={() => onSetDue(deal)}>
+                        {deal.paymentDue ? 'Change due date…' : 'Set due date…'}
+                      </DropdownMenuItem>
+                    )}
                     {deal.paymentStatus !== 'none' && (
                       <DropdownMenuItem
                         onSelect={() => onPayment(deal.id, 'none')}
@@ -466,6 +520,7 @@ function NewDealDialog() {
     value: '',
     stage: 'lead' as DealStage,
     expectedClose: '',
+    paymentDue: '',
   })
 
   const { data: clientsData } = useQuery({
@@ -482,6 +537,11 @@ function NewDealDialog() {
         value: form.value.trim() || null,
         stage: form.stage,
         expectedClose: form.expectedClose || null,
+        paymentDue: form.paymentDue || null,
+        // A due date means she is expecting the money, so the deal starts
+        // awaiting rather than untracked. Same rule the card dialog applies —
+        // otherwise a date is set and nothing ever turns orange or red.
+        ...(form.paymentDue ? { paymentStatus: 'awaiting' as const } : {}),
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['deals'] })
@@ -492,6 +552,7 @@ function NewDealDialog() {
         value: '',
         stage: 'lead',
         expectedClose: '',
+        paymentDue: '',
       })
     },
     onError: (err: Error) => toast.error(err.message),
@@ -562,6 +623,21 @@ function NewDealDialog() {
                 }
               />
             </div>
+          </div>
+
+          <div className='grid gap-1.5'>
+            <Label htmlFor='deal-payment-due'>Payment due (optional)</Label>
+            <Input
+              id='deal-payment-due'
+              type='date'
+              value={form.paymentDue}
+              onChange={(e) =>
+                setForm({ ...form, paymentDue: e.target.value })
+              }
+            />
+            <p className='text-xs text-muted-foreground'>
+              Setting this marks the deal as awaiting payment.
+            </p>
           </div>
 
           <div className='grid gap-1.5'>

@@ -53,7 +53,12 @@ import { PageHead } from '@/components/layout/page-head'
 import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
-import { ClientStatusPill, DealStagePill, CLIENT_LABEL } from './status-pill'
+import {
+  ClientStatusPill,
+  DealStagePill,
+  PaymentBadge,
+  CLIENT_LABEL,
+} from './status-pill'
 
 const STATUSES: ClientStatus[] = [
   'lead',
@@ -290,6 +295,10 @@ export function ClientDetailPage() {
                           <span className='display text-base'>
                             {formatMoney(d.value, d.currency)}
                           </span>
+                          {/* The same badge the pipeline shows. "Which of
+                              these has he actually paid" is asked here more
+                              often than on the board. */}
+                          <PaymentBadge deal={d} />
                           <DealStagePill stage={d.stage} />
                         </div>
                       </li>

@@ -1,5 +1,11 @@
 import { cn } from '@/lib/utils'
-import type { ClientStatus, DealStage } from '@/lib/api'
+import {
+  paymentState,
+  type ClientStatus,
+  type DealStage,
+  type PaymentState,
+  type PaymentStatus,
+} from '@/lib/api'
 
 /**
  * Status pills, styled with the tag fills from her prototype rather than
@@ -60,6 +66,51 @@ export function ClientStatusPill({ status }: { status: ClientStatus }) {
 
 export function DealStagePill({ stage }: { stage: DealStage }) {
   return <Pill tone={STAGE_TONE[stage]}>{STAGE_LABEL[stage]}</Pill>
+}
+
+/**
+ * Where a deal's money has got to.
+ *
+ * Bright and filled rather than a pastel outline — she asked for something her
+ * "tired self can see", and this is the one thing on the board she scans for.
+ * `overdue` is derived from the due date rather than stored, so it turns red on
+ * its own the morning it becomes true.
+ *
+ * Lives here rather than in the pipeline because the client page shows the same
+ * deals and needs the same answer: two renderings of "is this paid" would drift.
+ */
+const PAY_TONE: Record<Exclude<PaymentState, 'none'>, string> = {
+  paid: 'bg-pay-paid text-white',
+  awaiting: 'bg-pay-awaiting text-bd-ink',
+  overdue: 'bg-pay-overdue text-white',
+}
+
+export function PaymentBadge({
+  deal,
+}: {
+  deal: { paymentStatus: PaymentStatus; paymentDue: string | null }
+}) {
+  const state = paymentState(deal)
+  if (state === 'none') return null
+
+  const label =
+    state === 'paid'
+      ? 'Paid'
+      : state === 'overdue'
+        ? `Overdue${deal.paymentDue ? ` · ${deal.paymentDue}` : ''}`
+        : `Awaiting${deal.paymentDue ? ` · due ${deal.paymentDue}` : ''}`
+
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center rounded border-[1.5px] border-bd-ink px-1.5 py-0.5',
+        'text-[0.625rem] font-bold whitespace-nowrap',
+        PAY_TONE[state]
+      )}
+    >
+      {label}
+    </span>
+  )
 }
 
 export { CLIENT_LABEL, STAGE_LABEL }

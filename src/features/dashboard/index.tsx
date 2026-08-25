@@ -5,10 +5,12 @@ import {
   api,
   formatMoney,
   formatPence,
+  paymentState,
   sumPence,
   type ClientSummary,
   type DealWithClient,
 } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ConfigDrawer } from '@/components/config-drawer'
@@ -18,7 +20,11 @@ import { PageHead } from '@/components/layout/page-head'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { Search } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
-import { ClientStatusPill, DealStagePill } from '../clients/status-pill'
+import {
+  ClientStatusPill,
+  DealStagePill,
+  PaymentBadge,
+} from '../clients/status-pill'
 import { ReviewQueue } from '../content/review-queue'
 
 /**
@@ -53,6 +59,23 @@ export function Dashboard() {
   )
   const pipelinePence = sumPence(openDeals.map((d) => d.value))
 
+  /**
+   * Money owed, across every deal regardless of stage.
+   *
+   * Deliberately not filtered to the open pipeline: an invoice she is chasing
+   * is almost always on a deal that is already `won`, so scoping this the way
+   * "open pipeline" is scoped would have shown zero for exactly the case that
+   * matters. "Who owes me money" is a Monday question and it had no answer on
+   * this screen at all.
+   */
+  const owed = deals.filter((d) => {
+    const state = paymentState(d)
+    return state === 'awaiting' || state === 'overdue'
+  })
+  const owedPence = sumPence(owed.map((d) => d.value))
+  const overdue = deals.filter((d) => paymentState(d) === 'overdue')
+  const overduePence = sumPence(overdue.map((d) => d.value))
+
   const stats = [
     {
       label: 'Active clients',
@@ -71,6 +94,20 @@ export function Dashboard() {
       icon: PoundSterling,
       value: pipelinePence > 0 ? formatPence(pipelinePence) : '—',
       hint: `${openDeals.length} deal${openDeals.length === 1 ? '' : 's'} in play`,
+    },
+    {
+      label: 'Owed',
+      icon: PoundSterling,
+      value: owedPence > 0 ? formatPence(owedPence) : '—',
+      hint:
+        overdue.length > 0
+          ? `${formatPence(overduePence)} overdue across ${overdue.length}`
+          : owed.length > 0
+            ? `${owed.length} invoice${owed.length === 1 ? '' : 's'} outstanding`
+            : 'Nothing outstanding',
+      // The one tile worth shouting. Everything else here is informational;
+      // this is the one she needs to act on.
+      alarm: overdue.length > 0,
     },
     {
       label: 'Open to-dos',
@@ -102,9 +139,15 @@ export function Dashboard() {
             question is "who owes me a decision", not "how many". */}
         <ReviewQueue variant='agency' />
 
-        <div className='grid gap-5 sm:grid-cols-2 lg:grid-cols-4'>
-          {stats.map(({ label, icon: Icon, value, hint }) => (
-            <Card key={label} className='crate-card gap-0 py-5'>
+        <div className='grid gap-5 sm:grid-cols-2 lg:grid-cols-5'>
+          {stats.map(({ label, icon: Icon, value, hint, alarm }) => (
+            <Card
+              key={label}
+              className={cn(
+                'crate-card gap-0 py-5',
+                alarm && 'border-pay-overdue bg-pay-overdue/10 border-2'
+              )}
+            >
               <CardHeader className='flex flex-row items-center justify-between space-y-0 px-5 pb-2'>
                 <CardTitle className='text-sm font-semibold'>{label}</CardTitle>
                 <Icon className='size-4 text-muted-foreground' />
@@ -115,7 +158,16 @@ export function Dashboard() {
                 ) : (
                   <div className='display text-3xl'>{value}</div>
                 )}
-                <p className='mt-1 text-xs text-muted-foreground'>{hint}</p>
+                <p
+                  className={cn(
+                    'mt-1 text-xs',
+                    alarm
+                      ? 'font-bold text-pay-overdue'
+                      : 'text-muted-foreground'
+                  )}
+                >
+                  {hint}
+                </p>
               </CardContent>
             </Card>
           ))}
@@ -196,6 +248,7 @@ export function Dashboard() {
                         <span className='display text-sm'>
                           {formatMoney(deal.value, deal.currency)}
                         </span>
+                        <PaymentBadge deal={deal} />
                         <DealStagePill stage={deal.stage} />
                       </div>
                     </li>
