@@ -4,6 +4,7 @@ import {
   CornerDownRight,
   Download,
   ExternalLink,
+  Eye,
   EyeOff,
   FileText,
   Plus,
@@ -384,6 +385,7 @@ export function TaskList({
   const queryClient = useQueryClient()
   const [title, setTitle] = useState('')
   const [internal, setInternal] = useState(false)
+  const [dueDate, setDueDate] = useState('')
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ['portal'] })
@@ -428,18 +430,37 @@ export function TaskList({
       api.post(`/portal/tasks?client=${clientId}`, {
         title: title.trim(),
         visibleToClient: !internal,
+        dueDate: dueDate || null,
       }),
     onSuccess: async () => {
       await invalidate()
       setTitle('')
       setInternal(false)
+      setDueDate('')
     },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  /**
+   * Reveal an internal task to the client, or take a shared one back.
+   *
+   * `visible_to_client` could only ever be set at creation, so a task typed as
+   * internal was internal for good — she had to delete it and retype it to
+   * share it. The RLS policy on tasks is what actually enforces this; the
+   * client never receives a hidden row at all, so flipping the flag is the
+   * only way to put one in front of them.
+   */
+  const setVisibility = useMutation({
+    mutationFn: ({ id, visibleToClient }: { id: string; visibleToClient: boolean }) =>
+      api.patch(`/portal/tasks/${id}`, { visibleToClient }),
+    onSuccess: invalidate,
     onError: (err: Error) => toast.error(err.message),
   })
 
   const remove = useMutation({
     mutationFn: (id: string) => api.del(`/portal/tasks/${id}`),
     onSuccess: invalidate,
+    onError: (err: Error) => toast.error(err.message),
   })
 
   return (
@@ -473,29 +494,63 @@ export function TaskList({
                   {task.title}
                 </label>
 
+                {/* The deadline as its own field rather than typed into the
+                    title. She had been writing "Due 28/08/2026" into the name
+                    because the column existed and the form never offered it. */}
+                {task.dueDate && !task.done && <DueDate date={task.dueDate} />}
+
                 {/* Only staff ever receive these rows — the RLS policy on
                     tasks filters visible_to_client — so the badge is a
-                    reminder of who can see it, not a gate. */}
-                {!task.visibleToClient && (
-                  <span
-                    className='flex shrink-0 items-center gap-1 rounded-full border-[1.5px] border-bd-ink bg-bd-sand px-1.5 py-0.5 text-[0.625rem] font-bold'
-                    title='Internal only — the client never sees this'
-                  >
-                    <EyeOff className='size-2.5' />
-                    Internal
-                  </span>
-                )}
+                    reminder of who can see it, not a gate. Clicking it is how
+                    a task typed as internal gets shared with the client; there
+                    was no way to do that short of deleting and retyping it. */}
+                {!task.visibleToClient &&
+                  (canEdit ? (
+                    <button
+                      type='button'
+                      onClick={() =>
+                        setVisibility.mutate({
+                          id: task.id,
+                          visibleToClient: true,
+                        })
+                      }
+                      className='flex shrink-0 items-center gap-1 rounded-full border-[1.5px] border-bd-ink bg-bd-sand px-1.5 py-0.5 text-[0.625rem] font-bold hover:bg-bd-yellow'
+                      title='Internal only — click to show this to the client'
+                    >
+                      <EyeOff className='size-2.5' />
+                      Internal
+                    </button>
+                  ) : null)}
 
                 {canEdit && (
-                  <Button
-                    size='icon'
-                    variant='ghost'
-                    className='size-7 shrink-0 opacity-0 group-hover:opacity-100'
-                    onClick={() => remove.mutate(task.id)}
-                    aria-label={`Remove ${task.title}`}
-                  >
-                    <Trash2 className='size-3.5 text-destructive' />
-                  </Button>
+                  <span className='flex shrink-0 gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100'>
+                    {task.visibleToClient && (
+                      <Button
+                        size='icon'
+                        variant='ghost'
+                        className='size-7'
+                        onClick={() =>
+                          setVisibility.mutate({
+                            id: task.id,
+                            visibleToClient: false,
+                          })
+                        }
+                        aria-label={`Hide ${task.title} from the client`}
+                        title='Shown to the client — click to make it internal'
+                      >
+                        <Eye className='size-3.5' />
+                      </Button>
+                    )}
+                    <Button
+                      size='icon'
+                      variant='ghost'
+                      className='size-7'
+                      onClick={() => remove.mutate(task.id)}
+                      aria-label={`Remove ${task.title}`}
+                    >
+                      <Trash2 className='size-3.5 text-destructive' />
+                    </Button>
+                  </span>
                 )}
               </li>
             ))}
@@ -518,6 +573,14 @@ export function TaskList({
                 placeholder='Add a task…'
                 className='h-8'
                 aria-label='New task'
+              />
+              <Input
+                type='date'
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                className='h-8 w-36 shrink-0'
+                aria-label='Deadline'
+                title='Deadline'
               />
               <Button size='sm' disabled={!title.trim() || create.isPending}>
                 <Plus />
@@ -733,5 +796,52 @@ function NoticeItem({
       </div>
       <p className='text-sm whitespace-pre-wrap'>{note.body}</p>
     </div>
+  )
+}
+
+/**
+ * A deadline, coloured by how close it is.
+ *
+ * "Due 28/08/2026" buried in a task title tells her nothing at a glance, which
+ * is the whole reason a deadline exists. Overdue is the state that has to be
+ * unmissable, so it gets the destructive colour; due today or tomorrow is
+ * amber; anything further out is quiet.
+ */
+function DueDate({ date }: { date: string }) {
+  // Compared as local calendar days, never through Date.parse of the whole
+  // string: 'YYYY-MM-DD' parses as UTC midnight, so east of Greenwich an
+  // evening check would call today's deadline yesterday's.
+  const [y, m, d] = date.split('-').map(Number)
+  const due = new Date(y, m - 1, d)
+  const today = new Date()
+  const midnight = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  const days = Math.round((due.getTime() - midnight.getTime()) / 86_400_000)
+
+  const tone =
+    days < 0
+      ? 'bg-destructive text-white border-bd-ink'
+      : days <= 1
+        ? 'bg-bd-yellow text-bd-ink border-bd-ink'
+        : 'bg-bd-sand text-bd-ink border-bd-rule'
+
+  const label =
+    days < 0
+      ? `${Math.abs(days)}d overdue`
+      : days === 0
+        ? 'Today'
+        : days === 1
+          ? 'Tomorrow'
+          : due.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+
+  return (
+    <span
+      className={cn(
+        'shrink-0 rounded-full border-[1.5px] px-1.5 py-0.5 text-[0.625rem] font-bold',
+        tone
+      )}
+      title={`Deadline ${due.toLocaleDateString('en-GB', { dateStyle: 'full' })}`}
+    >
+      {label}
+    </span>
   )
 }

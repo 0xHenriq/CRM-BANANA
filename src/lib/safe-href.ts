@@ -31,3 +31,24 @@ export function safeHref(url: string | null | undefined): string | null {
     }
   }
 }
+
+/**
+ * Whether a stored link points at a page of this application.
+ *
+ * The seeded "Content Calendar" link is the one entry whose destination we
+ * already know, so it is stored as `/portal/calendar` rather than waiting for
+ * someone to paste a URL. `safeHref` refuses it — correctly, since it is not
+ * http(s) — so the link stack asks this instead and routes internally.
+ *
+ * The leading-slash test is deliberately `/` but NOT `//`. A protocol-relative
+ * URL like `//evil.com` also starts with a slash and is emphatically not an
+ * internal path: the browser reads it as another origin, so treating it as one
+ * of ours would turn a link row into an open redirect. Backslashes are refused
+ * for the same reason — some browsers normalise `/\evil.com` the same way.
+ */
+export function internalPath(url: string | null | undefined): string | null {
+  const trimmed = (url ?? '').trim()
+  if (!trimmed.startsWith('/')) return null
+  if (trimmed.startsWith('//') || trimmed.startsWith('/\\')) return null
+  return trimmed
+}

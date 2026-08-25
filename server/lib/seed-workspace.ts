@@ -15,15 +15,32 @@ import { files, links, tasks } from '../db/schema.js'
  * demo are identical either way — and this costs a day less.
  */
 
+/**
+ * `url` is filled in per client, except where the destination is a page of
+ * this application and is therefore the same every time.
+ *
+ * Social Profiles was one link covering three networks, so the one thing a
+ * social client checks most often needed a click and a guess. It is now the
+ * three she actually runs — TikTok, Instagram, Facebook — each with its own
+ * slot to paste into.
+ */
 const DEFAULT_LINKS = [
-  { label: 'Social Profiles', icon: 'message-circle' },
-  { label: 'Google Drive', icon: 'folder' },
-  { label: 'Meeting Notes', icon: 'notebook-pen' },
-  { label: 'Proposal', icon: 'file-text' },
-  { label: 'Canva Project', icon: 'palette' },
-  { label: 'Content Calendar', icon: 'calendar-days' },
-  { label: 'Kick Off Meeting', icon: 'star' },
-  { label: 'Shot List', icon: 'camera' },
+  { label: 'TikTok', icon: 'music-2', url: '' },
+  { label: 'Instagram', icon: 'instagram', url: '' },
+  { label: 'Facebook', icon: 'facebook', url: '' },
+  { label: 'Google Drive', icon: 'folder', url: '' },
+  { label: 'Meeting Notes', icon: 'notebook-pen', url: '' },
+  { label: 'Proposal', icon: 'file-text', url: '' },
+  { label: 'Canva Project', icon: 'palette', url: '' },
+  /**
+   * Points at this application's own calendar rather than waiting for a URL to
+   * be pasted. It is the one link in the stack whose destination we already
+   * know, and leaving it blank meant the most-used page in the product was
+   * reachable only from the sidebar — which a client on a phone does not see.
+   */
+  { label: 'Content Calendar', icon: 'calendar-days', url: '/portal/calendar' },
+  { label: 'Kick Off Meeting', icon: 'star', url: '' },
+  { label: 'Shot List', icon: 'camera', url: '' },
 ] as const
 
 const DEFAULT_FILES = [
@@ -63,7 +80,7 @@ export async function seedNewClientWorkspace(
       clientId,
       label: l.label,
       icon: l.icon,
-      url: '',
+      url: l.url,
       sortOrder: i,
     }))
   )

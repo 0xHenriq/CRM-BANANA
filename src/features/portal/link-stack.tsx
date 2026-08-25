@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
+  ArrowRight,
   ExternalLink,
   Link2,
   Pencil,
@@ -15,7 +16,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import { safeHref } from '@/lib/safe-href'
+import { internalPath, safeHref } from '@/lib/safe-href'
+import { Link } from '@tanstack/react-router'
 
 export function LinkStack({
   links,
@@ -136,7 +138,15 @@ function LinkRow({
   onEdit: () => void
   onDelete: () => void
 }) {
-  const href = safeHref(link.url)
+  /**
+   * A row points either outside (an http(s) URL she pasted) or at a page of
+   * this application (the seeded Content Calendar entry). The internal case is
+   * routed rather than reloaded, and it must never be confused with an
+   * external one: `internalPath` refuses `//evil.com`, which also begins with
+   * a slash and is another origin entirely.
+   */
+  const internal = internalPath(link.url)
+  const href = internal ? null : safeHref(link.url)
 
   return (
     <div className='flex items-center gap-2 rounded-md px-2 py-2 hover:bg-bd-cream'>
@@ -147,7 +157,15 @@ function LinkRow({
         so the single most-used feature of the portal did nothing. This is the
         fix: a real link the client can click.
       */}
-      {href ? (
+      {internal ? (
+        <Link
+          to={internal}
+          className='flex min-w-0 flex-1 items-center gap-1.5 text-sm font-semibold hover:underline'
+        >
+          <span className='truncate'>{link.label}</span>
+          <ArrowRight className='size-3 shrink-0 opacity-50' />
+        </Link>
+      ) : href ? (
         <a
           href={href}
           target='_blank'

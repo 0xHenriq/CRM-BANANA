@@ -12,6 +12,7 @@ import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { ReviewQueue } from '@/features/content/review-queue'
+import { MoodboardPreview } from '@/features/content/moodboard-preview'
 import { LinkStack } from './link-stack'
 import { FileFolder, NoticeBoard, TaskList } from './panels'
 
@@ -105,6 +106,13 @@ export function PortalHome() {
         {/* Above everything: the reason they opened the portal, if there is
             one. Buried below a link stack it may as well not exist. */}
         <ReviewQueue variant={isStaff ? 'agency' : 'client'} />
+
+        {/*
+          Above the panels, as she asked. The visual direction is the thing a
+          social client actually opens the portal to see, and it was behind a
+          nav item they had to know to click.
+        */}
+        <MoodboardPreview clientId={workspaceId} canEdit={isStaff} />
 
         {isStaff && (
           <Card className='crate-card mb-5 border-dashed'>

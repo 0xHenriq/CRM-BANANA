@@ -18,7 +18,11 @@ import {
   formatMoney,
   type ClientDetail,
   type ClientStatus,
+  type PortalWorkspace,
 } from '@/lib/api'
+import { MoodboardPreview } from '@/features/content/moodboard-preview'
+import { LinkStack } from '@/features/portal/link-stack'
+import { FileFolder, TaskList } from '@/features/portal/panels'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -170,6 +174,22 @@ export function ClientDetailPage() {
             </div>
           }
         />
+
+        {/*
+          The workspace, on the agency's own client page.
+          
+          She asked to see "the same kind of info as the homepage" here, and she
+          was right to: the client page held the CRM half — status, deals,
+          contacts — while the links, files, to-dos and moodboard she actually
+          works in lived on a different screen behind a workspace switcher. Two
+          screens about one client, neither of which showed the whole of it.
+
+          The very same components as the portal homepage, so the two cannot
+          drift into showing different things or behaving differently. They read
+          ['portal', clientId], which is the key the panels invalidate, so an
+          edit made here refreshes there and the other way round.
+        */}
+        {client.portalEnabled && <ClientWorkspace clientId={clientId} />}
 
         <div className='grid gap-5 lg:grid-cols-3'>
           <div className='space-y-5 lg:col-span-2'>
@@ -513,5 +533,54 @@ function TimelineCard({
         )}
       </CardContent>
     </Card>
+  )
+}
+
+/**
+ * Links, files, to-dos and the moodboard for one client, on the agency side.
+ *
+ * Fetches the same `/api/portal?client=` payload the homepage does rather than
+ * widening `/api/clients/:id`, because the shapes must not diverge: the moment
+ * this page had its own idea of what a workspace contains, the two screens
+ * start disagreeing about the same client.
+ */
+function ClientWorkspace({ clientId }: { clientId: string }) {
+  const { data, isLoading, isError, error, refetch } = useQuery({
+    queryKey: ['portal', clientId],
+    queryFn: () => api.get<PortalWorkspace>(`/portal?client=${clientId}`),
+  })
+
+  if (isLoading) {
+    return (
+      <div className='mb-5 grid gap-5 lg:grid-cols-2'>
+        <Skeleton className='h-56' />
+        <Skeleton className='h-56' />
+      </div>
+    )
+  }
+
+  if (isError || !data) {
+    return (
+      <div className='mb-5'>
+        <QueryError
+          title='Could not load this client&rsquo;s workspace'
+          error={error as Error}
+          onRetry={() => refetch()}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <>
+      <MoodboardPreview clientId={clientId} canEdit />
+      <div className='mb-5 grid items-start gap-5 lg:grid-cols-2'>
+        <LinkStack links={data.links} canEdit clientId={clientId} />
+        <div className='space-y-5'>
+          <FileFolder files={data.files} canEdit clientId={clientId} />
+          <TaskList tasks={data.tasks} canEdit clientId={clientId} />
+        </div>
+      </div>
+    </>
   )
 }
