@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { withTenant } from '../db/index.js'
@@ -30,6 +30,11 @@ const CLIENT_STATUSES = [
 
 /** Client list with the counts she actually scans for. */
 clientRoutes.get('/', async (c) => {
+  // Archived clients are hidden unless explicitly asked for. Opt-IN rather
+  // than opt-out: every existing caller keeps the behaviour it has, and the
+  // one screen that wants them says so.
+  const includeArchived = c.req.query('archived') === '1'
+
   const rows = await withTenant(c.get('tenant'), async (tx) =>
     tx
       .select({
@@ -40,6 +45,7 @@ clientRoutes.get('/', async (c) => {
         portalEnabled: clients.portalEnabled,
         logoKey: clients.logoKey,
         brandColor: clients.brandColor,
+        archivedAt: clients.archivedAt,
         createdAt: clients.createdAt,
         // Every correlated subquery below is written with explicit aliases,
         // and that is not stylistic. Interpolating Drizzle columns —
@@ -63,6 +69,7 @@ clientRoutes.get('/', async (c) => {
         )`,
       })
       .from(clients)
+      .where(includeArchived ? undefined : isNull(clients.archivedAt))
       .orderBy(clients.name)
   )
 
@@ -361,4 +368,111 @@ clientRoutes.post('/:id/activities', async (c) => {
   )
 
   return c.json({ ok: true }, 201)
+})
+
+/**
+ * Archive a client, and restore one.
+ *
+ * She asked to be able to remove a client — two of the seeded examples are not
+ * hers. This does not DELETE: a client is the parent of contacts, deals,
+ * content items and their assets, files, invoices, receipts, tasks, notes and
+ * every uploaded byte behind them, all of it ON DELETE CASCADE. One click
+ * would take all of it, the uploaded files would not come back with a database
+ * restore because they do not live in the database, and the client whose data
+ * it was is real and paying.
+ *
+ * So the row stays and stops being shown. Restore is a single click, the data
+ * is exactly where it was, and nothing has to be recovered from a backup to
+ * undo a mis-click.
+ *
+ * Archiving also closes the portal. An archived client whose users could still
+ * sign in and read their workspace would be archived in name only — and unlike
+ * the RLS predicate, portal_enabled is a field any future screen could flip
+ * back on without thinking about archived clients, which is why there are two
+ * gates rather than one.
+ */
+clientRoutes.post('/:id/archive', async (c) => {
+  const id = c.req.param('id')
+  const actorId = c.get('user')?.id ?? null
+
+  const row = await withTenant(c.get('tenant'), async (tx) => {
+    const [before] = await tx
+      .select()
+      .from(clients)
+      .where(eq(clients.id, id))
+      .limit(1)
+    if (!before) return null
+    if (before.archivedAt) return before
+
+    const [updated] = await tx
+      .update(clients)
+      .set({ archivedAt: new Date(), portalEnabled: false, updatedAt: new Date() })
+      .where(eq(clients.id, id))
+      .returning()
+
+    await audit(tx, {
+      actorId,
+      action: 'client.archive',
+      entity: 'client',
+      entityId: id,
+      // The name, because the whole point of the log is to answer "what was
+      // that one called" after it has stopped appearing in any list.
+      meta: { name: before.name, portalWasEnabled: before.portalEnabled },
+    })
+    await recordActivity(tx, {
+      clientId: id,
+      entityType: 'client',
+      entityId: id,
+      kind: 'note',
+      body: 'Client archived.',
+      actorId,
+    })
+
+    return updated
+  })
+
+  if (!row) return c.json({ error: 'Not found' }, 404)
+  return c.json({ client: row })
+})
+
+clientRoutes.post('/:id/restore', async (c) => {
+  const id = c.req.param('id')
+  const actorId = c.get('user')?.id ?? null
+
+  const row = await withTenant(c.get('tenant'), async (tx) => {
+    const [before] = await tx
+      .select()
+      .from(clients)
+      .where(eq(clients.id, id))
+      .limit(1)
+    if (!before) return null
+
+    /*
+     * The portal is NOT reopened automatically.
+     *
+     * Archiving turned it off, so symmetry argues for turning it back on — but
+     * the two are not symmetrical in consequence. Getting it wrong on the way
+     * in shows her a client she meant to hide; getting it wrong on the way out
+     * gives a former client's users their workspace back without her deciding
+     * that. The toggle is on the page she lands on.
+     */
+    const [updated] = await tx
+      .update(clients)
+      .set({ archivedAt: null, updatedAt: new Date() })
+      .where(eq(clients.id, id))
+      .returning()
+
+    await audit(tx, {
+      actorId,
+      action: 'client.restore',
+      entity: 'client',
+      entityId: id,
+      meta: { name: before.name },
+    })
+
+    return updated
+  })
+
+  if (!row) return c.json({ error: 'Not found' }, 404)
+  return c.json({ client: row })
 })

@@ -138,6 +138,22 @@ export const clients = pgTable(
     status: clientStatus('status').notNull().default('lead'),
     brandColor: text('brand_color'),
     logoKey: text('logo_key'),
+    /**
+     * Archived, not deleted.
+     *
+     * She asked to be able to remove a client — two of the seeded examples are
+     * not hers. Removing them has to mean removing them from her screen, and
+     * it must not mean destroying rows: a client carries content, files,
+     * invoices, receipts and the uploaded bytes behind all of them, and a
+     * cascade through that is not recoverable from a nightly dump taken before
+     * it. So this is a timestamp, the list hides anything that has one, and
+     * Restore is a single click.
+     *
+     * Also closes the portal — see the archive route. An archived client whose
+     * users could still sign in and read their workspace would be archived in
+     * name only.
+     */
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
     /** A lead has no portal. Set when she moves the client to `active`. */
     portalEnabled: boolean('portal_enabled').notNull().default(false),
     createdAt: timestamp('created_at', { withTimezone: true })

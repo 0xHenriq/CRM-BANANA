@@ -85,6 +85,7 @@ export type ClientSummary = {
   portalEnabled: boolean
   logoKey: string | null
   brandColor: string | null
+  archivedAt: string | null
   createdAt: string
   contactCount: number
   openTaskCount: number
@@ -245,7 +246,9 @@ export type ClientDetail = {
     brandColor: string | null
     logoKey: string | null
     portalEnabled: boolean
+    archivedAt: string | null
     createdAt: string
+    updatedAt: string
   }
   contacts: Contact[]
   deals: Deal[]

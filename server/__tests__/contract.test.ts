@@ -16,6 +16,7 @@ import {
 import { INVOICE_STATUSES as SERVER_INVOICE_STATUSES } from '../routes/invoices.js'
 import { hhmm } from '../lib/audit.js'
 import { compareSteps } from '../routes/next-steps.js'
+import { canSeePortal } from '../routes/portal.js'
 import {
   HASHTAG_LIMIT as SERVER_HASHTAG_LIMIT,
   normaliseHashtags as serverNormalise,
@@ -368,5 +369,36 @@ describe('hashtag normalisation', () => {
     expect(SERVER_HASHTAG_LIMIT).toBe(CLIENT_HASHTAG_LIMIT)
     // Instagram's cap. If this changes, it changed on purpose.
     expect(SERVER_HASHTAG_LIMIT).toBe(30)
+  })
+})
+
+/**
+ * A closed portal is actually closed.
+ *
+ * `portal_enabled` gated the workspace switcher and nothing else, so a client
+ * whose portal she had turned off kept full read access by loading the page
+ * directly. Found while checking that archiving closes the portal: the
+ * endpoint answered 200 for a client whose portal_enabled was false.
+ */
+describe('canSeePortal', () => {
+  const staff = { isStaff: true }
+  const client = { isStaff: false }
+
+  it('refuses a client whose portal is closed', () => {
+    expect(canSeePortal(client, { portalEnabled: false })).toBe(false)
+  })
+
+  it('admits a client whose portal is open', () => {
+    expect(canSeePortal(client, { portalEnabled: true })).toBe(true)
+  })
+
+  it('admits staff either way, so a workspace can be built before it opens', () => {
+    expect(canSeePortal(staff, { portalEnabled: false })).toBe(true)
+    expect(canSeePortal(staff, { portalEnabled: true })).toBe(true)
+  })
+
+  it('refuses nobody at all', () => {
+    expect(canSeePortal(undefined, { portalEnabled: true })).toBe(false)
+    expect(canSeePortal(null, { portalEnabled: true })).toBe(false)
   })
 })

@@ -1,7 +1,14 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import { Plus, Users, ClipboardList, Eye, ExternalLink } from 'lucide-react'
+import {
+  Archive,
+  Plus,
+  Users,
+  ClipboardList,
+  Eye,
+  ExternalLink,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { api, type ClientStatus, type ClientSummary } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -37,9 +44,17 @@ import { ThemeSwitch } from '@/components/theme-switch'
 import { ClientStatusPill, CLIENT_LABEL } from './status-pill'
 
 export function ClientsList() {
+  // Archived clients are off by default and the toggle is part of the query
+  // key, so switching it refetches rather than filtering a list that never
+  // contained them.
+  const [showArchived, setShowArchived] = useState(false)
+
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['clients'],
-    queryFn: () => api.get<{ clients: ClientSummary[] }>('/clients'),
+    queryKey: ['clients', showArchived ? 'with-archived' : 'active'],
+    queryFn: () =>
+      api.get<{ clients: ClientSummary[] }>(
+        showArchived ? '/clients?archived=1' : '/clients'
+      ),
   })
 
   return (
@@ -58,7 +73,19 @@ export function ClientsList() {
           eyebrow='Accounts'
           title='Clients'
           stamp={{ top: 'BD', big: 'CL', bottom: 'LDN' }}
-          actions={<NewClientDialog />}
+          actions={
+            <div className='flex items-center gap-2'>
+              <Button
+                variant='ghost'
+                size='sm'
+                onClick={() => setShowArchived((v) => !v)}
+              >
+                <Archive className='size-3.5' />
+                {showArchived ? 'Hide archived' : 'Show archived'}
+              </Button>
+              <NewClientDialog />
+            </div>
+          }
         />
 
         {isLoading ? (
@@ -95,7 +122,12 @@ export function ClientsList() {
           */
           <div className='space-y-8'>
             {STATUS_ORDER.map((status) => {
-              const group = data.clients.filter((c) => c.status === status)
+              // An archived client keeps whatever status it had, so it would
+              // otherwise reappear inside Active — which is the one place she
+              // archived it to get it out of.
+              const group = data.clients.filter(
+                (c) => c.status === status && !c.archivedAt
+              )
               if (group.length === 0) return null
               return (
                 <section key={status}>
@@ -115,6 +147,34 @@ export function ClientsList() {
                 </section>
               )
             })}
+
+            {showArchived &&
+              (() => {
+                const archived = data.clients.filter((c) => c.archivedAt)
+                if (archived.length === 0) {
+                  return (
+                    <p className='text-sm text-muted-foreground'>
+                      Nothing archived.
+                    </p>
+                  )
+                }
+                return (
+                  <section>
+                    <div className='mb-4 flex items-baseline gap-3 pb-1.5 crate-underline'>
+                      <h2 className='display text-xl'>Archived</h2>
+                      <span className='text-xs text-muted-foreground'>
+                        {archived.length} · hidden from the list, nothing
+                        deleted
+                      </span>
+                    </div>
+                    <div className='grid gap-4 opacity-60 sm:grid-cols-2 lg:grid-cols-3'>
+                      {archived.map((client) => (
+                        <ClientCard key={client.id} client={client} />
+                      ))}
+                    </div>
+                  </section>
+                )
+              })()}
           </div>
         )}
       </Main>

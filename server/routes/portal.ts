@@ -37,6 +37,25 @@ portalRoutes.get('/', async (c) => {
       .limit(1)
     if (!client) return null
 
+    /*
+     * A closed portal is actually closed.
+     *
+     * This check was missing. `portal_enabled` gated the workspace SWITCHER
+     * and nothing else, so a client whose portal she had turned off kept full
+     * read access to their links, files, to-dos, notices and content by
+     * loading the page directly — the switcher simply stopped offering it.
+     * The toggle she uses to end an engagement did not end anything.
+     *
+     * Found while checking that archiving closes the portal: after a restore,
+     * this endpoint answered 200 for a client whose portal_enabled was false.
+     *
+     * Staff are exempt on purpose. She builds a workspace before opening it,
+     * and the client page renders these same panels — enforcing this against
+     * her own account would make a client unpreparable until it was already
+     * visible to them.
+     */
+    if (!canSeePortal(c.get('user'), client)) return null
+
     const [linkRows, fileRows, taskRows, noticeRows] = await Promise.all([
       tx
         .select()
@@ -422,3 +441,23 @@ portalRoutes.delete('/notices/:id', requireStaff, async (c) => {
   if (!deleted.length) return c.json({ error: 'Not found' }, 404)
   return c.json({ ok: true })
 })
+
+/**
+ * Whether an account may load a client's workspace.
+ *
+ * Pulled out of the handler so it can be tested. The rule is one line, but it
+ * is one line that was ABSENT for the whole life of the product — the toggle
+ * she uses to close a portal gated the workspace switcher and nothing else —
+ * and a rule with no test is a rule that goes missing again in the next
+ * refactor of the route around it.
+ */
+export function canSeePortal(
+  user: { isStaff: boolean } | undefined | null,
+  client: { portalEnabled: boolean }
+): boolean {
+  if (!user) return false
+  // Staff build a workspace before opening it, and the client page renders
+  // these same panels.
+  if (user.isStaff) return true
+  return client.portalEnabled
+}

@@ -519,3 +519,67 @@ it('a client cannot repoint their own logo at another client\'s bytes', async ()
   expect(row?.logo_key).not.toBe('uploads/somebody-else.webp')
 })
 })
+
+/**
+ * Archiving closes the portal at the database, not just in the UI.
+ *
+ * The archive route also sets portal_enabled = false, and that alone would
+ * hide the workspace today. It is not enough on its own: portal_enabled is an
+ * ordinary editable field that any future screen could switch back on without
+ * anyone thinking about archived clients, whereas this predicate cannot be
+ * turned off by accident. Both gates, tested separately.
+ */
+describe('archived clients', () => {
+  const setArchived = (value: string | null) =>
+    asActor(
+      { kind: 'staff', userId: f.staffUser },
+      'update clients set archived_at = $1 where id = $2',
+      [value, f.clientA]
+    )
+
+  it('a client cannot see their own client row once it is archived', async () => {
+    const before = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from clients where id = $1',
+      [f.clientA]
+    )
+    // Non-vacuous: they can see it before, or the assertion below proves
+    // nothing about archiving.
+    expect(before).toHaveLength(1)
+
+    await setArchived('2026-08-26T00:00:00Z')
+    try {
+      const after = await asActor(
+        { kind: 'client', userId: f.clientUserA },
+        'select id from clients where id = $1',
+        [f.clientA]
+      )
+      expect(after).toHaveLength(0)
+    } finally {
+      await setArchived(null)
+    }
+  })
+
+  it('staff still see an archived client, or Restore could not work', async () => {
+    await setArchived('2026-08-26T00:00:00Z')
+    try {
+      const rows = await asActor(
+        { kind: 'staff', userId: f.staffUser },
+        'select id from clients where id = $1',
+        [f.clientA]
+      )
+      expect(rows).toHaveLength(1)
+    } finally {
+      await setArchived(null)
+    }
+  })
+
+  it('a client cannot archive or restore themselves', async () => {
+    const updated = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'update clients set archived_at = now() where id = $1 returning id',
+      [f.clientA]
+    )
+    expect(updated).toHaveLength(0)
+  })
+})

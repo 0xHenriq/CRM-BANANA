@@ -2,7 +2,10 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from '@tanstack/react-router'
 import {
+  Archive,
+  ArchiveRestore,
   ArrowLeft,
+  Loader2,
   Mail,
   Phone,
   Plus,
@@ -43,6 +46,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { ConfigDrawer } from '@/components/config-drawer'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
 import { PageHead } from '@/components/layout/page-head'
@@ -77,6 +81,29 @@ export function ClientDetailPage() {
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['client', clientId],
     queryFn: () => api.get<ClientDetail>(`/clients/${clientId}`),
+  })
+
+  const [confirmArchive, setConfirmArchive] = useState(false)
+
+  const archive = useMutation({
+    mutationFn: () => api.post(`/clients/${clientId}/archive`, {}),
+    onSuccess: async () => {
+      setConfirmArchive(false)
+      toast.success('Client archived. Nothing was deleted.')
+      await queryClient.invalidateQueries({ queryKey: ['client', clientId] })
+      await queryClient.invalidateQueries({ queryKey: ['clients'] })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const restore = useMutation({
+    mutationFn: () => api.post(`/clients/${clientId}/restore`, {}),
+    onSuccess: async () => {
+      toast.success('Client restored.')
+      await queryClient.invalidateQueries({ queryKey: ['client', clientId] })
+      await queryClient.invalidateQueries({ queryKey: ['clients'] })
+    },
+    onError: (err: Error) => toast.error(err.message),
   })
 
   const patch = useMutation({
@@ -235,6 +262,53 @@ export function ClientDetailPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className='grid gap-4 sm:grid-cols-2'>
+                {/*
+                  Renaming was the gap. Status and the portal toggle were
+                  editable, but a client typed in with a typo could only be
+                  fixed by creating a second one — which is how two of these
+                  ended up on her list in the first place.
+
+                  On blur rather than on every keystroke: a PATCH per character
+                  would put a hundred rows through the activity log for one
+                  rename.
+                */}
+                <div className='grid gap-1.5'>
+                  <Label htmlFor='client-rename'>Name</Label>
+                  <Input
+                    id='client-rename'
+                    defaultValue={client.name}
+                    key={`name-${client.id}-${client.updatedAt}`}
+                    onBlur={(e) => {
+                      const next = e.target.value.trim()
+                      if (next && next !== client.name) {
+                        patch.mutate({ name: next })
+                      }
+                    }}
+                  />
+                </div>
+
+                <div className='grid gap-1.5'>
+                  <Label htmlFor='client-brand'>Brand colour</Label>
+                  <div className='flex h-9 items-center gap-2.5'>
+                    <input
+                      id='client-brand'
+                      type='color'
+                      className='size-9 cursor-pointer rounded-md border border-border bg-transparent p-1'
+                      defaultValue={client.brandColor ?? '#f5c518'}
+                      key={`brand-${client.id}-${client.updatedAt}`}
+                      onBlur={(e) => {
+                        if (e.target.value !== client.brandColor) {
+                          patch.mutate({ brandColor: e.target.value })
+                        }
+                      }}
+                    />
+                    <span className='text-sm text-muted-foreground'>
+                      {/* It is what the initials sit on when there is no logo. */}
+                      Behind their initials
+                    </span>
+                  </div>
+                </div>
+
                 <div className='grid gap-1.5'>
                   <Label>Status</Label>
                   <Select
@@ -270,6 +344,55 @@ export function ClientDetailPage() {
                         : 'Closed'}
                     </span>
                   </div>
+                </div>
+
+                {/*
+                  Archive, not delete.
+
+                  She asked to be able to remove a client, and two on her list
+                  are not hers. This takes them off every screen and closes
+                  their portal, and Restore puts them back — because a client
+                  is the parent of their content, files, invoices, receipts and
+                  every uploaded byte, and a real delete would take all of it
+                  with no way back that does not involve a backup.
+                */}
+                <div className='flex flex-wrap items-center justify-between gap-2 pt-4 crate-rule sm:col-span-2'>
+                  {client.archivedAt ? (
+                    <>
+                      <p className='text-xs text-muted-foreground'>
+                        Archived. Hidden from your client list, and their portal
+                        is closed. Nothing has been deleted.
+                      </p>
+                      <Button
+                        size='sm'
+                        variant='outline'
+                        onClick={() => restore.mutate()}
+                        disabled={restore.isPending}
+                      >
+                        {restore.isPending ? (
+                          <Loader2 className='animate-spin' />
+                        ) : (
+                          <ArchiveRestore />
+                        )}
+                        Restore
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <p className='text-xs text-muted-foreground'>
+                        Archiving hides this client and closes their portal. It
+                        deletes nothing and can be undone.
+                      </p>
+                      <Button
+                        size='sm'
+                        variant='outline'
+                        onClick={() => setConfirmArchive(true)}
+                      >
+                        <Archive />
+                        Archive client
+                      </Button>
+                    </>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -327,6 +450,30 @@ export function ClientDetailPage() {
 
           <TimelineCard clientId={clientId} timeline={timeline} />
         </div>
+
+        {/*
+        Named confirmation, and the wording says what it does NOT do.
+
+        "Are you sure?" over a destructive-looking button teaches people to
+        click through. This one states plainly that nothing is deleted, which
+        is both true and the thing she would otherwise have to find out by
+        risking a real client's data to see what happens.
+      */}
+        <ConfirmDialog
+          open={confirmArchive}
+          onOpenChange={setConfirmArchive}
+          title={`Archive ${client.name}?`}
+          desc={
+            <>
+              They disappear from your client list and their portal closes.
+              Their content, files, invoices and uploads all stay exactly where
+              they are, and you can restore them at any time.
+            </>
+          }
+          confirmText='Archive'
+          isLoading={archive.isPending}
+          handleConfirm={() => archive.mutate()}
+        />
       </Main>
     </>
   )
