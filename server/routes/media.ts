@@ -34,6 +34,34 @@ mediaRoutes.use('*', requireAuth)
  */
 const MULTIPART_SLACK_BYTES = 1024 * 1024
 
+/**
+ * A size a person can act on.
+ *
+ * `(bytes / 1024 / 1024).toFixed(0)` produced "That file is 1024 MB. The limit
+ * is 1024 MB." for a file nine bytes over the ceiling — technically true and
+ * completely useless, because it names the same number twice and leaves her
+ * with no idea by how much to trim.
+ *
+ * Rounding UP rather than to nearest is what actually fixes it. Two decimals
+ * alone still collapsed 1 GB and 1 GB + 9 bytes to the same "1.00 GB", because
+ * the difference is nine parts in a billion. Ceiling makes any size above the
+ * limit render strictly larger than the limit does, and it is the honest
+ * direction for this message: the file is at least this big, which is exactly
+ * the fact being complained about.
+ */
+export function humanSize(bytes: number): string {
+  const ceilTo = (value: number, places: number) => {
+    const scale = 10 ** places
+    return Math.ceil(value * scale) / scale
+  }
+  if (bytes >= 1024 * 1024 * 1024) {
+    return `${ceilTo(bytes / 1024 / 1024 / 1024, 2).toFixed(2)} GB`
+  }
+  return `${ceilTo(bytes / 1024 / 1024, 0)} MB`
+}
+
+const UPLOAD_LIMIT_LABEL = humanSize(MAX_UPLOAD_BYTES)
+
 
 /* ------------------------------------------------------------------ upload */
 
@@ -60,7 +88,7 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
   if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES + MULTIPART_SLACK_BYTES) {
     return c.json(
       {
-        error: `That upload is ${(declared / 1024 / 1024).toFixed(0)} MB. The limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`,
+        error: `That upload is ${humanSize(declared)}, over the ${UPLOAD_LIMIT_LABEL} limit.`,
       },
       413
     )
@@ -77,10 +105,9 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
   if (file.size > MAX_UPLOAD_BYTES) {
     return c.json(
       {
-        // One line: this string is rendered verbatim in a toast, and the stray
-        // newline that used to sit after "That file is" came out as a line
-        // break mid-sentence.
-        error: `That file is ${(file.size / 1024 / 1024).toFixed(0)} MB. The limit is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`,
+        // One line: this string is rendered verbatim in a toast, and a stray
+        // newline here once came out as a line break mid-sentence.
+        error: `That file is ${humanSize(file.size)}, over the ${UPLOAD_LIMIT_LABEL} limit.`,
       },
       413
     )

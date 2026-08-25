@@ -1,13 +1,14 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { GripVertical, ImagePlus, Loader2, Trash2 } from 'lucide-react'
+import { GripVertical, ImagePlus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   api,
   moodboardUrl,
-  uploadMedia,
   type MoodboardItem,
 } from '@/lib/api'
+import { uploadMedia } from '@/lib/upload'
+import { UploadButton } from '@/components/upload-button'
 import { useWorkspace, withClient } from '@/features/portal/use-workspace'
 import { WorkspaceSwitcher } from '@/features/portal/workspace-switcher'
 import { safeHref } from '@/lib/safe-href'
@@ -34,8 +35,8 @@ import { ThemeSwitch } from '@/components/theme-switch'
 export function Moodboard() {
   const { isStaff, clientId, setClientId, workspaces, isReady } = useWorkspace()
   const queryClient = useQueryClient()
-  const inputRef = useRef<HTMLInputElement>(null)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [progress, setProgress] = useState<number | null>(null)
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['moodboard', clientId ?? 'default'],
@@ -54,11 +55,17 @@ export function Moodboard() {
       // Sequential, not parallel: each upload does image work on the server,
       // and a dozen at once would fight for the same cores for no gain.
       for (const file of Array.from(files)) {
-        await uploadMedia(file, { clientId, target: 'moodboard' })
+        setProgress(0)
+        await uploadMedia(file, {
+          clientId,
+          target: 'moodboard',
+          onProgress: setProgress,
+        })
       }
     },
     onSuccess: invalidate,
     onError: (err: Error) => toast.error(err.message),
+    onSettled: () => setProgress(null),
   })
 
   const remove = useMutation({
@@ -108,42 +115,14 @@ export function Moodboard() {
           stamp={{ top: 'MOOD', big: '❦', bottom: 'BOARD' }}
           actions={
             isStaff ? (
-              <>
-                {/*
-                  `sr-only`, never `hidden`. Tailwind's `hidden` is
-                  display:none, and a display:none file input does not reliably
-                  open its picker from a programmatic .click() — Safari and iOS
-                  in particular ignore it, so the button appears to do nothing
-                  at all: no picker, no request, no error. Nothing reaches the
-                  server, so there is not even a log line to find. `sr-only`
-                  keeps the input rendered and focusable while still invisible,
-                  which is the shape every browser honours.
-                */}
-                <input
-                  ref={inputRef}
-                  type='file'
-                  accept='image/*'
-                  multiple
-                  className='sr-only'
-                  aria-label='Choose images to add'
-                  onChange={(e) => {
-                    if (e.target.files?.length) upload.mutate(e.target.files)
-                    // Reset so choosing the same file twice still fires.
-                    e.target.value = ''
-                  }}
-                />
-                <Button
-                  onClick={() => inputRef.current?.click()}
-                  disabled={upload.isPending}
-                >
-                  {upload.isPending ? (
-                    <Loader2 className='animate-spin' />
-                  ) : (
-                    <ImagePlus />
-                  )}
-                  Add images
-                </Button>
-              </>
+              <UploadButton
+                label='Add images'
+                icon={<ImagePlus />}
+                accept='image/*'
+                pending={upload.isPending}
+                progress={progress}
+                onFiles={(files) => upload.mutate(files)}
+              />
             ) : undefined
           }
         />

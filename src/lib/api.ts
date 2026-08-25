@@ -402,39 +402,6 @@ export function formatBytes(bytes: number | null | undefined): string {
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
 }
 
-/**
- * Uploads go as multipart, so this deliberately does not use `api.post` —
- * setting Content-Type by hand would omit the multipart boundary.
- */
-export async function uploadMedia(
-  file: File,
-  opts: {
-    clientId: string | null
-    target: 'content' | 'moodboard' | 'file'
-    contentItemId?: string
-    caption?: string
-  }
-): Promise<unknown> {
-  const form = new FormData()
-  form.append('file', file)
-  form.append('target', opts.target)
-  if (opts.contentItemId) form.append('contentItemId', opts.contentItemId)
-  if (opts.caption) form.append('caption', opts.caption)
-
-  const qs = opts.clientId ? `?client=${opts.clientId}` : ''
-  const res = await fetch(`/api/media/upload${qs}`, {
-    method: 'POST',
-    credentials: 'include',
-    body: form,
-  })
-
-  if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { error?: string } | null
-    throw new ApiError(body?.error ?? `Upload failed (${res.status})`, res.status)
-  }
-  return res.json()
-}
-
 export type AwaitingItem = {
   id: string
   clientId: string

@@ -14,7 +14,6 @@ import { toast } from 'sonner'
 import {
   api,
   assetUrl,
-  uploadMedia,
   CONTENT_STATUSES,
   CONTENT_TYPES,
   formatTime,
@@ -23,6 +22,7 @@ import {
   type ContentStatus,
   type ContentType,
 } from '@/lib/api'
+import { uploadMedia } from '@/lib/upload'
 import { useCurrentUser } from '@/hooks/use-current-user'
 import { Button } from '@/components/ui/button'
 import {

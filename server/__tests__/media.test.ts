@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { sniffDocumentMime, sniffMime } from '../lib/media.js'
-import { contentDisposition, parseRange } from '../routes/media.js'
+import { contentDisposition, humanSize, parseRange } from '../routes/media.js'
 
 /**
  * The two pieces of the media path that are pure arithmetic and pure byte
@@ -212,5 +212,36 @@ describe('contentDisposition', () => {
 
   it('never emits an empty filename', () => {
     expect(contentDisposition('———')).toMatch(/filename="download"/)
+  })
+})
+
+/**
+ * Upload size messages.
+ *
+ * `(bytes / 1024 / 1024).toFixed(0)` told a person whose file was nine bytes
+ * over the ceiling: "That file is 1024 MB. The limit is 1024 MB." Both numbers
+ * were true, identical, and useless — there is no way to act on that. Caught by
+ * pushing a real 1 GB file through the endpoint, which is the only reason it
+ * was noticed at all.
+ */
+describe('humanSize', () => {
+  it('keeps the file and the limit distinguishable at the boundary', () => {
+    const limit = 1024 * 1024 * 1024
+    // Nine bytes over: the two must not render as the same string.
+    expect(humanSize(limit + 9)).not.toBe(humanSize(limit))
+  })
+
+  it('reports gigabytes with enough precision to act on', () => {
+    // Exactly the limit is exact; nothing to round.
+    expect(humanSize(1024 * 1024 * 1024)).toBe('1.00 GB')
+    // 1200 MB is 1.171875 GB, and it rounds UP rather than to nearest — the
+    // message exists to say a file is too big, so understating it is the one
+    // direction that must not happen.
+    expect(humanSize(1258291200)).toBe('1.18 GB')
+  })
+
+  it('stays in megabytes below a gigabyte, where decimals are noise', () => {
+    expect(humanSize(200 * 1024 * 1024)).toBe('200 MB')
+    expect(humanSize(1536 * 1024)).toBe('2 MB')
   })
 })

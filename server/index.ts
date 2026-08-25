@@ -3,6 +3,7 @@ import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono } from 'hono'
 import { sql } from 'drizzle-orm'
 import { existsSync } from 'node:fs'
+import { Server as HttpServer } from 'node:http'
 import { env } from './env.js'
 import { logger } from './logger.js'
 import { db, closeDb } from './db/index.js'
@@ -167,6 +168,27 @@ const server = serve({ fetch: app.fetch, port: env.PORT }, (info) => {
     'bd-portal api listening'
   )
 })
+
+/**
+ * Node kills any request that takes longer than 300 seconds by default, and a
+ * 1 GB upload on a normal office connection takes longer than that — roughly
+ * seven minutes at 20 Mbps up. The socket was being closed mid-body, which
+ * surfaces to the browser as a network error with nothing in the log, because
+ * the request never completed enough to be logged.
+ *
+ * `headersTimeout` has to move with it: Node requires it to exceed
+ * requestTimeout, and leaving it at the default caps the whole thing anyway.
+ * Zero disables both. That is safe here because Caddy sits in front and this
+ * port is bound to localhost, so the exposure is not an open socket to the
+ * internet — it is one office uploading video.
+ */
+// `serve()` is typed as an HTTP/1.1 or HTTP/2 server; only the former carries
+// these. An instanceof narrows it honestly, where a cast would quietly do
+// nothing on the day someone turns http2 on.
+if (server instanceof HttpServer) {
+  server.requestTimeout = 0
+  server.headersTimeout = 0
+}
 
 // systemd sends SIGTERM on restart; drain rather than drop in-flight requests.
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {

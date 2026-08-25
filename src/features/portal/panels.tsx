@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   CornerDownRight,
@@ -6,7 +6,6 @@ import {
   ExternalLink,
   EyeOff,
   FileText,
-  Loader2,
   Plus,
   Send,
   Trash2,
@@ -17,11 +16,12 @@ import {
   api,
   fileUrl,
   formatBytes,
-  uploadMedia,
   type NoticePost,
   type PortalFile,
   type PortalTask,
 } from '@/lib/api'
+import { uploadMedia } from '@/lib/upload'
+import { UploadButton } from '@/components/upload-button'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -62,8 +62,8 @@ export function FileFolder({
   const queryClient = useQueryClient()
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ name: '', externalUrl: '' })
-  const fileInput = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
+  const [progress, setProgress] = useState<number | null>(null)
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ['portal'] })
@@ -83,11 +83,17 @@ export function FileFolder({
   const upload = useMutation({
     mutationFn: async (chosen: FileList | File[]) => {
       for (const file of Array.from(chosen)) {
-        await uploadMedia(file, { clientId, target: 'file' })
+        setProgress(0)
+        await uploadMedia(file, {
+          clientId,
+          target: 'file',
+          onProgress: setProgress,
+        })
       }
     },
     onSuccess: invalidate,
     onError: (err: Error) => toast.error(err.message),
+    onSettled: () => setProgress(null),
   })
 
   const create = useMutation({
@@ -151,35 +157,14 @@ export function FileFolder({
         action={
           canEdit && (
             <span className='flex items-center gap-2'>
-              {/*
-                sr-only, never `hidden`: a display:none file input does not
-                reliably open its picker from a programmatic .click() on Safari
-                or iOS, and the failure is completely silent.
-              */}
-              <input
-                ref={fileInput}
-                type='file'
-                multiple
-                className='sr-only'
-                aria-label='Choose files to upload'
-                onChange={(e) => {
-                  if (e.target.files?.length) upload.mutate(e.target.files)
-                  // Reset so choosing the same file twice still fires.
-                  e.target.value = ''
-                }}
-              />
-              <Button
+              <UploadButton
                 size='sm'
-                onClick={() => fileInput.current?.click()}
-                disabled={upload.isPending}
-              >
-                {upload.isPending ? (
-                  <Loader2 className='animate-spin' />
-                ) : (
-                  <Upload />
-                )}
-                Upload
-              </Button>
+                label='Upload'
+                icon={<Upload />}
+                pending={upload.isPending}
+                progress={progress}
+                onFiles={(files) => upload.mutate(files)}
+              />
               {!adding && (
                 <Button
                   size='sm'
@@ -259,7 +244,7 @@ export function FileFolder({
         {canEdit && (
           <p className='mt-3 text-xs text-muted-foreground italic'>
             Drop files here to upload. PDF, Word, Excel, PowerPoint, CSV, images
-            and video, up to 200 MB each.
+            and video, up to 1 GB each.
           </p>
         )}
       </CardContent>

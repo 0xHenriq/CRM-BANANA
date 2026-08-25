@@ -88,13 +88,18 @@ const HEIF_IMAGE_BRANDS = new Set([
 ])
 
 /**
- * 200 MB.
+ * 1 GB.
  *
- * A phone-shot Reel is comfortably under this; a raw export is not, and she
- * should be sending the export rather than the master anyway. The 720p review
- * proxy that would make big files painless is v1.3.
+ * Raised from 200 MB because that was refusing real work: a shoot's raw export
+ * or a long-form video lands well over it, and "the limit is 200 MB" is not an
+ * answer when the file is the deliverable.
+ *
+ * The box has 62 GB of RAM and one agency using it, so buffering a file this
+ * size is affordable — but it is buffered, not streamed, so this is the ceiling
+ * at which that stays true. Going meaningfully beyond 1 GB means streaming
+ * multipart straight to disk rather than through the heap.
  */
-export const MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+export const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
 
 export type ProcessedMedia = {
   /**
