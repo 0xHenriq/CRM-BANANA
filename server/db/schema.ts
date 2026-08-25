@@ -105,6 +105,21 @@ export const activityKind = pgEnum('activity_kind', [
 
 export const assetKind = pgEnum('asset_kind', ['image', 'video'])
 
+/**
+ * What she decides about an invoice. Everything else is derived.
+ *
+ * `paid`, `part paid` and `overdue` are deliberately absent: they are facts
+ * about the payments recorded against the invoice and today's date, so they
+ * become true on their own. Storing them would mean something had to run at
+ * midnight to keep them honest — the same reasoning as payment_status on
+ * deals, and the same reason `overdue` is not in that enum either.
+ */
+export const invoiceStatus = pgEnum('invoice_status', [
+  'draft',
+  'sent',
+  'void',
+])
+
 export const approvalDecision = pgEnum('approval_decision', [
   'approved',
   'changes_requested',
@@ -586,6 +601,108 @@ export const moodboardItems = pgTable(
 )
 
 /* -------------------------------------------------------------------------
+ * Money owed — client-visible, with a column gate
+ * ---------------------------------------------------------------------- */
+
+/**
+ * An invoice raised against a client, optionally against one deal.
+ *
+ * `dealId` is nullable and NOT unique: a retainer is billed in stages — a
+ * deposit, then monthly — so one deal carries many invoices. That is the whole
+ * reason this is its own table rather than more columns on `deals`.
+ *
+ * Amounts are integer pence, which is the invariant this codebase states and
+ * the one place it can be honoured exactly. `deals.value` is numeric(12,2)
+ * carried as a string for historical reasons; the two are converted at the
+ * boundary rather than pretending they are the same unit. Integer maxes out
+ * around £21m, which is not a constraint this agency will meet.
+ */
+export const invoices = pgTable(
+  'invoices',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    clientId: uuid('client_id')
+      .notNull()
+      .references(() => clients.id, { onDelete: 'cascade' }),
+    /** Null for an invoice not tied to a specific deal. */
+    dealId: uuid('deal_id').references(() => deals.id, {
+      onDelete: 'set null',
+    }),
+    /** Human reference, e.g. INV-2026-0007. Unique across the agency. */
+    number: text('number').notNull().unique(),
+    status: invoiceStatus('status').notNull().default('draft'),
+    amountPence: integer('amount_pence').notNull(),
+    currency: text('currency').notNull().default('GBP'),
+    /** What it is for, shown to the client. */
+    description: text('description'),
+    issuedOn: date('issued_on'),
+    dueOn: date('due_on'),
+    notes: text('notes'),
+    createdBy: text('created_by').references(() => user.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index('invoices_client_due_idx').on(t.clientId, t.dueOn),
+    index('invoices_deal_idx').on(t.dealId),
+    // An invoice for nothing is a mistake, and a negative one is a credit
+    // note — a different document with different rules, not this.
+    check('invoices_amount_positive', sql`${t.amountPence} > 0`),
+  ]
+)
+
+/**
+ * Money received against an invoice. Each row IS a receipt.
+ *
+ * A separate `receipts` table would hold the same facts twice: a receipt is
+ * the confirmation that a payment arrived, so the payment row carries its own
+ * number and that number is what the client quotes. Partial payments are
+ * ordinary here — a deposit and a balance are two rows against one invoice,
+ * which is why "paid" is a sum rather than a flag.
+ *
+ * `clientId` is denormalised per the schema's second convention: an RLS policy
+ * that had to join upward to find its tenant is slower and easier to get
+ * wrong.
+ */
+export const invoicePayments = pgTable(
+  'invoice_payments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    clientId: uuid('client_id')
+      .notNull()
+      .references(() => clients.id, { onDelete: 'cascade' }),
+    invoiceId: uuid('invoice_id')
+      .notNull()
+      .references(() => invoices.id, { onDelete: 'cascade' }),
+    /** The receipt number the client quotes back, e.g. RCP-2026-0012. */
+    receiptNumber: text('receipt_number').notNull().unique(),
+    amountPence: integer('amount_pence').notNull(),
+    paidOn: date('paid_on').notNull(),
+    /** Bank transfer, card, cash — free text, she knows her own methods. */
+    method: text('method'),
+    /** Their reference, so a bank statement can be matched to this row. */
+    reference: text('reference'),
+    recordedBy: text('recorded_by').references(() => user.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index('invoice_payments_invoice_idx').on(t.invoiceId, t.paidOn),
+    index('invoice_payments_client_idx').on(t.clientId),
+    check('invoice_payments_amount_positive', sql`${t.amountPence} > 0`),
+  ]
+)
+
+/* -------------------------------------------------------------------------
  * Infrastructure
  * ---------------------------------------------------------------------- */
 
@@ -630,6 +747,7 @@ export const systemMeta = pgTable('system_meta', {
 
 export const clientsRelations = relations(clients, ({ many }) => ({
   access: many(clientAccess),
+  invoices: many(invoices),
   contacts: many(contacts),
   deals: many(deals),
   links: many(links),
@@ -687,3 +805,19 @@ export const contentApprovalsRelations = relations(
     }),
   })
 )
+
+export const invoicesRelations = relations(invoices, ({ one, many }) => ({
+  client: one(clients, {
+    fields: [invoices.clientId],
+    references: [clients.id],
+  }),
+  deal: one(deals, { fields: [invoices.dealId], references: [deals.id] }),
+  payments: many(invoicePayments),
+}))
+
+export const invoicePaymentsRelations = relations(invoicePayments, ({ one }) => ({
+  invoice: one(invoices, {
+    fields: [invoicePayments.invoiceId],
+    references: [invoices.id],
+  }),
+}))

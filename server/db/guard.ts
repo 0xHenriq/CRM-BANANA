@@ -40,7 +40,7 @@ export async function assertRlsIsBinding(): Promise<void> {
             'clients','client_access','contacts','deals','activities','audit_log',
             'links','files','notice_posts','tasks','content_items','content_assets',
             'content_approvals','content_comments','moodboard_items','review_links',
-            'invitation_grants'
+            'invitation_grants','invoices','invoice_payments'
           ]))                                                           as unprotected
   `)
 

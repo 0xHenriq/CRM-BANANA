@@ -5,10 +5,12 @@ import {
   api,
   formatMoney,
   formatPence,
-  paymentState,
+  invoiceState,
+  outstandingPence,
   sumPence,
   type ClientSummary,
   type DealWithClient,
+  type Invoice,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -43,10 +45,15 @@ export function Dashboard() {
     queryKey: ['deals'],
     queryFn: () => api.get<{ deals: DealWithClient[] }>('/deals'),
   })
+  const invoicesQuery = useQuery({
+    queryKey: ['invoices'],
+    queryFn: () => api.get<{ invoices: Invoice[] }>('/invoices'),
+  })
 
   const clients = clientsQuery.data?.clients ?? []
   const deals = dealsQuery.data?.deals ?? []
-  const isLoading = clientsQuery.isLoading || dealsQuery.isLoading
+  const isLoading =
+    clientsQuery.isLoading || dealsQuery.isLoading || invoicesQuery.isLoading
 
   const activeClients = clients.filter((c) => c.status === 'active').length
   const awaitingReview = clients.reduce(
@@ -60,21 +67,25 @@ export function Dashboard() {
   const pipelinePence = sumPence(openDeals.map((d) => d.value))
 
   /**
-   * Money owed, across every deal regardless of stage.
+   * Money owed comes from INVOICES, not from the payment flag on deals.
    *
-   * Deliberately not filtered to the open pipeline: an invoice she is chasing
-   * is almost always on a deal that is already `won`, so scoping this the way
-   * "open pipeline" is scoped would have shown zero for exactly the case that
-   * matters. "Who owes me money" is a Monday question and it had no answer on
-   * this screen at all.
+   * Both exist: the flag is quick per-deal tracking that predates invoicing,
+   * and invoices are the real book — a retainer is billed in stages, so one
+   * deal can carry several. Summing the flag would have given this tile a
+   * different answer from the one on every client's own page, and two numbers
+   * both labelled "owed" is worse than one.
+   *
+   * Drafts and voids contribute nothing: outstandingPence returns 0 for them,
+   * because a draft has not been asked for and a void has been withdrawn.
    */
-  const owed = deals.filter((d) => {
-    const state = paymentState(d)
-    return state === 'awaiting' || state === 'overdue'
-  })
-  const owedPence = sumPence(owed.map((d) => d.value))
-  const overdue = deals.filter((d) => paymentState(d) === 'overdue')
-  const overduePence = sumPence(overdue.map((d) => d.value))
+  const invoices = invoicesQuery.data?.invoices ?? []
+  const owedPence = invoices.reduce((sum, i) => sum + outstandingPence(i), 0)
+  const overdueInvoices = invoices.filter((i) => invoiceState(i) === 'overdue')
+  const overduePence = overdueInvoices.reduce(
+    (sum, i) => sum + outstandingPence(i),
+    0
+  )
+  const owedCount = invoices.filter((i) => outstandingPence(i) > 0).length
 
   const stats = [
     {
@@ -100,14 +111,14 @@ export function Dashboard() {
       icon: PoundSterling,
       value: owedPence > 0 ? formatPence(owedPence) : '—',
       hint:
-        overdue.length > 0
-          ? `${formatPence(overduePence)} overdue across ${overdue.length}`
-          : owed.length > 0
-            ? `${owed.length} invoice${owed.length === 1 ? '' : 's'} outstanding`
+        overdueInvoices.length > 0
+          ? `${formatPence(overduePence)} overdue across ${overdueInvoices.length}`
+          : owedCount > 0
+            ? `${owedCount} invoice${owedCount === 1 ? '' : 's'} outstanding`
             : 'Nothing outstanding',
       // The one tile worth shouting. Everything else here is informational;
       // this is the one she needs to act on.
-      alarm: overdue.length > 0,
+      alarm: overdueInvoices.length > 0,
     },
     {
       label: 'Open to-dos',
@@ -153,21 +164,34 @@ export function Dashboard() {
                 <Icon className='size-4 text-muted-foreground' />
               </CardHeader>
               <CardContent className='px-5'>
+                {/*
+                  The hint is inside the loading branch too, deliberately.
+                  It used to render regardless, so before the queries returned
+                  the Owed tile read "Nothing outstanding" over an empty array
+                  — a confident, wrong answer to the one question on this
+                  screen worth acting on. Same failure as rendering an empty
+                  state while a request is still in flight.
+                */}
                 {isLoading ? (
-                  <Skeleton className='h-8 w-16' />
+                  <>
+                    <Skeleton className='h-8 w-16' />
+                    <Skeleton className='mt-1.5 h-3 w-24' />
+                  </>
                 ) : (
-                  <div className='display text-3xl'>{value}</div>
+                  <>
+                    <div className='display text-3xl'>{value}</div>
+                    <p
+                      className={cn(
+                        'mt-1 text-xs',
+                        alarm
+                          ? 'font-bold text-pay-overdue'
+                          : 'text-muted-foreground'
+                      )}
+                    >
+                      {hint}
+                    </p>
+                  </>
                 )}
-                <p
-                  className={cn(
-                    'mt-1 text-xs',
-                    alarm
-                      ? 'font-bold text-pay-overdue'
-                      : 'text-muted-foreground'
-                  )}
-                >
-                  {hint}
-                </p>
               </CardContent>
             </Card>
           ))}

@@ -107,21 +107,105 @@ export type PaymentStatus = (typeof PAYMENT_STATUSES)[number]
  */
 export type PaymentState = PaymentStatus | 'overdue'
 
+/**
+ * Is this 'YYYY-MM-DD' before today, in the reader's own calendar?
+ *
+ * Deliberately not `new Date(iso) < new Date()`: 'YYYY-MM-DD' parses as UTC
+ * midnight, which calls a date overdue a day early west of Greenwich and a day
+ * late east of it. Two features now turn something red on this comparison —
+ * deal payment state and invoices — so it lives in one place rather than being
+ * written twice and drifting.
+ */
+export function isPastDate(iso: string | null | undefined): boolean {
+  if (!iso) return false
+  const [y, m, d] = iso.split('-').map(Number)
+  const then = new Date(y, m - 1, d)
+  const now = new Date()
+  return then < new Date(now.getFullYear(), now.getMonth(), now.getDate())
+}
+
 export function paymentState(deal: {
   paymentStatus: PaymentStatus
   paymentDue: string | null
 }): PaymentState {
-  if (deal.paymentStatus !== 'awaiting' || !deal.paymentDue) {
-    return deal.paymentStatus
-  }
-  // Local calendar comparison. 'YYYY-MM-DD' through Date.parse is UTC
-  // midnight, which would call an invoice overdue a day early west of
-  // Greenwich and a day late east of it.
-  const [y, m, d] = deal.paymentDue.split('-').map(Number)
-  const due = new Date(y, m - 1, d)
-  const now = new Date()
-  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  return due < midnight ? 'overdue' : 'awaiting'
+  if (deal.paymentStatus !== 'awaiting') return deal.paymentStatus
+  return isPastDate(deal.paymentDue) ? 'overdue' : 'awaiting'
+}
+
+/* ---------------------------------------------------------------- invoices */
+
+export const INVOICE_STATUSES = ['draft', 'sent', 'void'] as const
+export type InvoiceStatus = (typeof INVOICE_STATUSES)[number]
+
+/**
+ * What an invoice actually IS, which is more than what is stored.
+ *
+ * Only draft/sent/void are decisions she makes. Paid, part paid and overdue
+ * are facts about the receipts against it and today's date, so they are worked
+ * out here and never written down — an invoice goes red on its own the morning
+ * it is late, rather than waiting for someone to remember to mark it.
+ */
+export type InvoiceState =
+  | 'draft'
+  | 'sent'
+  | 'part_paid'
+  | 'paid'
+  | 'overdue'
+  | 'void'
+
+export type Invoice = {
+  id: string
+  clientId: string
+  clientName: string
+  dealId: string | null
+  number: string
+  status: InvoiceStatus
+  /** Integer pence. Never parseFloat this; use formatPence to show it. */
+  amountPence: number
+  paidPence: number
+  currency: string
+  description: string | null
+  issuedOn: string | null
+  dueOn: string | null
+  notes: string | null
+  createdAt: string
+}
+
+/** A payment received. This row is the receipt. */
+export type InvoicePayment = {
+  id: string
+  invoiceId: string
+  receiptNumber: string
+  amountPence: number
+  paidOn: string
+  method: string | null
+  reference: string | null
+  createdAt: string
+}
+
+export function invoiceState(invoice: {
+  status: InvoiceStatus
+  amountPence: number
+  paidPence: number
+  dueOn: string | null
+}): InvoiceState {
+  if (invoice.status === 'void') return 'void'
+  if (invoice.status === 'draft') return 'draft'
+  if (invoice.paidPence >= invoice.amountPence) return 'paid'
+  // Overdue outranks part paid: a half-settled invoice that is late is late,
+  // and that is the fact she needs to act on.
+  if (isPastDate(invoice.dueOn)) return 'overdue'
+  return invoice.paidPence > 0 ? 'part_paid' : 'sent'
+}
+
+/** What is still owed. Never negative — overpayment is refused server-side. */
+export function outstandingPence(invoice: {
+  status: InvoiceStatus
+  amountPence: number
+  paidPence: number
+}): number {
+  if (invoice.status === 'draft' || invoice.status === 'void') return 0
+  return Math.max(0, invoice.amountPence - invoice.paidPence)
 }
 
 export type Deal = {

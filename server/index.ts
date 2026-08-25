@@ -14,6 +14,7 @@ import { seatsRoutes } from './routes/seats.js'
 import { invitationRoutes } from './routes/invitations.js'
 import { clientRoutes } from './routes/clients.js'
 import { dealRoutes } from './routes/deals.js'
+import { invoiceRoutes } from './routes/invoices.js'
 import { portalRoutes } from './routes/portal.js'
 import { contentRoutes } from './routes/content.js'
 import { mediaRoutes } from './routes/media.js'
@@ -91,6 +92,7 @@ app.route('/api/invitations', invitationRoutes)
 
 app.route('/api/clients', clientRoutes)
 app.route('/api/deals', dealRoutes)
+app.route('/api/invoices', invoiceRoutes)
 
 app.route('/api/portal', portalRoutes)
 app.route('/api/content', contentRoutes)

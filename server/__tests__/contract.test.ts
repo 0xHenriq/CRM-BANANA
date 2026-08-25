@@ -7,13 +7,22 @@ import {
   CONTENT_STATUSES as SERVER_STATUSES,
   CONTENT_TYPES as SERVER_TYPES,
 } from '../routes/content.js'
-import { contentStatus, contentType, paymentStatus } from '../db/schema.js'
+import {
+  contentStatus,
+  contentType,
+  invoiceStatus,
+  paymentStatus,
+} from '../db/schema.js'
+import { INVOICE_STATUSES as SERVER_INVOICE_STATUSES } from '../routes/invoices.js'
 import { hhmm } from '../lib/audit.js'
 import {
   CONTENT_STATUSES as CLIENT_STATUSES,
   CONTENT_TYPES as CLIENT_TYPES,
   DEAL_STAGES as CLIENT_STAGES,
   PAYMENT_STATUSES as CLIENT_PAYMENTS,
+  INVOICE_STATUSES as CLIENT_INVOICE_STATUSES,
+  invoiceState,
+  outstandingPence,
   paymentState,
   formatPence,
   formatTime,
@@ -101,6 +110,68 @@ describe('payment status', () => {
 
   it('leaves an awaiting deal with no due date simply awaiting', () => {
     expect(paymentState({ paymentStatus: 'awaiting', paymentDue: null })).toBe('awaiting')
+  })
+})
+
+/**
+ * Invoices.
+ *
+ * A retainer is billed in stages, so one deal carries many invoices and an
+ * invoice can be half settled. Only three states are stored — draft, sent,
+ * void — because paid, part paid and overdue are facts about the receipts and
+ * today's date. Storing them would mean something had to run at midnight to
+ * keep them honest.
+ */
+describe('invoice state', () => {
+  const base = { status: 'sent' as const, amountPence: 500000, dueOn: null }
+  const iso = (offsetDays: number) => {
+    const d = new Date(Date.now() + offsetDays * 86_400_000)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+
+  it('matches across the enum, the API and the client', () => {
+    expect([...SERVER_INVOICE_STATUSES]).toEqual([...CLIENT_INVOICE_STATUSES])
+    expect([...invoiceStatus.enumValues]).toEqual([...CLIENT_INVOICE_STATUSES])
+  })
+
+  it('stores none of the derived states', () => {
+    for (const derived of ['paid', 'part_paid', 'overdue']) {
+      expect([...invoiceStatus.enumValues]).not.toContain(derived)
+    }
+  })
+
+  it('is part paid after a deposit, and paid once settled', () => {
+    // Her actual shape: a £300 deposit against a £5,000 retainer, then the
+    // balance. Two receipts, one invoice.
+    expect(invoiceState({ ...base, paidPence: 0 })).toBe('sent')
+    expect(invoiceState({ ...base, paidPence: 30000 })).toBe('part_paid')
+    expect(invoiceState({ ...base, paidPence: 500000 })).toBe('paid')
+  })
+
+  it('calls a late invoice overdue even when partly paid', () => {
+    // Overdue outranks part paid: half the money arriving does not make a
+    // missed deadline stop mattering.
+    expect(
+      invoiceState({ ...base, paidPence: 30000, dueOn: iso(-3) })
+    ).toBe('overdue')
+  })
+
+  it('never calls a settled or unsent invoice overdue, however old the date', () => {
+    expect(invoiceState({ ...base, paidPence: 500000, dueOn: iso(-90) })).toBe('paid')
+    expect(
+      invoiceState({ status: 'draft', amountPence: 1000, paidPence: 0, dueOn: iso(-90) })
+    ).toBe('draft')
+    expect(
+      invoiceState({ status: 'void', amountPence: 1000, paidPence: 0, dueOn: iso(-90) })
+    ).toBe('void')
+  })
+
+  it('counts nothing outstanding on a draft or a void', () => {
+    // A draft has not been asked for and a void has been withdrawn. Including
+    // either in "what they owe" would overstate the debt on her dashboard.
+    expect(outstandingPence({ status: 'draft', amountPence: 500000, paidPence: 0 })).toBe(0)
+    expect(outstandingPence({ status: 'void', amountPence: 500000, paidPence: 0 })).toBe(0)
+    expect(outstandingPence({ status: 'sent', amountPence: 500000, paidPence: 30000 })).toBe(470000)
   })
 })
 

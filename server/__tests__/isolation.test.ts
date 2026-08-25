@@ -366,6 +366,100 @@ describe('staff-only writes require a tenant context', () => {
   })
 })
 
+/**
+ * Invoices and receipts.
+ *
+ * Money between her and the client, so the client must see their own — that is
+ * the point of putting it in the portal. But a draft is her working copy, and
+ * the failure that matters is not the draft leaking: it is the RECEIPT leaking
+ * and telling a client about money moving against a document they were never
+ * sent. Exactly the shape migration 0006 fixed for content assets.
+ */
+describe('invoices and receipts', () => {
+  it('a client sees their ISSUED invoice but not the draft', async () => {
+    const rows = await asActor<{ id: string }>(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from invoices'
+    )
+    expect(rows.map((r) => r.id)).toEqual([f.invoiceAIssued])
+  })
+
+  it("cannot see another client's invoice by its exact id", async () => {
+    const rows = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from invoices where id = $1',
+      [f.invoiceB]
+    )
+    expect(rows).toHaveLength(0)
+  })
+
+  it('a receipt against a draft invoice is hidden with its parent', async () => {
+    const rows = await asActor<{ receipt_number: string }>(
+      { kind: 'client', userId: f.clientUserA },
+      'select receipt_number from invoice_payments'
+    )
+    // The issued invoice's receipt only. The draft's must not appear, or the
+    // client learns about money against a document they have never seen.
+    expect(rows.map((r) => r.receipt_number)).toEqual(['RCP-TEST-0001'])
+  })
+
+  it('a client cannot raise, alter or settle an invoice', async () => {
+    await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      `insert into invoices(client_id, number, status, amount_pence, issued_on)
+       values ($1,'INV-FORGED-1','sent',1,current_date)`,
+      [f.clientA]
+    ).catch(() => [])
+
+    await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'update invoices set amount_pence = 1 where id = $1',
+      [f.invoiceAIssued]
+    ).catch(() => [])
+
+    await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      `insert into invoice_payments(client_id, invoice_id, receipt_number, amount_pence, paid_on)
+       values ($1,$2,'RCP-FORGED-1',500000,current_date)`,
+      [f.clientA, f.invoiceAIssued]
+    ).catch(() => [])
+
+    const { rows } = await ownerPool.query(
+      `select (select count(*)::int from invoices where number='INV-FORGED-1') as forged,
+              (select amount_pence from invoices where id=$1) as amount,
+              (select count(*)::int from invoice_payments where receipt_number='RCP-FORGED-1') as paid`,
+      [f.invoiceAIssued]
+    )
+    expect(rows[0].forged).toBe(0)
+    expect(rows[0].amount).toBe(500000)
+    expect(rows[0].paid).toBe(0)
+  })
+
+  it('a receipt cannot be rewritten, even by staff', async () => {
+    // Append-only in the same spirit as content_approvals: the amount and date
+    // are evidence. A mistake is withdrawn and re-recorded under a new receipt
+    // number rather than edited in place, so the client's copy never silently
+    // stops matching ours.
+    await asActor(
+      { kind: 'staff', userId: f.staffUser },
+      `update invoice_payments set amount_pence = 1 where receipt_number = 'RCP-TEST-0001'`
+    ).catch(() => [])
+
+    const { rows } = await ownerPool.query(
+      `select amount_pence from invoice_payments where receipt_number = 'RCP-TEST-0001'`
+    )
+    expect(rows[0].amount_pence).toBe(200000)
+  })
+
+  it('staff see every invoice, draft included', async () => {
+    const rows = await asActor(
+      { kind: 'staff', userId: f.staffUser },
+      'select id from invoices'
+    )
+    expect(rows).toHaveLength(3)
+  })
+})
+
 describe('append-only approvals', () => {
   it('nobody can update or delete an approval, staff included', async () => {
     const { rows: seeded } = await ownerPool.query(

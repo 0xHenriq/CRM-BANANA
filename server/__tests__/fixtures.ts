@@ -42,9 +42,16 @@ export type Fixture = {
   noticeB: string
   /** A pending invitation, so writes to invitation_grants can be exercised. */
   invitationId: string
+  /** Issued: client A may see it, and its receipt. */
+  invoiceAIssued: string
+  /** Draft: her working copy. Neither it nor its payment may be visible. */
+  invoiceADraft: string
+  invoiceB: string
 }
 
 const TENANT_TABLES = [
+  'invoice_payments',
+  'invoices',
   'invitation_grants',
   'content_approvals',
   'content_comments',
@@ -196,6 +203,33 @@ export async function resetAndSeed(): Promise<Fixture> {
       `select id from organization where slug = 'isolation-fixture'`
     )
 
+    /**
+     * Invoices, in the three shapes that matter.
+     *
+     * A draft carries a payment too, because the interesting failure is not
+     * the invoice leaking — it is the RECEIPT leaking and telling the client
+     * about money against a document they were never sent. Same shape as the
+     * hidden content item and its asset above, and for the same reason.
+     */
+    const invoiceAIssued = randomUUID()
+    const invoiceADraft = randomUUID()
+    const invoiceB = randomUUID()
+
+    await c.query(
+      `insert into invoices(id, client_id, number, status, amount_pence, issued_on, due_on)
+       values ($1,$2,'INV-TEST-0001','sent',500000, current_date - 30, current_date - 5),
+              ($3,$2,'INV-TEST-0002','draft',120000, null, null),
+              ($4,$5,'INV-TEST-0003','sent',80000, current_date - 10, current_date + 5)`,
+      [invoiceAIssued, clientA, invoiceADraft, invoiceB, clientB]
+    )
+
+    await c.query(
+      `insert into invoice_payments(client_id, invoice_id, receipt_number, amount_pence, paid_on)
+       values ($1,$2,'RCP-TEST-0001',200000, current_date - 3),
+              ($1,$3,'RCP-TEST-0002',50000, current_date - 1)`,
+      [clientA, invoiceAIssued, invoiceADraft]
+    )
+
     const invitationId = `inv_${randomUUID()}`
     await c.query(
       `insert into invitation(id, organization_id, email, role, status, expires_at, inviter_id)
@@ -204,7 +238,17 @@ export async function resetAndSeed(): Promise<Fixture> {
     )
 
     await c.query('commit')
-    return { clientA, clientB, staffUser, clientUserA, invitationId, ...ids }
+    return {
+      clientA,
+      clientB,
+      staffUser,
+      clientUserA,
+      invitationId,
+      invoiceAIssued,
+      invoiceADraft,
+      invoiceB,
+      ...ids,
+    }
   } catch (err) {
     await c.query('rollback')
     throw err
@@ -298,6 +342,8 @@ export const CLIENT_VISIBLE_TABLES = [
   'content_assets',
   'content_comments',
   'content_approvals',
+  // A receipt for their own issued invoice.
+  'invoice_payments',
 ] as const
 
 export const STAFF_ONLY_TABLES = [
@@ -309,7 +355,12 @@ export const STAFF_ONLY_TABLES = [
   'review_links',
 ] as const
 
-export const COLUMN_GATED_TABLES = ['tasks', 'content_items'] as const
+export const COLUMN_GATED_TABLES = [
+  'tasks',
+  'content_items',
+  // A draft invoice is her working copy; the client sees it only once issued.
+  'invoices',
+] as const
 
 export const ALL_TENANT_TABLES = [
   ...CLIENT_VISIBLE_TABLES,

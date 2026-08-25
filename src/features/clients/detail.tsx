@@ -21,6 +21,7 @@ import {
   type PortalWorkspace,
 } from '@/lib/api'
 import { MoodboardPreview } from '@/features/content/moodboard-preview'
+import { InvoicesPanel } from '@/features/invoices/panel'
 import { useWorkspace } from '@/features/portal/use-workspace'
 import { LinkStack } from '@/features/portal/link-stack'
 import { FileFolder, TaskList } from '@/features/portal/panels'
@@ -260,6 +261,9 @@ export function ClientDetailPage() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* What this client owes, on the page about this client. */}
+            <InvoicesPanel clientId={clientId} canEdit />
 
             <ContactsCard clientId={clientId} contacts={contacts} />
 

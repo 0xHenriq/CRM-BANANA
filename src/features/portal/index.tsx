@@ -13,6 +13,7 @@ import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { ReviewQueue } from '@/features/content/review-queue'
 import { MoodboardPreview } from '@/features/content/moodboard-preview'
+import { InvoicesPanel } from '@/features/invoices/panel'
 import { LinkStack } from './link-stack'
 import { FileFolder, NoticeBoard, TaskList } from './panels'
 
@@ -108,9 +109,18 @@ export function PortalHome() {
         <ReviewQueue variant={isStaff ? 'agency' : 'client'} />
 
         {/*
-          Above the panels, as she asked. The visual direction is the thing a
-          social client actually opens the portal to see, and it was behind a
-          nav item they had to know to click.
+          Money first. "A client owes her 5k, so it should be visually on top
+          of their homepage" — and it is the one thing on this screen where
+          both sides need to be looking at the same number.
+        */}
+        <div className='mb-5'>
+          <InvoicesPanel clientId={workspaceId} canEdit={isStaff} />
+        </div>
+
+        {/*
+          Then the visual direction: the thing a social client actually opens
+          the portal to see, and it was behind a nav item they had to know to
+          click.
         */}
         <MoodboardPreview clientId={workspaceId} canEdit={isStaff} />
 
