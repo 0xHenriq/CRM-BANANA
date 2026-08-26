@@ -111,9 +111,20 @@ export function PortalHome() {
           }
         />
 
-        {/* Above everything: the reason they opened the portal, if there is
-            one. Buried below a link stack it may as well not exist. */}
-        <NextSteps variant={isStaff ? 'agency' : 'client'} />
+        {/*
+          Above everything: the reason they opened the portal, if there is one.
+          Buried below a link stack it may as well not exist.
+
+          SCOPED to this workspace. Without the id it loads every client's next
+          steps, which for a client is invisible — RLS gives them their own
+          either way — but meant that staff opening one client's homepage got a
+          panel listing nine other clients' work. On the page that is entirely
+          about this client, that is the one thing it must not be.
+        */}
+        <NextSteps
+          variant={isStaff ? 'agency' : 'client'}
+          clientId={workspaceId}
+        />
 
         {/*
           Money first. "A client owes her 5k, so it should be visually on top
