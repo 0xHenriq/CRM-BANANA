@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, ListChecks, SquareCheckBig } from 'lucide-react'
-import { api } from '@/lib/api'
+import { api, type ContentType } from '@/lib/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { DueDate } from '@/features/portal/panels'
 import { ContentDetailDialog } from './detail-dialog'
@@ -104,7 +104,8 @@ type NextStep = {
   clientName: string
   title: string
   due: string | null
-  type?: string
+  /** Only on a review step — it is the content item's own type. */
+  type?: ContentType
   visibleToClient?: boolean
 }
 
@@ -129,7 +130,7 @@ function StepRow({
   const body = (
     <>
       {step.kind === 'review' && step.type ? (
-        <TypePill type={step.type as never} />
+        <TypePill type={step.type} />
       ) : (
         <span
           aria-hidden

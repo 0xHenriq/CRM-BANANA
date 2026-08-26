@@ -387,8 +387,19 @@ export function TaskList({
   const [internal, setInternal] = useState(false)
   const [dueDate, setDueDate] = useState('')
 
-  const invalidate = () =>
+  /*
+   * Tasks feed the Next Steps panel as well as this one, so both keys have to
+   * go. Without the second line, ticking a to-do off leaves it sitting at the
+   * top of the page with its deadline still counting down — the panel that
+   * exists to say what is outstanding, quietly lying about it.
+   *
+   * A prefix invalidates every variant, so the whole-agency list and each
+   * per-client list all refresh from one call.
+   */
+  const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['portal'] })
+    queryClient.invalidateQueries({ queryKey: ['next-steps'] })
+  }
 
   const toggle = useMutation({
     mutationFn: ({ id, done }: { id: string; done: boolean }) =>

@@ -461,7 +461,9 @@ All under `/api`, same-origin, cookie-authenticated.
 | `/api/invoices` | authed | Staff see all (and every client's, unfiltered — that is what a payment view needs); a client sees only their own **issued** ones. Writes are staff only. |
 | `/api/invoices/:id/payments` | staff only | Records a payment and issues a receipt number. Overpayment is refused |
 | `/api/portal`, `/api/content`, `/api/media` | authed | `?client=<uuid>` honoured for staff, **ignored** for clients |
-| `/api/content/awaiting` | authed | Registered **before** `/:id`, or "awaiting" parses as an id |
+| `/api/next-steps`, `/api/next-steps/:clientId` | authed | Posts awaiting a decision plus dated open to-dos, soonest first. One loader serves both — do not add a second query |
+| `/api/clients/:id/archive`, `/restore` | staff only | Archive is a timestamp, never a DELETE. Archiving also closes the portal |
+| `/api/media/clients/:id/logo` | authed | Reads the key off the row, never from the URL; RLS decides who sees it |
 | `/api/seats` | staff only | Seat cap of 10, counting members + pending invitations |
 | `/api/invitations/:id` | public | Rate limited; the invitation id is the credential |
 | `/healthz` | public | Asserts DB **and** uploads, not just a socket |
@@ -696,7 +698,9 @@ These are **observed** on this codebase, not hypothetical. Each one shipped a re
 
 **What happened:** Optimistic updates landed on a cache entry that did not exist. Checkboxes did not move until a refetch. Separately, approving a post left the panel reading "2 posts need your review" — indistinguishable from failure.
 
-**The correct behavior:** Address by prefix (`setQueriesData({ queryKey: ['portal'] }, …)`), and invalidate **every** key a mutation affects — including `['awaiting']` and `['clients']`.
+**The correct behavior:** Address by prefix (`setQueriesData({ queryKey: ['portal'] }, …)`), and invalidate **every** key a mutation affects — including `['next-steps']` and `['clients']`.
+
+This has already bitten once. Renaming the review-queue key from `['awaiting']` to `['next-steps']` left two mutations invalidating the old name, which nothing read any more: approving a post and ticking off a to-do both left the Next Steps panel showing work that was already done. When you rename a query key, grep for the OLD one — the compiler cannot, because it is a string.
 
 ### Failure Mode 6: State that lives in one component and is guessed elsewhere
 

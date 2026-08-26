@@ -139,9 +139,11 @@ export function HashtagEditor({
         placeholder='Type or paste tags — space, comma or Enter to add'
         onChange={(e) => {
           const text = e.target.value
-          // A separator in the middle means a tag just ended; commit the part
-          // before it and keep the rest as the new draft. This is also what
-          // makes a PASTE of thirty tags land as thirty chips rather than one.
+          // Any separator means at least one tag just ended, so the whole
+          // field is parsed and the draft cleared — parseHashtagInput splits
+          // on every separator, so "one two three" pasted at once becomes
+          // three chips rather than one. Typing is the same path: the space
+          // after "one" commits it and leaves the field empty for "two".
           if (/[\s,]/.test(text)) {
             commit(text)
           } else {

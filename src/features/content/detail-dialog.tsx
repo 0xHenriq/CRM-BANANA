@@ -79,7 +79,7 @@ export function ContentDetailDialog({
     // change moves an item in or out of it. Without this the client approved
     // a post and the panel still read "2 posts need your review" — which
     // looks exactly like the approval not working.
-    await queryClient.invalidateQueries({ queryKey: ['awaiting'] })
+    await queryClient.invalidateQueries({ queryKey: ['next-steps'] })
     // The dashboard's awaiting count comes from the client list.
     await queryClient.invalidateQueries({ queryKey: ['clients'] })
   }

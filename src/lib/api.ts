@@ -458,7 +458,6 @@ export type MoodboardItem = {
   storageKey: string | null
   url: string | null
   caption: string | null
-  hashtags: string[]
   sortOrder: number
 }
 

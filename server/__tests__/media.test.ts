@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { sniffDocumentMime, sniffMime } from '../lib/media.js'
-import { contentDisposition, humanSize, parseRange } from '../routes/media.js'
+import {
+  contentDisposition,
+  humanSize,
+  imageTypeForKey,
+  parseRange,
+} from '../routes/media.js'
 
 /**
  * The two pieces of the media path that are pure arithmetic and pure byte
@@ -273,5 +278,33 @@ describe('contentDisposition escaping', () => {
       const encoded = /filename\*=UTF-8''(.*)$/.exec(contentDisposition(name))?.[1] ?? ''
       expect(decodeURIComponent(encoded)).toBe(name)
     }
+  })
+})
+
+/**
+ * The logo is normally the derived webp, but processImage keeps the ORIGINAL
+ * when sharp cannot thumbnail a file rather than failing the upload — so the
+ * stored key is sometimes a .png or .gif, and hard-coding webp would label it
+ * wrongly.
+ */
+describe('imageTypeForKey', () => {
+  it('types each image extension we ever store', () => {
+    expect(imageTypeForKey('c1/a.webp')).toBe('image/webp')
+    expect(imageTypeForKey('c1/a.png')).toBe('image/png')
+    expect(imageTypeForKey('c1/a.jpg')).toBe('image/jpeg')
+    expect(imageTypeForKey('c1/a.gif')).toBe('image/gif')
+    expect(imageTypeForKey('c1/a.avif')).toBe('image/avif')
+  })
+
+  it('is case-insensitive about the extension', () => {
+    expect(imageTypeForKey('c1/A.PNG')).toBe('image/png')
+  })
+
+  it('refuses anything that is not an image rather than guessing', () => {
+    // The route turns null into a 404, so the portal falls back to initials
+    // instead of rendering a broken image.
+    expect(imageTypeForKey('c1/a.mp4')).toBeNull()
+    expect(imageTypeForKey('c1/a.pdf')).toBeNull()
+    expect(imageTypeForKey('c1/noextension')).toBeNull()
   })
 })

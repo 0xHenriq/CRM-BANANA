@@ -45,6 +45,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { ClientLogo } from '@/components/client-logo'
 import { ConfigDrawer } from '@/components/config-drawer'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Header } from '@/components/layout/header'
@@ -84,6 +85,7 @@ export function ClientDetailPage() {
   })
 
   const [confirmArchive, setConfirmArchive] = useState(false)
+  const [brandTouched, setBrandTouched] = useState(false)
 
   const archive = useMutation({
     mutationFn: () => api.post(`/clients/${clientId}/archive`, {}),
@@ -199,6 +201,19 @@ export function ClientDetailPage() {
           stamp={{ top: 'EST.', big: 'BD', bottom: 'LDN' }}
           actions={
             <div className='flex items-center gap-3'>
+              {/*
+                The same mark as the portal homepage, on the page where she
+                actually administers the client. Uploading from either place
+                writes the same column — this is not a second logo.
+              */}
+              <ClientLogo
+                clientId={clientId}
+                name={client.name}
+                logoKey={client.logoKey}
+                brandColor={client.brandColor}
+                canEdit
+                markOnly
+              />
               <Button variant='outline' size='sm' asChild>
                 <Link to='/clients'>
                   <ArrowLeft />
@@ -296,7 +311,24 @@ export function ClientDetailPage() {
                       className='size-9 cursor-pointer rounded-md border border-border bg-transparent p-1'
                       defaultValue={client.brandColor ?? '#f5c518'}
                       key={`brand-${client.id}-${client.updatedAt}`}
+                      /*
+                       * Gated on a real interaction, not on the value.
+                       *
+                       * Every client has brand_color null, so the swatch shows
+                       * the fallback — and comparing that fallback against the
+                       * stored null makes them "different". Tabbing through
+                       * this card was enough to assign a colour nobody chose.
+                       *
+                       * onChange alone would be worse: Chrome fires it
+                       * continuously while a colour is dragged, so one pick
+                       * would be a dozen PATCHes and a dozen activity rows.
+                       * So onChange records that she touched it and blur is
+                       * what saves.
+                       */
+                      onChange={() => setBrandTouched(true)}
                       onBlur={(e) => {
+                        if (!brandTouched) return
+                        setBrandTouched(false)
                         if (e.target.value !== client.brandColor) {
                           patch.mutate({ brandColor: e.target.value })
                         }

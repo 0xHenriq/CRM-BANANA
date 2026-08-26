@@ -297,7 +297,7 @@ function IdeaRow({
       // longer exists — opening it answered 404 — and the client list went on
       // counting it. Same rule as every other content mutation: invalidate
       // every key the change touches, not just the one on screen.
-      await queryClient.invalidateQueries({ queryKey: ['awaiting'] })
+      await queryClient.invalidateQueries({ queryKey: ['next-steps'] })
       await queryClient.invalidateQueries({ queryKey: ['clients'] })
     },
     onError: (err: Error) => toast.error(err.message),

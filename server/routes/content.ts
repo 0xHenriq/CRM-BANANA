@@ -4,7 +4,6 @@ import { z } from 'zod'
 import { withTenant } from '../db/index.js'
 import { HASHTAG_LIMIT, normaliseHashtags } from '../lib/hashtags.js'
 import {
-  clients,
   contentApprovals,
   contentAssets,
   contentComments,
@@ -94,45 +93,6 @@ contentRoutes.get('/', async (c) => {
  */
 const hashtagSchema = z.array(z.string().max(140)).max(HASHTAG_LIMIT * 4)
 
-/**
- * What is waiting on a decision, across every workspace.
- *
- * The product's whole value is that the client responds, and until now
- * nothing asked them to: a client signed in to links and files with no
- * indication that two posts needed approving. Staff had the same blind spot in
- * reverse — a count on the dashboard with no way to see which items.
- *
- * Deliberately registered before '/:id', or "awaiting" is read as an id.
- */
-contentRoutes.get('/awaiting', async (c) => {
-  const currentUser = c.get('user')!
-
-  const rows = await withTenant(c.get('tenant'), (tx) =>
-    tx
-      .select({
-        id: contentItems.id,
-        clientId: contentItems.clientId,
-        clientName: clients.name,
-        title: contentItems.title,
-        type: contentItems.type,
-        scheduledAt: contentItems.scheduledAt,
-        scheduledTime: contentItems.scheduledTime,
-        updatedAt: contentItems.updatedAt,
-      })
-      .from(contentItems)
-      .innerJoin(clients, eq(clients.id, contentItems.clientId))
-      .where(eq(contentItems.status, 'ready_for_review'))
-      .orderBy(
-        asc(contentItems.scheduledAt),
-        asc(contentItems.scheduledTime),
-        desc(contentItems.updatedAt)
-      )
-  )
-
-  // RLS already limits a client to their own workspace, so the same query
-  // serves both audiences — staff see every client, a client sees theirs.
-  return c.json({ items: rows, scope: currentUser.isStaff ? 'agency' : 'client' })
-})
 
 contentRoutes.get('/:id', async (c) => {
   const id = c.req.param('id')

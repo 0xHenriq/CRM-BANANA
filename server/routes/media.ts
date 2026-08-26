@@ -556,6 +556,29 @@ mediaRoutes.get('/moodboard/:id', async (c) => {
 })
 
 /**
+ * The content type for a stored image, from OUR extension.
+ *
+ * The logo is normally the derived webp, and hard-coding 'image/webp' was
+ * nearly right — but processImage falls back to the ORIGINAL when sharp cannot
+ * thumbnail a file, and it keeps the upload rather than failing it. In that
+ * case the stored key is a .png or .gif, and serving it labelled as webp is a
+ * lie the browser has to recover from by sniffing.
+ *
+ * Reading the extension is safe here precisely because we chose it: putBuffer
+ * is given an ext derived from the SNIFFED mime, never from the uploaded
+ * filename. An unrecognised extension is refused rather than guessed — this
+ * only ever serves images.
+ */
+const EXT_IMAGE_MIME: Record<string, string> = Object.fromEntries(
+  Object.entries(IMAGE_MIME).map(([mime, ext]) => [ext, mime])
+)
+
+export function imageTypeForKey(key: string): string | null {
+  const ext = key.slice(key.lastIndexOf('.') + 1).toLowerCase()
+  return EXT_IMAGE_MIME[ext] ?? null
+}
+
+/**
  * A client's logo.
  *
  * Read from the row rather than taking a key from the URL, like every other
@@ -570,8 +593,19 @@ mediaRoutes.get('/clients/:id/logo', async (c) => {
       .limit(1)
   )
   if (!row?.logoKey) return c.json({ error: 'Not found' }, 404)
-  // Always the derived webp, so the type is ours rather than the uploader's.
-  return streamKey(c, row.logoKey, 'image/webp')
+
+  const mime = imageTypeForKey(row.logoKey)
+  /*
+   * A key we cannot type is treated as absent, not streamed as octet-stream.
+   * streamKey sends nosniff, so an unidentified body renders as a BROKEN image
+   * in the corner of her client's portal; a 404 makes the component fall back
+   * to the initials, which looks deliberate. This should be unreachable — we
+   * choose the extension ourselves — so it is the safe end of an impossible
+   * case rather than an expected path.
+   */
+  if (!mime) return c.json({ error: 'Not found' }, 404)
+
+  return streamKey(c, row.logoKey, mime)
 })
 
 mediaRoutes.get('/files/:id', async (c) => {

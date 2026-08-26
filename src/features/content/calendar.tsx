@@ -352,7 +352,17 @@ export function ContentCalendar() {
       </Main>
 
       <ContentDetailDialog itemId={openId} onClose={() => setOpenId(null)} />
+      {/*
+        Keyed by the day, so every opening starts clean.
+
+        This dialog is always mounted and only toggled by `date`, so its state
+        survived being closed. With a title and a time that was untidy; now
+        that it holds a DESCRIPTION, hashtags and a chosen video file it is a
+        real error — dismiss it half-filled, open a different day, and the
+        previous post's video is still attached, pointing at the wrong date.
+      */}
       <SchedulePostDialog
+        key={addingOn ?? 'closed'}
         date={addingOn}
         onClose={() => setAddingOn(null)}
         existing={data?.items ?? []}

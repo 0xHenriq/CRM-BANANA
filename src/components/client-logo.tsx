@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ImagePlus } from 'lucide-react'
 import { logoUrl } from '@/lib/api'
@@ -37,6 +37,7 @@ export function ClientLogo({
   className?: string
 }) {
   const queryClient = useQueryClient()
+  const inputId = useId()
   const [progress, setProgress] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -88,12 +89,76 @@ export function ClientLogo({
     </span>
   )
 
-  if (markOnly) return mark
+  /*
+   * The mark itself opens the picker when she can edit.
+   *
+   * `markOnly` used to return here BEFORE the upload control was rendered, so
+   * passing both markOnly and canEdit silently dropped the ability to edit —
+   * two props that contradicted each other without saying so. The mark is
+   * wrapped in a real label instead, which makes every place the icon appears
+   * a place she can click to change it. That is also what she described: "on
+   * the top right can i put their ICON so i can upload their logo".
+   *
+   * A native <label for>, never a scripted .click() on a hidden input — see
+   * upload-button.tsx for the day that cost.
+   */
+  const editableMark = canEdit ? (
+    <span className='relative inline-flex'>
+      <label
+        htmlFor={inputId}
+        title={logoKey ? `Change ${name}'s logo` : `Upload ${name}'s logo`}
+        className='cursor-pointer rounded-xl transition focus-within:ring-2 focus-within:ring-ring hover:opacity-80'
+      >
+        {mark}
+        <span className='sr-only'>
+          {logoKey ? `Change ${name}'s logo` : `Upload ${name}'s logo`}
+        </span>
+      </label>
+      <input
+        id={inputId}
+        type='file'
+        accept='image/*'
+        className='sr-only'
+        disabled={upload.isPending}
+        onChange={(e) => {
+          const chosen = e.target.files?.[0]
+          // Cleared so choosing the SAME file twice still fires a change —
+          // after a failed upload she would otherwise have to pick a
+          // different file just to retry.
+          e.target.value = ''
+          if (chosen) upload.mutate(chosen)
+        }}
+      />
+      {upload.isPending && (
+        <span className='absolute inset-0 grid place-items-center rounded-xl bg-bd-ink/60 text-[0.625rem] font-bold text-white'>
+          {progress === null ? '…' : `${Math.round(progress * 100)}%`}
+        </span>
+      )}
+    </span>
+  ) : (
+    mark
+  )
+
+  if (markOnly) {
+    return error ? (
+      <span className='inline-flex flex-col items-start gap-0.5'>
+        {editableMark}
+        <span
+          role='alert'
+          className='max-w-40 text-[0.625rem] text-destructive'
+        >
+          {error}
+        </span>
+      </span>
+    ) : (
+      editableMark
+    )
+  }
 
   return (
     <div className={cn('flex items-center gap-3', className)}>
       <span className='display text-xl max-sm:hidden'>{name}</span>
-      {mark}
+      {editableMark}
       {canEdit && (
         <div className='flex flex-col items-start'>
           <UploadButton

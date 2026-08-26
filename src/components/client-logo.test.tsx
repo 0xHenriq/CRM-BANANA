@@ -88,6 +88,37 @@ describe('ClientLogo', () => {
     expect(getComputedStyle(onNavy).color).toBe('rgb(255, 255, 255)')
   })
 
+  /**
+   * markOnly used to return before the upload control was rendered, so passing
+   * both markOnly and canEdit silently produced a logo that could not be
+   * changed — which is exactly how it is used in the client page header.
+   */
+  it('a markOnly logo is still uploadable when canEdit is set', async () => {
+    const { getByLabelText } = await render(
+      wrap(
+        <ClientLogo
+          clientId='c1'
+          name='Acme Corp'
+          logoKey={null}
+          canEdit
+          markOnly
+        />
+      )
+    )
+    await expect
+      .element(getByLabelText(/Upload Acme Corp's logo/i))
+      .toBeInTheDocument()
+  })
+
+  it('shows no upload control when canEdit is not set', async () => {
+    const { container } = await render(
+      wrap(
+        <ClientLogo clientId='c1' name='Acme Corp' logoKey={null} markOnly />
+      )
+    )
+    expect(container.querySelector('input[type="file"]')).toBeNull()
+  })
+
   it('the logo url carries a cache-buster so a replacement is visible', () => {
     const a = logoUrl('c1', 'c1/one.webp')
     const b = logoUrl('c1', 'c1/two.webp')
