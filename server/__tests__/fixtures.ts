@@ -19,6 +19,39 @@ if (!ownerUrl || !appUrl) {
   )
 }
 
+/**
+ * Enforce what the message above only ASKS for.
+ *
+ * This file truncates every tenant table on the database it is pointed at, and
+ * `bd_portal_test` lives on the same Postgres server as production — both are
+ * reached through the same SSH tunnel on 127.0.0.1:55432, differing by one
+ * word in the path. A stray `TEST_DATABASE_URL=$DATABASE_URL` in a shell, or a
+ * copied line in .env, and this wipes the live database of an agency with real
+ * clients on it.
+ *
+ * That is not hypothetical: set-password.ts was once run against production by
+ * exactly this route, an environment variable leaking in from the surrounding
+ * shell. It threw before writing. This would not throw — truncate always
+ * succeeds.
+ *
+ * So the name is checked, not trusted. A database that is not visibly a test
+ * database does not get truncated.
+ */
+for (const [name, url] of [
+  ['TEST_DATABASE_URL', appUrl],
+  ['TEST_DATABASE_URL_OWNER', ownerUrl],
+] as const) {
+  // Last path segment, so query strings and credentials cannot smuggle it past.
+  const database = new URL(url).pathname.replace(/^\//, '')
+  if (!/_test$/.test(database)) {
+    throw new Error(
+      `${name} points at "${database}", which does not end in _test. This ` +
+        'suite truncates every tenant table on that database and refuses to ' +
+        'run against anything that is not plainly a test database.'
+    )
+  }
+}
+
 /** Schema owner. Used only to build fixtures — never to assert visibility. */
 export const ownerPool = new Pool({ connectionString: ownerUrl, max: 4 })
 

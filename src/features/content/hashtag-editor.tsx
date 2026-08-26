@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Check, Copy, X } from 'lucide-react'
+import { copyText } from '@/lib/copy-text'
 import {
   HASHTAG_LIMIT,
   normaliseHashtags,
@@ -33,24 +34,29 @@ export function HashtagEditor({
   readOnly?: boolean
 }) {
   const [draft, setDraft] = useState('')
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState<'yes' | 'failed' | null>(null)
 
   const commit = (text: string) => {
+    // Cleared FIRST, so a draft that yields no tags — "!!" or a lone "#" —
+    // still leaves the field. Clearing only on success stranded that text in
+    // the input with no way to turn it into a tag.
+    setDraft('')
     const additions = parseHashtagInput(text)
     if (additions.length === 0) return
     // Normalising the CONCATENATION is what dedupes against what is already
     // there — normalising the additions alone would happily add a second
     // "#LDN" next to "#ldn".
     onChange(normaliseHashtags([...value, ...additions]))
-    setDraft('')
   }
 
   const remove = (tag: string) => onChange(value.filter((t) => t !== tag))
 
   const copyAll = async () => {
-    await navigator.clipboard.writeText(value.map((t) => `#${t}`).join(' '))
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1500)
+    // Never navigator.clipboard directly: it does not exist over plain HTTP,
+    // which is how this application is actually served. See lib/copy-text.
+    const ok = await copyText(value.map((t) => `#${t}`).join(' '))
+    setCopied(ok ? 'yes' : 'failed')
+    window.setTimeout(() => setCopied(null), 1800)
   }
 
   const over = value.length > HASHTAG_LIMIT
@@ -92,12 +98,16 @@ export function HashtagEditor({
               className='h-6 px-2 text-xs'
               onClick={copyAll}
             >
-              {copied ? (
+              {copied === 'yes' ? (
                 <Check className='size-3' />
               ) : (
                 <Copy className='size-3' />
               )}
-              {copied ? 'Copied' : 'Copy'}
+              {copied === 'yes'
+                ? 'Copied'
+                : copied === 'failed'
+                  ? 'Press ⌘C'
+                  : 'Copy'}
             </Button>
           )}
         </div>

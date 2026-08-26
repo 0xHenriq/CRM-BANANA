@@ -1,4 +1,4 @@
-import { and, eq, isNotNull } from 'drizzle-orm'
+import { and, eq, isNotNull, isNull } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { withTenant, type TenantContext } from '../db/index.js'
 import { clients, contentItems, tasks } from '../db/schema.js'
@@ -70,6 +70,16 @@ async function loadSteps(
         .where(
           and(
             eq(contentItems.status, 'ready_for_review'),
+            /*
+             * Archived clients are excluded for STAFF too.
+             *
+             * RLS already hides an archived client from their own users, but
+             * staff can still see the row — they have to, or Restore could not
+             * read it. Without this predicate she archives a client and their
+             * pending approvals stay at the top of her dashboard, which is the
+             * one thing she archived them to stop.
+             */
+            isNull(clients.archivedAt),
             clientId ? eq(contentItems.clientId, clientId) : undefined
           )
         ),
@@ -95,6 +105,7 @@ async function loadSteps(
           and(
             eq(tasks.done, false),
             isNotNull(tasks.dueDate),
+            isNull(clients.archivedAt),
             clientId ? eq(tasks.clientId, clientId) : undefined
           )
         ),

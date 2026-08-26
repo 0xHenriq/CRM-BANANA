@@ -41,6 +41,43 @@ describe('HashtagEditor', () => {
     ).toBe(1)
   })
 
+  /**
+   * She is served this over plain HTTP, where navigator.clipboard does not
+   * exist. The button must still work, and must never throw.
+   */
+  it('copies without navigator.clipboard, as it must over plain HTTP', async () => {
+    const original = navigator.clipboard
+    Object.defineProperty(navigator, 'clipboard', {
+      value: undefined,
+      configurable: true,
+    })
+    try {
+      const { getByRole } = await render(
+        <Harness initial={['ldn', 'social']} />
+      )
+      await userEvent.click(getByRole('button', { name: /Copy/i }))
+      // The assertion that matters is that this did not throw and the button
+      // resolved to a definite outcome rather than staying on "Copy".
+      await expect
+        .element(getByRole('button', { name: /Copied|Press/i }))
+        .toBeInTheDocument()
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', {
+        value: original,
+        configurable: true,
+      })
+    }
+  })
+
+  it('a draft that yields no tags still clears the field', async () => {
+    const { getByRole } = await render(<Harness />)
+    const input = getByRole('textbox')
+    // Punctuation-only: nothing to commit, but it must not be stranded there.
+    await userEvent.fill(input, '!!')
+    await userEvent.keyboard('{Enter}')
+    await expect.element(input).toHaveValue('')
+  })
+
   it('removes a chip by its own button', async () => {
     const { getByRole, getByTestId } = await render(
       <Harness initial={['keep', 'drop']} />

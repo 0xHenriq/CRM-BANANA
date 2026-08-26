@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm'
+import { desc, eq, isNull } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { withTenant } from '../db/index.js'
@@ -51,6 +51,15 @@ dealRoutes.get('/', async (c) => {
       })
       .from(deals)
       .innerJoin(clients, eq(clients.id, deals.clientId))
+      /*
+       * Not an archived client's deals.
+       *
+       * This list feeds the pipeline board and the dashboard — the two screens
+       * she archived a client to clear. Her own client page loads its deals
+       * directly by id, so an archived client's page still shows theirs and
+       * nothing is hidden from the place it belongs.
+       */
+      .where(isNull(clients.archivedAt))
       .orderBy(desc(deals.updatedAt))
   )
 

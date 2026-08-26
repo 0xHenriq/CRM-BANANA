@@ -412,8 +412,9 @@ export function ClientDetailPage() {
                   ) : (
                     <>
                       <p className='text-xs text-muted-foreground'>
-                        Archiving hides this client and closes their portal. It
-                        deletes nothing and can be undone.
+                        Archiving takes this client off your list, pipeline and
+                        next steps, and closes their portal. It deletes nothing
+                        and can be undone.
                       </p>
                       <Button
                         size='sm'
@@ -497,9 +498,16 @@ export function ClientDetailPage() {
           title={`Archive ${client.name}?`}
           desc={
             <>
-              They disappear from your client list and their portal closes.
-              Their content, files, invoices and uploads all stay exactly where
-              they are, and you can restore them at any time.
+              They come off your client list, the pipeline and your next steps,
+              and their portal closes. Nothing is deleted — their content, files
+              and uploads stay exactly where they are, and you can restore them
+              at any time.
+              <br />
+              <br />
+              {/* Stated because it is a deliberate exception, and a surprising
+                  one: tidying a client away must not make money owed vanish. */}
+              <strong>Unpaid invoices stay visible</strong> so you do not lose
+              sight of what they still owe.
             </>
           }
           confirmText='Archive'

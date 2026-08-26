@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight, Film, Loader2, Plus, X } from 'lucide-react'
 import { toast } from 'sonner'
@@ -405,10 +405,13 @@ function SchedulePostDialog({
   const [hashtags, setHashtags] = useState<string[]>([])
   const [file, setFile] = useState<File | null>(null)
   const [progress, setProgress] = useState<number | null>(null)
+  /** Set once the row exists, so a failed upload can be retried onto it. */
+  const createdId = useRef<string | null>(null)
 
   const unscheduled = existing.filter((i) => !i.scheduledAt)
 
   const reset = () => {
+    createdId.current = null
     setTitle('')
     setType('reel')
     setPickedId('')
@@ -436,28 +439,49 @@ function SchedulePostDialog({
    */
   const create = useMutation({
     mutationFn: async () => {
-      const created = await api.post<{ item: { id: string } }>(
-        withClient('/content', clientId),
-        {
-          title: title.trim(),
-          type,
-          scheduledAt: date,
-          scheduledTime: time || null,
-          caption: caption.trim() || null,
-          hashtags,
-        }
-      )
+      const fields = {
+        title: title.trim(),
+        type,
+        scheduledAt: date,
+        scheduledTime: time || null,
+        caption: caption.trim() || null,
+        hashtags,
+      }
+
+      /*
+       * A retry must not create a second post.
+       *
+       * The upload is the phase that fails — a large video on poor wifi — and
+       * by then the row already exists. Clicking the button again is the
+       * obvious thing to do, and without this she would end up with two copies
+       * of the same post on the same day, one of them empty.
+       *
+       * The fields are PATCHed on the way through rather than skipped, so if
+       * she fixes a typo in the description before retrying, the fix is saved
+       * along with the video.
+       */
+      let id = createdId.current
+      if (id) {
+        await api.patch(`/content/${id}`, fields)
+      } else {
+        const created = await api.post<{ item: { id: string } }>(
+          withClient('/content', clientId),
+          fields
+        )
+        id = created.item.id
+        createdId.current = id
+      }
 
       if (file) {
         setProgress(0)
         await uploadMedia(file, {
           clientId,
           target: 'content',
-          contentItemId: created.item.id,
+          contentItemId: id,
           onProgress: setProgress,
         })
       }
-      return created
+      return id
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['content'] })
@@ -466,16 +490,17 @@ function SchedulePostDialog({
     },
     onError: (err: Error) => {
       /*
-       * If the upload failed the POST may already have succeeded, so the post
-       * EXISTS with its caption and hashtags — it just has no video. Saying
-       * only "upload failed" would leave her hunting for a duplicate she is
-       * about to create by trying again. Refresh so she can see it, and say
-       * exactly what is missing.
+       * The post itself is usually fine — it is the video that failed — so the
+       * list is refreshed to show it, and the message says which half went
+       * wrong. Pressing the button again resumes rather than duplicating: the
+       * id is remembered above.
        */
       setProgress(null)
       queryClient.invalidateQueries({ queryKey: ['content'] })
       toast.error(
-        `${err.message} — if the post was created, add the video by opening it.`
+        createdId.current
+          ? `The post is saved, the video did not upload — ${err.message}. Press Schedule post to try the video again.`
+          : err.message
       )
     },
   })

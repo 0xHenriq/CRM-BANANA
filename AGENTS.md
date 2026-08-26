@@ -285,6 +285,8 @@ They fail independently. Do not collapse them:
 
 `bd_portal_test` on VPS4, reached through the same tunnel. The suite truncates it freely. `TEST_DATABASE_URL` must **never** point at `bd_portal`.
 
+That rule is now **enforced, not requested**: `fixtures.ts` parses both test URLs and refuses to run unless the database name ends in `_test`. It used to only check the variables were set, which is not the same thing — production and the test database differ by one word in the same connection string, on the same host, through the same tunnel. A stray `TEST_DATABASE_URL=$DATABASE_URL` in a shell would have truncated every tenant table on a live agency's database, and `truncate` does not fail the way `set-password` once did. Do not weaken that check.
+
 ```bash
 DATABASE_URL_OWNER="$TEST_DATABASE_URL_OWNER" npx tsx scripts/migrate.ts  # migrate the test DB
 ```
@@ -462,7 +464,7 @@ All under `/api`, same-origin, cookie-authenticated.
 | `/api/invoices/:id/payments` | staff only | Records a payment and issues a receipt number. Overpayment is refused |
 | `/api/portal`, `/api/content`, `/api/media` | authed | `?client=<uuid>` honoured for staff, **ignored** for clients |
 | `/api/next-steps`, `/api/next-steps/:clientId` | authed | Posts awaiting a decision plus dated open to-dos, soonest first. One loader serves both — do not add a second query |
-| `/api/clients/:id/archive`, `/restore` | staff only | Archive is a timestamp, never a DELETE. Archiving also closes the portal |
+| `/api/clients/:id/archive`, `/restore` | staff only | Archive is a timestamp, never a DELETE. It closes the portal and drops the client from `/api/clients`, `/api/deals` and `/api/next-steps` — but **not** from `/api/invoices`: tidying a client away must never hide money owed. Any new list that joins `clients` for staff needs `isNull(clients.archivedAt)`, because RLS deliberately still shows staff the row |
 | `/api/media/clients/:id/logo` | authed | Reads the key off the row, never from the URL; RLS decides who sees it |
 | `/api/seats` | staff only | Seat cap of 10, counting members + pending invitations |
 | `/api/invitations/:id` | public | Rate limited; the invitation id is the credential |
