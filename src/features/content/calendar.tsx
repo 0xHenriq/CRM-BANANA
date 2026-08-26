@@ -1,16 +1,16 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Film, Loader2, Plus, X } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   api,
   CONTENT_TYPES,
+  formatBytes,
   formatTime,
   type ContentItem,
   type ContentType,
 } from '@/lib/api'
-import { useWorkspace, withClient } from '@/features/portal/use-workspace'
-import { WorkspaceSwitcher } from '@/features/portal/workspace-switcher'
+import { uploadMedia } from '@/lib/upload'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -31,6 +31,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Textarea } from '@/components/ui/textarea'
 import { ConfigDrawer } from '@/components/config-drawer'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
@@ -38,12 +39,26 @@ import { PageHead } from '@/components/layout/page-head'
 import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
+import { UploadButton } from '@/components/upload-button'
+import { useWorkspace, withClient } from '@/features/portal/use-workspace'
+import { WorkspaceSwitcher } from '@/features/portal/workspace-switcher'
 import { ContentDetailDialog } from './detail-dialog'
+import { HashtagEditor } from './hashtag-editor'
 import { TYPE_LABEL, TYPE_TONE } from './vocabulary'
 
 const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
 ]
 
 /** Monday-first, as her prototype had it. */
@@ -169,7 +184,11 @@ export function ContentCalendar() {
                   {MONTHS[cursor.month]} {cursor.year}
                 </h2>
                 <div className='flex gap-2'>
-                  <Button size='sm' variant='outline' onClick={() => shiftMonth(-1)}>
+                  <Button
+                    size='sm'
+                    variant='outline'
+                    onClick={() => shiftMonth(-1)}
+                  >
                     <ChevronLeft /> Prev
                   </Button>
                   <Button
@@ -184,7 +203,11 @@ export function ContentCalendar() {
                   >
                     Today
                   </Button>
-                  <Button size='sm' variant='outline' onClick={() => shiftMonth(1)}>
+                  <Button
+                    size='sm'
+                    variant='outline'
+                    onClick={() => shiftMonth(1)}
+                  >
                     Next <ChevronRight />
                   </Button>
                 </div>
@@ -241,13 +264,17 @@ export function ContentCalendar() {
                 ))}
 
                 {grid.map((day, i) => {
-                  if (day === null)
-                    return <div key={`pad-${i}`} aria-hidden />
+                  if (day === null) return <div key={`pad-${i}`} aria-hidden />
 
                   const date = isoDate(cursor.year, cursor.month, day)
                   const items = byDate.get(date) ?? []
                   const isToday =
-                    date === isoDate(today.getFullYear(), today.getMonth(), today.getDate())
+                    date ===
+                    isoDate(
+                      today.getFullYear(),
+                      today.getMonth(),
+                      today.getDate()
+                    )
 
                   return (
                     <div
@@ -259,7 +286,7 @@ export function ContentCalendar() {
                       // the hint below promises and what her prototype did.
                       className={cn(
                         'group min-h-24 rounded-md border-[1.5px] border-bd-rule bg-card p-1.5',
-                        isToday && 'border-bd-ink border-2',
+                        isToday && 'border-2 border-bd-ink',
                         isStaff && 'cursor-pointer hover:bg-bd-cream'
                       )}
                       onClick={isStaff ? () => setAddingOn(date) : undefined}
@@ -275,7 +302,7 @@ export function ContentCalendar() {
                               e.stopPropagation()
                               setAddingOn(date)
                             }}
-                            className='rounded p-0.5 text-muted-foreground opacity-0 hover:bg-bd-sand focus:opacity-100 group-hover:opacity-100'
+                            className='rounded p-0.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-bd-sand focus:opacity-100'
                             aria-label={`Add a post on ${date}`}
                           >
                             <Plus className='size-3' />
@@ -364,6 +391,10 @@ function SchedulePostDialog({
   // Her most common slot, so the field is useful without being retyped every
   // time. Blank is still allowed — the column is nullable on purpose.
   const [time, setTime] = useState('09:00')
+  const [caption, setCaption] = useState('')
+  const [hashtags, setHashtags] = useState<string[]>([])
+  const [file, setFile] = useState<File | null>(null)
+  const [progress, setProgress] = useState<number | null>(null)
 
   const unscheduled = existing.filter((i) => !i.scheduledAt)
 
@@ -373,22 +404,70 @@ function SchedulePostDialog({
     setPickedId('')
     setTime('09:00')
     setMode('new')
+    setCaption('')
+    setHashtags([])
+    setFile(null)
+    setProgress(null)
   }
 
+  /**
+   * One dialog does the whole job.
+   *
+   * "When I upload the video to the content calendar I want to add in
+   * descriptions and hashtags" — so this creates the post, uploads the file
+   * and saves the copy in a single action. Previously the fields existed but
+   * only inside the detail dialog, which meant scheduling a video was: fill in
+   * a form, close it, find the post, open it, upload, type. Six steps for the
+   * thing she does most.
+   *
+   * The order is forced: an asset needs a content item to belong to, so the
+   * row has to exist before the bytes can be attached. That is why this is one
+   * mutation with two phases rather than two independent calls.
+   */
   const create = useMutation({
-    mutationFn: () =>
-      api.post(withClient('/content', clientId), {
-        title: title.trim(),
-        type,
-        scheduledAt: date,
-        scheduledTime: time || null,
-      }),
+    mutationFn: async () => {
+      const created = await api.post<{ item: { id: string } }>(
+        withClient('/content', clientId),
+        {
+          title: title.trim(),
+          type,
+          scheduledAt: date,
+          scheduledTime: time || null,
+          caption: caption.trim() || null,
+          hashtags,
+        }
+      )
+
+      if (file) {
+        setProgress(0)
+        await uploadMedia(file, {
+          clientId,
+          target: 'content',
+          contentItemId: created.item.id,
+          onProgress: setProgress,
+        })
+      }
+      return created
+    },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['content'] })
       reset()
       onClose()
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => {
+      /*
+       * If the upload failed the POST may already have succeeded, so the post
+       * EXISTS with its caption and hashtags — it just has no video. Saying
+       * only "upload failed" would leave her hunting for a duplicate she is
+       * about to create by trying again. Refresh so she can see it, and say
+       * exactly what is missing.
+       */
+      setProgress(null)
+      queryClient.invalidateQueries({ queryKey: ['content'] })
+      toast.error(
+        `${err.message} — if the post was created, add the video by opening it.`
+      )
+    },
   })
 
   const schedule = useMutation({
@@ -446,7 +525,10 @@ function SchedulePostDialog({
             </div>
             <div className='grid gap-1.5'>
               <Label htmlFor='cal-type'>Content type</Label>
-              <Select value={type} onValueChange={(v) => setType(v as ContentType)}>
+              <Select
+                value={type}
+                onValueChange={(v) => setType(v as ContentType)}
+              >
                 <SelectTrigger id='cal-type'>
                   <SelectValue />
                 </SelectTrigger>
@@ -459,6 +541,61 @@ function SchedulePostDialog({
                 </SelectContent>
               </Select>
             </div>
+
+            {/*
+              The video, the description and the hashtags, on the same screen
+              as the date — because that is one decision, not four.
+            */}
+            <div className='grid gap-1.5'>
+              <Label>Video or image</Label>
+              {file ? (
+                <div className='flex items-center gap-2 rounded-md border border-border px-3 py-2'>
+                  <Film className='size-4 shrink-0 text-muted-foreground' />
+                  <span className='min-w-0 flex-1 truncate text-sm'>
+                    {file.name}
+                  </span>
+                  <span className='shrink-0 text-xs text-muted-foreground'>
+                    {formatBytes(file.size)}
+                  </span>
+                  <button
+                    type='button'
+                    onClick={() => setFile(null)}
+                    aria-label='Remove the chosen file'
+                    className='shrink-0 opacity-60 hover:opacity-100'
+                    disabled={create.isPending}
+                  >
+                    <X className='size-3.5' />
+                  </button>
+                </div>
+              ) : (
+                <UploadButton
+                  variant='outline'
+                  size='sm'
+                  label='Choose a file'
+                  icon={<Film className='size-3.5' />}
+                  accept='video/*,image/*'
+                  multiple={false}
+                  onFiles={(files) => files[0] && setFile(files[0])}
+                />
+              )}
+              <p className='text-xs text-muted-foreground'>
+                Optional — the post can be scheduled now and the cut added
+                later.
+              </p>
+            </div>
+
+            <div className='grid gap-1.5'>
+              <Label htmlFor='cal-caption'>Description</Label>
+              <Textarea
+                id='cal-caption'
+                className='min-h-16 resize-y'
+                placeholder='The copy that goes out with this post…'
+                value={caption}
+                onChange={(e) => setCaption(e.target.value)}
+              />
+            </div>
+
+            <HashtagEditor value={hashtags} onChange={setHashtags} />
           </div>
         ) : (
           <div className='grid gap-1.5'>
@@ -502,7 +639,14 @@ function SchedulePostDialog({
               onClick={() => create.mutate()}
               disabled={!title.trim() || create.isPending}
             >
-              Schedule post
+              {create.isPending && <Loader2 className='animate-spin' />}
+              {/* The bytes are the slow part, so the label says so rather than
+                  sitting on "Schedule post" for a minute on a large video. */}
+              {progress !== null && progress < 1
+                ? `Uploading ${Math.round(progress * 100)}%`
+                : create.isPending
+                  ? 'Saving…'
+                  : 'Schedule post'}
             </Button>
           ) : (
             <Button
