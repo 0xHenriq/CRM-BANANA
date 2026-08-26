@@ -267,11 +267,13 @@ npm run test:coverage
 | Tenancy isolation | `server/__tests__/isolation.test.ts` | Cross-tenant, class confusion, fail-closed |
 | API/client contract | `server/__tests__/contract.test.ts` | Deal stages match on both sides; money arithmetic |
 | Patch schemas | `server/__tests__/patch-schemas.test.ts` | PATCH bodies invent no fields; duplicate resets; schedule invariants |
-| Media | `server/__tests__/media.test.ts` | Magic-number sniffing, range arithmetic, download headers, size messages |
+| Media | `server/__tests__/media.test.ts` | Magic-number sniffing, range arithmetic, download headers, size messages, `imageTypeForKey` |
 | URL safety | `src/lib/safe-href.test.ts` | `javascript:`/`data:` refused; `//evil.com` is not an internal path |
-| Components | `src/**/*.test.tsx` | Sign-in, config drawer, search palette |
+| Components | `src/**/*.test.tsx` | Sign-in, config drawer, search palette, client logo, hashtag editor |
 
-Current counts: **90 component tests, 156 server tests.** If a change drops either number, you deleted a test.
+The contract suite also binds the two copies of hashtag normalisation and the `canSeePortal` predicate. See invariant 17.
+
+Current counts: **106 component tests, 183 server tests.** If a change drops either number, you deleted a test.
 
 ### The Isolation Suite Covers Three Distinct Failure Modes
 
@@ -363,11 +365,13 @@ server/
                          document sniffing (PDF/OOXML/CSV), 1 GB ceiling
     seed-workspace.ts    Her 10 links (TikTok/Instagram/Facebook first) /
                          5 file slots / 4 onboarding to-dos
+    hashtags.ts          normaliseHashtags/parseHashtagInput. MIRRORED in
+                         src/lib/hashtags.ts — see invariant 17
   middleware/
     session.ts           withSession, requireAuth, requireStaff
     rate-limit.ts        In-process fixed-window limiter
   routes/                clients, deals, invoices, portal, content, media,
-                         seats, invitations
+                         next-steps, seats, invitations
   __tests__/             isolation, contract, patch-schemas, media, fixtures
 
 src/
@@ -378,14 +382,24 @@ src/
                          typechecks api.ts and has no DOM lib.
   lib/safe-href.ts       safeHref() for external URLs, internalPath() for
                          in-app ones. Both refuse `//evil.com`.
+  lib/hashtags.ts        The browser copy of the normaliser. Must stay
+                         byte-identical in behaviour to the server one.
+  lib/copy-text.ts       THE way this app copies to the clipboard.
+                         navigator.clipboard does NOT exist over plain HTTP.
   lib/route-guards.ts    requireStaffRoute()
   hooks/use-current-user.ts   /api/me — the single authority on isStaff
   components/upload-button.tsx  THE way this app opens a file picker. A native
                          <label for>, never a scripted .click().
+  components/client-logo.tsx    The client's mark, with initials on their brand
+                         colour as the fallback. The mark ITSELF is the upload
+                         target when canEdit.
   features/
     portal/use-workspace.ts   Persisted workspace selection (shared, derived)
-    content/                  Ideas Bank, Calendar, Feed, Moodboard, Review
-                              Queue, moodboard-preview (strip, reused)
+    content/                  Ideas Bank, Calendar, Feed, Moodboard,
+                              moodboard-preview (strip, reused),
+                              hashtag-editor.tsx (chips, 30-tag counter).
+                              review-queue.tsx exports NEXTSTEPS — the file
+                              kept its old name so no import path moved.
     invoices/panel.tsx        Invoices + receipts. ONE panel for both audiences.
     clients/ pipeline/ dashboard/ auth/
   routes/                TanStack file-based routes
@@ -404,14 +418,15 @@ scripts/
 
 | Type | Purpose | Defined in |
 |---|---|---|
-| `clients` | A client account. `portalEnabled` opens their workspace. | `server/db/schema.ts` |
+| `clients` | A client account. `portalEnabled` opens their workspace; `archivedAt` retires it without deleting anything; `logoKey` is their mark. | `server/db/schema.ts` |
 | `client_access` | Which workspaces a client-role user may see. The root of the visibility graph. | `server/db/schema.ts` |
-| `content_items` | **Both** the Ideas Bank and the Calendar. Unscheduled = idea; dated = calendar. | `server/db/schema.ts` |
+| `content_items` | **Both** the Ideas Bank and the Calendar. Unscheduled = idea; dated = calendar. `caption` is the post copy; `hashtags` is a normalised `text[]`. | `server/db/schema.ts` |
 | `content_assets` | Uploaded media for an item. First asset (by `sortOrder`) fills the feed cell. | `server/db/schema.ts` |
 | `content_approvals` | Append-only decision record. No UPDATE/DELETE policy exists. | `server/db/schema.ts` |
 | `tasks` | To-dos, with `visibleToClient` separating internal work and `dueDate` for deadlines. | `server/db/schema.ts` |
 | `invoices` | A demand for money. Many per deal — a retainer is billed in stages. Client sees it only once `issuedOn` is set. | `server/db/schema.ts` |
 | `invoice_payments` | Money received. **Each row IS a receipt.** No UPDATE policy. | `server/db/schema.ts` |
+| `NextStep` | A post awaiting a decision, or a dated open to-do. The panel that leads every page. | `server/routes/next-steps.ts` |
 | `TenantContext` | `{ userId, isStaff }` — what `withTenant` writes into the transaction. | `server/db/index.ts` |
 | `StorageDriver` | Put/read/remove for uploaded bytes. | `server/lib/storage.ts` |
 
@@ -425,7 +440,11 @@ scripts/
 - **Local disk over object storage.** 416 GB free on VPS4.
 - **Derived state is never stored.** `overdue`, `paid` and `part paid` are computed from the payments and today's date; a deal's `overdue` likewise. Storing them would need something running at midnight to keep them honest, and a status that silently goes stale is worse than no status. Only what she DECIDES is persisted: `draft`/`sent`/`void`, `none`/`awaiting`/`paid`.
 - **Invoices, not a flag on the deal.** She bills a retainer in stages, so one deal carries many invoices and an invoice can be half settled. `deals.payment_status` remains as lightweight per-deal marking, but **invoices are the book** — anything totalling "owed" reads from them.
+- **`navigator.clipboard` is never called directly.** It exists only in a SECURE CONTEXT, and this application is served over plain HTTP. It works in dev, which is localhost, which is exactly how that reaches a deploy. Use `src/lib/copy-text.ts`.
 - **A payment row IS the receipt.** A separate receipts table would hold the same facts twice. The row carries its own number and that is what the client quotes back.
+- **Clients are archived, never deleted.** A client is the parent of their contacts, deals, content and its assets, files, invoices, receipts, tasks and notes, all `ON DELETE CASCADE`, plus uploaded bytes that a database restore does not bring back. `archived_at` retires them from her screens instead, and Restore is one click. **Unpaid invoices stay visible on purpose** — tidying a client away must never hide money owed.
+- **Hashtags are an array, not a blob of text.** Thirty tags in a textarea cannot be counted, and Instagram rejects a post at thirty-one. Normalised on the way in: no hashes, no punctuation, deduped case-insensitively. Case is PRESERVED — the capitals are what make a long tag readable.
+- **Undated work sorts LAST in Next Steps.** `null` sorts before everything in a naive comparator, which would put a post with no schedule above one due tomorrow and make the panel actively misleading.
 - **The upload picker uses a native `<label for>`.** A scripted `.click()` on a hidden input fails silently on Safari and iOS, and cost a full day. There is no JavaScript in that path now.
 
 ### Non-Negotiable Invariants
@@ -446,6 +465,10 @@ scripts/
 | 12 | `issued_on` is the client-visibility gate on invoices, **not** the status | A draft must never reach the client, and a later void must not retroactively hide a document they already hold |
 | 13 | A rule is judged on the row as it will BE, not on what the request mentions | Checking only the fields present in a PATCH leaves the other direction wide open. See Failure Mode 15 |
 | 14 | File inputs are `sr-only`, never `hidden` | `display:none` inputs do not reliably open a picker; the failure is completely silent |
+| 15 | Every staff-facing list that joins `clients` filters `isNull(clients.archivedAt)` | RLS deliberately still shows STAFF an archived client, or Restore could not read the row it restores. The filter cannot come from the policy — it must be in the query |
+| 16 | Browser APIs are feature-detected before use, never assumed | The site is plain HTTP, so every secure-context API is absent in production and present in dev. `navigator.clipboard` already shipped broken once |
+| 17 | Logic duplicated across the client/server boundary is bound by a test in `contract.test.ts` | The server cannot import from `src` and the browser should not import from `server`, so some logic exists twice. Two copies that drift produce a UI that disagrees with what was saved. Both hashtag normalisers run over the same inputs there |
+| 18 | A query key rename is finished only when the OLD key has no references left | Keys are strings; the compiler cannot see them. Renaming one already left two mutations invalidating a key nothing read |
 
 ### Performance Requirements
 
@@ -855,6 +878,38 @@ for a London agency.
 
 ---
 
+### Failure Mode 18: Renaming a query key and leaving the old one behind
+
+**The bad behavior:** You rename a TanStack Query key — `['awaiting']` becomes `['next-steps']` — update the `useQuery` that reads it, run the type-checker, and ship. Every `invalidateQueries` call still names the old key. Nothing errors, because a query key is a string and the compiler cannot see it. The panel simply stops refreshing: she approves a post and it stays in the list, ticks off a to-do and its deadline keeps counting down. The one panel whose job is to say what is outstanding now lies about it, and it looks like a stale cache rather than a bug you introduced.
+
+**The correct behavior:** After renaming a key, `grep` for the OLD string across `src/` and confirm zero results. Then ask which mutations *should* invalidate the new key — not just the ones that used to. Tasks feed the Next Steps panel and never invalidated it at all, which no rename would have revealed.
+
+---
+
+### Failure Mode 19: Comparing a form value against stored state to detect a change
+
+**The bad behavior:** You write `onBlur={(e) => { if (e.target.value !== row.field) patch(...) }}` and call it dirty-checking. The input's `defaultValue` is `row.field ?? someFallback`. Every row has `null` there, so the control displays the fallback, the fallback is not `null`, and the two are "different" the instant the field loses focus. Tabbing through the form writes a value the human never chose — silently, to a live database, with an activity-log entry claiming they did it.
+
+**The correct behavior:** Gate on a real interaction, not on a value comparison. Record an explicit touched flag in `onChange` and only save on blur if it is set. For `<input type="color">` specifically, do NOT save in `onChange` alone: Chrome fires it continuously while a colour is dragged, so one pick becomes a dozen PATCHes and a dozen activity rows.
+
+---
+
+### Failure Mode 20: Two props that silently contradict each other
+
+**The bad behavior:** A component takes `markOnly` and `canEdit`. `markOnly` returns early — before the branch that renders the upload control — so passing both gives a control that cannot be used, with no warning, no type error and nothing in the console. You then pass both at a call site and report the feature as delivered.
+
+**The correct behavior:** When you add a prop that short-circuits rendering, check every other prop it now silences. Either make them compose or make the combination impossible in the type. Then write the test for the combination — `markOnly` plus `canEdit` renders a file input — because the compiler will never catch this class of defect.
+
+---
+
+### Failure Mode 21: Hiding a thing from one list and calling it removed
+
+**The bad behavior:** You implement "archive" as a timestamp plus a filter on the one list you were looking at, verify that list, and report it done. The archived client stays on the pipeline board, in the dashboard's next steps, and anywhere else that joins `clients`. The feature's NAME promises removal and it delivers removal from a single screen — which is worse than not building it, because she now believes those clients are gone.
+
+**The correct behavior:** Before claiming a state change is applied, enumerate every read path that touches the entity — `grep` for the table name across `server/routes/` — and decide for EACH one whether the new state applies. Write down the exceptions and why (here: invoices, deliberately, because money owed must not vanish). Then verify against a running server rather than by reading the code you just wrote.
+
+---
+
 ## Appendix A: Environment Variables
 
 | Variable | Purpose | Notes |
@@ -883,6 +938,11 @@ for a London agency.
 | Rotate a password | `npm run set-password -- --email … --password …` |
 | Check tenancy still holds | `npm run test:isolation` |
 | Add a tenant table | migration + RLS policy + `guard.ts` list + `fixtures.ts` lists + fixture rows |
+| Add a staff-facing list that joins `clients` | Add `isNull(clients.archivedAt)` — invariant 15 |
+| Rename a query key | Change it, then `grep -rn "'oldKey'" src/` and expect zero — invariant 18 |
+| Copy text to the clipboard | `copyText()` from `src/lib/copy-text.ts`. NEVER `navigator.clipboard` |
+| Open a file picker | `<UploadButton>`, or a native `<label htmlFor>`. NEVER a scripted `.click()` |
+| Retire a client | Archive it. There is no delete, and there must not be one |
 | Drive the API without touching production | boot a second instance on `:4399` against `bd_portal_test` |
 | Find out why a request "did nothing" | `ssh vps4 journalctl --user -u bd-portal -n 50` — no line means it never arrived |
 | Deploy | `npm run deploy` |
@@ -900,11 +960,13 @@ State these plainly when relevant. Do not paper over them.
 - **Backups sit on the same disk as the data.** They survive a mistake, not a disk failure. Copy the newest pair off the box after any session that mattered — see Backups above.
 - **Mobile layout is unverified.** The browser harness cannot resize, and it cannot switch engine either: **nothing here has been verified on Safari or iOS**, which is where the upload picker failed. Say so rather than implying coverage.
 - **No per-client timezone.** `content_items.scheduled_time` is a bare wall-clock time and means her local reckoning. Correct for a London agency today; it is the thing to revisit before an international client.
-- **No platform model.** `content_type` is a FORMAT (video/reel/story/graphic/carousel), not a channel. There is no Instagram-vs-TikTok distinction, one caption for all destinations, and no hashtag field. The Feed Preview is a hardcoded 3x3 Instagram grid.
+- **No platform model.** `content_type` is a FORMAT (video/reel/story/graphic/carousel), not a channel. There is no Instagram-vs-TikTok distinction and one caption and one hashtag set serve all destinations — the 30-tag warning names Instagram because that is the strictest, not because the post is bound to it. The Feed Preview is a hardcoded 3x3 Instagram grid.
 - **Approvals do not bind to an asset version.** `content_assets.version` and `content_approvals.version` are always 1. A client approves, the creative is replaced, and the approval row still says approved.
 - **`review_links` is schema only.** The table and its policy exist; there are no routes. Stakeholders outside the 10 seats cannot review anything.
-- **`clients.logo_key` is unused.** The column exists; nothing uploads or renders a client logo.
 - **The seat cap counts client users.** `MAX_SEATS` is 10 across staff AND every client's users, because clients are modelled as members of the agency org.
 - **`audit_log` is write-only.** Every mutation writes one; nothing reads them back. There is no screen and no export.
+- **The Ideas Bank create form has no caption, hashtags or upload — deliberately.** It is quick capture for a backlog that includes pitches which never happen, and a caption box at that stage invites writing final copy for a post that may not exist. The calendar dialog takes all three. Do not "fix" this without asking.
+- **Archiving does not touch invoices.** An archived client keeps their unpaid invoices in the payments view, by design (see Key Design Decisions). Nothing warns her at archive time that a client still owes money.
+- **No scheduled or outbound anything.** No weekly digest, no reminder, no notification. Every panel is pull, not push, so an item only chases someone if they open the page.
 
 </INSTRUCTIONS>
