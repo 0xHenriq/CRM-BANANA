@@ -273,7 +273,7 @@ npm run test:coverage
 
 The contract suite also binds the two copies of hashtag normalisation and the `canSeePortal` predicate. See invariant 17.
 
-Current counts: **106 component tests, 183 server tests.** If a change drops either number, you deleted a test.
+Current counts: **106 component tests, 195 server tests.** If a change drops either number, you deleted a test.
 
 ### The Isolation Suite Covers Three Distinct Failure Modes
 
@@ -469,6 +469,7 @@ scripts/
 | 16 | Browser APIs are feature-detected before use, never assumed | The site is plain HTTP, so every secure-context API is absent in production and present in dev. `navigator.clipboard` already shipped broken once |
 | 17 | Logic duplicated across the client/server boundary is bound by a test in `contract.test.ts` | The server cannot import from `src` and the browser should not import from `server`, so some logic exists twice. Two copies that drift produce a UI that disagrees with what was saved. Both hashtag normalisers run over the same inputs there |
 | 18 | A query key rename is finished only when the OLD key has no references left | Keys are strings; the compiler cannot see them. Renaming one already left two mutations invalidating a key nothing read |
+| 19 | A client-role user may reach **nothing** belonging to a workspace whose `portal_enabled` is false, or whose client is archived | Enforced in `app_client_ids()` (migration 0014), which every client-visible policy goes through, and again in `resolveClientId`. It lived only in `canSeePortal` before, so the toggle closed the homepage and left the calendar, ideas bank, feed and moodboard fully readable. `invoices` and `invoice_payments` are the stated exception — money owed must not vanish |
 
 ### Performance Requirements
 
@@ -485,7 +486,7 @@ All under `/api`, same-origin, cookie-authenticated.
 | `/api/clients`, `/api/deals` | **staff only** | 403 for clients, including their own client |
 | `/api/invoices` | authed | Staff see all (and every client's, unfiltered — that is what a payment view needs); a client sees only their own **issued** ones. Writes are staff only. |
 | `/api/invoices/:id/payments` | staff only | Records a payment and issues a receipt number. Overpayment is refused |
-| `/api/portal`, `/api/content`, `/api/media` | authed | `?client=<uuid>` honoured for staff, **ignored** for clients |
+| `/api/portal`, `/api/content`, `/api/media` | authed | `?client=<uuid>` honoured for staff, **ignored** for clients. A client whose portal is closed (or whose account is archived) gets 404 from all three — invariant 19 |
 | `/api/next-steps`, `/api/next-steps/:clientId` | authed | Posts awaiting a decision plus dated open to-dos, soonest first. One loader serves both — do not add a second query |
 | `/api/clients/:id/archive`, `/restore` | staff only | Archive is a timestamp, never a DELETE. It closes the portal and drops the client from `/api/clients`, `/api/deals` and `/api/next-steps` — but **not** from `/api/invoices`: tidying a client away must never hide money owed. Any new list that joins `clients` for staff needs `isNull(clients.archivedAt)`, because RLS deliberately still shows staff the row |
 | `/api/media/clients/:id/logo` | authed | Reads the key off the row, never from the URL; RLS decides who sees it |
@@ -907,6 +908,28 @@ for a London agency.
 **The bad behavior:** You implement "archive" as a timestamp plus a filter on the one list you were looking at, verify that list, and report it done. The archived client stays on the pipeline board, in the dashboard's next steps, and anywhere else that joins `clients`. The feature's NAME promises removal and it delivers removal from a single screen — which is worse than not building it, because she now believes those clients are gone.
 
 **The correct behavior:** Before claiming a state change is applied, enumerate every read path that touches the entity — `grep` for the table name across `server/routes/` — and decide for EACH one whether the new state applies. Write down the exceptions and why (here: invoices, deliberately, because money owed must not vanish). Then verify against a running server rather than by reading the code you just wrote.
+
+**It happened a second time, in the same shape.** `portal_enabled` was checked
+in exactly one function — `canSeePortal`, inside `GET /api/portal` — and the
+comment above that check claimed it now closed "links, files, to-dos, notices
+and content". It closed the homepage. The content calendar, ideas bank, feed
+preview and moodboard all resolve their workspace from `client_access`, which
+outlives both the toggle and the archive, so a client whose portal she had
+closed still read everything through those four screens. The endpoint the check
+lived in was the ONE endpoint that did not need it, because it was the one
+being looked at while writing it.
+
+Reproduced against `bd_portal_test` before fixing: with `portal_enabled = false`
+*and* `archived_at = now()`, the client user still selected their
+`content_items` rows. The fix is migration 0014, which puts the rule in the
+policies where every route inherits it — including the id-addressed ones
+(`/api/content/:id`, `/api/media/assets/:id`) that no route-level check would
+have covered.
+
+**The lesson beyond the grep:** when a rule is enforced in application code, ask
+which OTHER handler could reach the same rows without passing through it. If the
+answer is "any handler someone writes next year", the rule belongs in the
+database.
 
 ---
 

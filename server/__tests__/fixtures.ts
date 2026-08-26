@@ -71,6 +71,18 @@ export type Fixture = {
   contactA: string
   linkA: string
   linkB: string
+  /**
+   * A file and a moodboard tile per client.
+   *
+   * Both tables were in CLIENT_VISIBLE_TABLES with no fixture rows at all, so
+   * every cross-tenant assertion over them passed by having nothing to read.
+   * A table with no seed rows makes the isolation suite agree with itself
+   * rather than with Postgres.
+   */
+  fileA: string
+  fileB: string
+  moodboardA: string
+  moodboardB: string
   noticeA: string
   noticeB: string
   /** A pending invitation, so writes to invitation_grants can be exercised. */
@@ -145,6 +157,10 @@ export async function resetAndSeed(): Promise<Fixture> {
       contactA: randomUUID(),
       linkA: randomUUID(),
       linkB: randomUUID(),
+      fileA: randomUUID(),
+      fileB: randomUUID(),
+      moodboardA: randomUUID(),
+      moodboardB: randomUUID(),
       noticeA: randomUUID(),
       noticeB: randomUUID(),
     }
@@ -180,6 +196,20 @@ export async function resetAndSeed(): Promise<Fixture> {
        values ($1,$2,'Google Drive','https://drive.example/a'),
               ($3,$4,'Google Drive','https://drive.example/b')`,
       [ids.linkA, clientA, ids.linkB, clientB]
+    )
+
+    await c.query(
+      `insert into files(id, client_id, name, storage_key)
+       values ($1,$2,'Agreement.pdf','a/agreement.pdf'),
+              ($3,$4,'Other agreement.pdf','b/agreement.pdf')`,
+      [ids.fileA, clientA, ids.fileB, clientB]
+    )
+
+    await c.query(
+      `insert into moodboard_items(id, client_id, storage_key)
+       values ($1,$2,'a/mood-01.webp'),
+              ($3,$4,'b/mood-01.webp')`,
+      [ids.moodboardA, clientA, ids.moodboardB, clientB]
     )
 
     await c.query(

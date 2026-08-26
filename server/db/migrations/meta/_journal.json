@@ -99,6 +99,13 @@
       "when": 1787699867196,
       "tag": "0013_round_lightspeed",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1787699868196,
+      "tag": "0014_closed_portal_closes_workspace",
+      "breakpoints": true
     }
   ]
 }

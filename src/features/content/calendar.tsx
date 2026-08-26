@@ -485,6 +485,11 @@ function SchedulePostDialog({
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['content'] })
+      // The feed grid is built from a post's first asset, so scheduling one
+      // WITH a video changes it. Every other upload site invalidates this and
+      // this one did not — the new post simply did not appear in the grid
+      // until something else happened to refetch it.
+      await queryClient.invalidateQueries({ queryKey: ['feed'] })
       reset()
       onClose()
     },

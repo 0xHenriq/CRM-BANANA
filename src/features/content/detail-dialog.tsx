@@ -341,7 +341,14 @@ export function ContentDetailDialog({
               </div>
             )}
 
-            {!isStaff && (item.caption || item.hashtags?.length) && (
+            {/*
+              `(item.hashtags?.length ?? 0) > 0`, not the bare length. A guard
+              that ends in a NUMBER renders that number when it is zero, so a
+              client opening a post with no caption and no tags — every post
+              captured in the Ideas Bank, which has neither field — was shown a
+              stray "0" above the assets. JSX renders 0; it only skips false.
+            */}
+            {!isStaff && (item.caption || (item.hashtags?.length ?? 0) > 0) && (
               <div className='grid gap-2'>
                 {item.caption && (
                   <p className='text-sm whitespace-pre-wrap'>{item.caption}</p>

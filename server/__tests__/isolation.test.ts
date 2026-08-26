@@ -583,3 +583,156 @@ describe('archived clients', () => {
     expect(updated).toHaveLength(0)
   })
 })
+
+/**
+ * A closed portal closes the whole workspace, not just its homepage.
+ *
+ * `portal_enabled` was enforced in exactly one place — canSeePortal(), inside
+ * GET /api/portal — while every other client-facing screen resolves its
+ * workspace from `client_access` alone. A grant outlives both the toggle and
+ * the archive, so a client whose portal she had turned off kept full read
+ * access to their content calendar, ideas bank, feed preview and moodboard by
+ * loading those pages directly. Reproduced against bd_portal_test before
+ * migration 0014: with portal_enabled = false the client still read their
+ * content_items rows.
+ *
+ * These are DATABASE assertions on purpose. The route-level check in
+ * resolveClientId() is the second gate and answers 404 rather than an empty
+ * workspace, but a rule only the application enforces is one route away from
+ * not being enforced at all — which is precisely how this hole was made.
+ */
+describe('a closed portal closes the workspace', () => {
+  const setPortal = (enabled: boolean) =>
+    asActor(
+      { kind: 'staff', userId: f.staffUser },
+      'update clients set portal_enabled = $1 where id = $2',
+      [enabled, f.clientA]
+    )
+
+  /** Every table the client may read in an OPEN workspace, and must not in a closed one. */
+  const WORKSPACE_TABLES = [
+    'content_items',
+    'content_assets',
+    'links',
+    'files',
+    'moodboard_items',
+    'notice_posts',
+    'tasks',
+  ] as const
+
+  it.each([...WORKSPACE_TABLES])(
+    'a client reads %s while their portal is open and nothing once it is closed',
+    async (table) => {
+      // Non-vacuous: they must actually see rows first, or "zero rows after"
+      // proves only that the fixture is empty.
+      const before = await asActor(
+        { kind: 'client', userId: f.clientUserA },
+        `select client_id from ${table}`
+      )
+      expect(before.length).toBeGreaterThan(0)
+
+      await setPortal(false)
+      try {
+        const after = await asActor(
+          { kind: 'client', userId: f.clientUserA },
+          `select client_id from ${table}`
+        )
+        expect(after).toHaveLength(0)
+      } finally {
+        await setPortal(true)
+      }
+    }
+  )
+
+  it('staff still see a closed workspace — she builds one before opening it', async () => {
+    await setPortal(false)
+    try {
+      const rows = await asActor(
+        { kind: 'staff', userId: f.staffUser },
+        'select id from content_items where client_id = $1',
+        [f.clientA]
+      )
+      expect(rows.length).toBeGreaterThan(0)
+    } finally {
+      await setPortal(true)
+    }
+  })
+
+  it('a client cannot post to the notice board of a closed workspace', async () => {
+    await setPortal(false)
+    try {
+      // RLS filters a refused INSERT into an error, not a silent no-op, so the
+      // assertion is on the throw. Asserting zero rows would pass vacuously.
+      await expect(
+        asActor(
+          { kind: 'client', userId: f.clientUserA },
+          'insert into notice_posts(client_id, body) values ($1, $2) returning id',
+          [f.clientA, 'still talking']
+        )
+      ).rejects.toThrow(/row-level security/i)
+    } finally {
+      await setPortal(true)
+    }
+  })
+
+  it('a client cannot approve content in a closed workspace', async () => {
+    await setPortal(false)
+    try {
+      await expect(
+        asActor(
+          { kind: 'client', userId: f.clientUserA },
+          `insert into content_approvals(client_id, content_item_id, decision, actor_id)
+           values ($1, $2, 'approved', $3) returning id`,
+          [f.clientA, f.contentAVisible, f.clientUserA]
+        )
+      ).rejects.toThrow(/row-level security/i)
+    } finally {
+      await setPortal(true)
+    }
+  })
+
+  it('an archived client is closed too, whatever portal_enabled says', async () => {
+    // The two gates are independent by design: portal_enabled is an ordinary
+    // editable field, so a screen that flips it back on must not reopen an
+    // archived workspace.
+    await asActor(
+      { kind: 'staff', userId: f.staffUser },
+      'update clients set archived_at = now(), portal_enabled = true where id = $1',
+      [f.clientA]
+    )
+    try {
+      const rows = await asActor(
+        { kind: 'client', userId: f.clientUserA },
+        'select id from content_items'
+      )
+      expect(rows).toHaveLength(0)
+    } finally {
+      await asActor(
+        { kind: 'staff', userId: f.staffUser },
+        'update clients set archived_at = null where id = $1',
+        [f.clientA]
+      )
+    }
+  })
+
+  it('closing one workspace does not close another client\'s', async () => {
+    // app_client_ids() returns a SET; a bug that collapsed it to "the first
+    // grant" or to nothing at all would pass every assertion above.
+    const [{ n }] = await asActor<{ n: number }>(
+      { kind: 'staff', userId: f.staffUser },
+      'select count(*)::int as n from content_items where client_id = $1',
+      [f.clientB]
+    )
+    await setPortal(false)
+    try {
+      const rows = await asActor(
+        { kind: 'staff', userId: f.staffUser },
+        'select id from content_items where client_id = $1',
+        [f.clientB]
+      )
+      expect(rows).toHaveLength(n)
+    } finally {
+      await setPortal(true)
+    }
+  })
+})

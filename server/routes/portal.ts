@@ -1,4 +1,4 @@
-import { asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, isNull } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { withTenant } from '../db/index.js'
@@ -42,12 +42,19 @@ portalRoutes.get('/', async (c) => {
      *
      * This check was missing. `portal_enabled` gated the workspace SWITCHER
      * and nothing else, so a client whose portal she had turned off kept full
-     * read access to their links, files, to-dos, notices and content by
-     * loading the page directly — the switcher simply stopped offering it.
-     * The toggle she uses to end an engagement did not end anything.
+     * read access to their links, files, to-dos and notices by loading the
+     * page directly — the switcher simply stopped offering it. The toggle she
+     * uses to end an engagement did not end anything.
      *
      * Found while checking that archiving closes the portal: after a restore,
      * this endpoint answered 200 for a client whose portal_enabled was false.
+     *
+     * It was only ever this endpoint, which was the flaw: the calendar, ideas
+     * bank, feed and moodboard reach their rows without coming through here,
+     * and went on serving a closed workspace for as long as this comment
+     * claimed otherwise. Migration 0014 moved the rule into the policies, so
+     * this is now the friendlier of two gates rather than the only one — it
+     * answers 404 where the database would merely answer nothing.
      *
      * Staff are exempt on purpose. She builds a workspace before opening it,
      * and the client page renders these same panels — enforcing this against
@@ -101,13 +108,22 @@ portalRoutes.get('/', async (c) => {
   return c.json(data)
 })
 
-/** Which workspaces the signed-in account can switch between. */
+/**
+ * Which workspaces the signed-in account can switch between.
+ *
+ * `archived_at` is filtered here as well as `portal_enabled`, and not because
+ * both can be true at once today — archiving clears the toggle. It is because
+ * RLS deliberately still shows STAFF an archived client, so nothing in the
+ * database stops this list from carrying one the moment some future screen
+ * turns the toggle back on without thinking about archiving. Invariant 15:
+ * the filter has to be in the query.
+ */
 portalRoutes.get('/workspaces', async (c) => {
   const rows = await withTenant(c.get('tenant'), (tx) =>
     tx
       .select({ id: clients.id, name: clients.name })
       .from(clients)
-      .where(eq(clients.portalEnabled, true))
+      .where(and(eq(clients.portalEnabled, true), isNull(clients.archivedAt)))
       .orderBy(asc(clients.name))
   )
   return c.json({ workspaces: rows })

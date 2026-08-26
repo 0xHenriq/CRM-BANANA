@@ -19,6 +19,7 @@ import { ConfigDrawer } from '@/components/config-drawer'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
 import { PageHead } from '@/components/layout/page-head'
+import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { Search } from '@/components/search'
 import { ThemeSwitch } from '@/components/theme-switch'
@@ -54,6 +55,28 @@ export function Dashboard() {
   const deals = dealsQuery.data?.deals ?? []
   const isLoading =
     clientsQuery.isLoading || dealsQuery.isLoading || invoicesQuery.isLoading
+
+  /**
+   * A failed request is not an empty agency.
+   *
+   * The loading branch was handled and the error branch was not, so the moment
+   * a query failed `isLoading` went false, every `?? []` fell through, and this
+   * screen read "No clients yet. Add the first one." over a request that had
+   * errored — and "Nothing outstanding" over money it never received. Both are
+   * lies she would act on, and the second is the one number here worth acting
+   * on. Branch on isError BEFORE isEmpty, exactly as the pipeline and the
+   * client page already do.
+   */
+  const isError =
+    clientsQuery.isError || dealsQuery.isError || invoicesQuery.isError
+  const error = (clientsQuery.error ??
+    dealsQuery.error ??
+    invoicesQuery.error) as Error | null
+  const refetchAll = () => {
+    void clientsQuery.refetch()
+    void dealsQuery.refetch()
+    void invoicesQuery.refetch()
+  }
 
   const activeClients = clients.filter((c) => c.status === 'active').length
   const awaitingReview = clients.reduce(
@@ -150,138 +173,148 @@ export function Dashboard() {
             question is "who owes me a decision", not "how many". */}
         <NextSteps variant='agency' />
 
-        <div className='grid gap-5 sm:grid-cols-2 lg:grid-cols-5'>
-          {stats.map(({ label, icon: Icon, value, hint, alarm }) => (
-            <Card
-              key={label}
-              className={cn(
-                'crate-card gap-0 py-5',
-                alarm && 'border-pay-overdue bg-pay-overdue/10 border-2'
-              )}
-            >
-              <CardHeader className='flex flex-row items-center justify-between space-y-0 px-5 pb-2'>
-                <CardTitle className='text-sm font-semibold'>{label}</CardTitle>
-                <Icon className='size-4 text-muted-foreground' />
-              </CardHeader>
-              <CardContent className='px-5'>
-                {/*
-                  The hint is inside the loading branch too, deliberately.
-                  It used to render regardless, so before the queries returned
-                  the Owed tile read "Nothing outstanding" over an empty array
-                  — a confident, wrong answer to the one question on this
-                  screen worth acting on. Same failure as rendering an empty
-                  state while a request is still in flight.
-                */}
-                {isLoading ? (
-                  <>
-                    <Skeleton className='h-8 w-16' />
-                    <Skeleton className='mt-1.5 h-3 w-24' />
-                  </>
-                ) : (
-                  <>
-                    <div className='display text-3xl'>{value}</div>
-                    <p
-                      className={cn(
-                        'mt-1 text-xs',
-                        alarm
-                          ? 'font-bold text-pay-overdue'
-                          : 'text-muted-foreground'
-                      )}
-                    >
-                      {hint}
-                    </p>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        {isError ? (
+          <QueryError
+            title='Could not load the dashboard'
+            error={error}
+            onRetry={refetchAll}
+          />
+        ) : (
+          <>
+            <div className='grid gap-5 sm:grid-cols-2 lg:grid-cols-5'>
+              {stats.map(({ label, icon: Icon, value, hint, alarm }) => (
+                <Card
+                  key={label}
+                  className={cn(
+                    'crate-card gap-0 py-5',
+                    alarm && 'border-pay-overdue bg-pay-overdue/10 border-2'
+                  )}
+                >
+                  <CardHeader className='flex flex-row items-center justify-between space-y-0 px-5 pb-2'>
+                    <CardTitle className='text-sm font-semibold'>{label}</CardTitle>
+                    <Icon className='size-4 text-muted-foreground' />
+                  </CardHeader>
+                  <CardContent className='px-5'>
+                    {/*
+                      The hint is inside the loading branch too, deliberately.
+                      It used to render regardless, so before the queries returned
+                      the Owed tile read "Nothing outstanding" over an empty array
+                      — a confident, wrong answer to the one question on this
+                      screen worth acting on. Same failure as rendering an empty
+                      state while a request is still in flight.
+                    */}
+                    {isLoading ? (
+                      <>
+                        <Skeleton className='h-8 w-16' />
+                        <Skeleton className='mt-1.5 h-3 w-24' />
+                      </>
+                    ) : (
+                      <>
+                        <div className='display text-3xl'>{value}</div>
+                        <p
+                          className={cn(
+                            'mt-1 text-xs',
+                            alarm
+                              ? 'font-bold text-pay-overdue'
+                              : 'text-muted-foreground'
+                          )}
+                        >
+                          {hint}
+                        </p>
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
 
-        <div className='mt-6 grid gap-5 lg:grid-cols-2'>
-          <Card className='crate-card'>
-            <CardHeader>
-              <CardTitle className='display crate-rule pb-2 text-lg'>
-                Clients
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {isLoading ? (
-                <Skeleton className='h-24' />
-              ) : clients.length === 0 ? (
-                <p className='text-sm text-muted-foreground'>
-                  No clients yet.{' '}
-                  <Link to='/clients' className='underline'>
-                    Add the first one
-                  </Link>
-                  .
-                </p>
-              ) : (
-                <ul className='divide-y divide-bd-rule-soft'>
-                  {clients.slice(0, 6).map((client) => (
-                    <li key={client.id}>
-                      <Link
-                        to='/clients/$clientId'
-                        params={{ clientId: client.id }}
-                        className='flex items-center justify-between gap-3 py-2.5 hover:opacity-70'
-                      >
-                        <span className='truncate text-sm font-semibold'>
-                          {client.name}
-                        </span>
-                        <ClientStatusPill status={client.status} />
+            <div className='mt-6 grid gap-5 lg:grid-cols-2'>
+              <Card className='crate-card'>
+                <CardHeader>
+                  <CardTitle className='display crate-rule pb-2 text-lg'>
+                    Clients
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {isLoading ? (
+                    <Skeleton className='h-24' />
+                  ) : clients.length === 0 ? (
+                    <p className='text-sm text-muted-foreground'>
+                      No clients yet.{' '}
+                      <Link to='/clients' className='underline'>
+                        Add the first one
                       </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
+                      .
+                    </p>
+                  ) : (
+                    <ul className='divide-y divide-bd-rule-soft'>
+                      {clients.slice(0, 6).map((client) => (
+                        <li key={client.id}>
+                          <Link
+                            to='/clients/$clientId'
+                            params={{ clientId: client.id }}
+                            className='flex items-center justify-between gap-3 py-2.5 hover:opacity-70'
+                          >
+                            <span className='truncate text-sm font-semibold'>
+                              {client.name}
+                            </span>
+                            <ClientStatusPill status={client.status} />
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </CardContent>
+              </Card>
 
-          <Card className='crate-card'>
-            <CardHeader>
-              <CardTitle className='display crate-rule pb-2 text-lg'>
-                Deals in play
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {isLoading ? (
-                <Skeleton className='h-24' />
-              ) : openDeals.length === 0 ? (
-                <p className='text-sm text-muted-foreground'>
-                  Nothing in the pipeline.{' '}
-                  <Link to='/pipeline' className='underline'>
-                    Add a deal
-                  </Link>
-                  .
-                </p>
-              ) : (
-                <ul className='divide-y divide-bd-rule-soft'>
-                  {openDeals.slice(0, 6).map((deal) => (
-                    <li
-                      key={deal.id}
-                      className='flex items-center justify-between gap-3 py-2.5'
-                    >
-                      <div className='min-w-0'>
-                        <p className='truncate text-sm font-semibold'>
-                          {deal.title}
-                        </p>
-                        <p className='truncate text-xs text-muted-foreground'>
-                          {deal.clientName}
-                        </p>
-                      </div>
-                      <div className='flex shrink-0 items-center gap-2'>
-                        <span className='display text-sm'>
-                          {formatMoney(deal.value, deal.currency)}
-                        </span>
-                        <PaymentBadge deal={deal} />
-                        <DealStagePill stage={deal.stage} />
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+              <Card className='crate-card'>
+                <CardHeader>
+                  <CardTitle className='display crate-rule pb-2 text-lg'>
+                    Deals in play
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {isLoading ? (
+                    <Skeleton className='h-24' />
+                  ) : openDeals.length === 0 ? (
+                    <p className='text-sm text-muted-foreground'>
+                      Nothing in the pipeline.{' '}
+                      <Link to='/pipeline' className='underline'>
+                        Add a deal
+                      </Link>
+                      .
+                    </p>
+                  ) : (
+                    <ul className='divide-y divide-bd-rule-soft'>
+                      {openDeals.slice(0, 6).map((deal) => (
+                        <li
+                          key={deal.id}
+                          className='flex items-center justify-between gap-3 py-2.5'
+                        >
+                          <div className='min-w-0'>
+                            <p className='truncate text-sm font-semibold'>
+                              {deal.title}
+                            </p>
+                            <p className='truncate text-xs text-muted-foreground'>
+                              {deal.clientName}
+                            </p>
+                          </div>
+                          <div className='flex shrink-0 items-center gap-2'>
+                            <span className='display text-sm'>
+                              {formatMoney(deal.value, deal.currency)}
+                            </span>
+                            <PaymentBadge deal={deal} />
+                            <DealStagePill stage={deal.stage} />
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </>
+        )}
       </Main>
     </>
   )

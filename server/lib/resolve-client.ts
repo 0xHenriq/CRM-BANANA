@@ -1,4 +1,4 @@
-import { asc, eq } from 'drizzle-orm'
+import { and, asc, eq, isNull } from 'drizzle-orm'
 import type { Context } from 'hono'
 import { withTenant } from '../db/index.js'
 import { clientAccess, clients } from '../db/schema.js'
@@ -60,22 +60,47 @@ export async function resolveClientId(c: Context): Promise<string | null> {
     // No client chosen: fall back to the first open workspace so nav links
     // are never dead for staff. The UI keeps a persisted selection, so this
     // only applies before one has been made.
+    //
+    // Archived clients are excluded explicitly rather than relying on the
+    // archive route also clearing portal_enabled — RLS deliberately still
+    // shows staff an archived client (Restore has to read the row), so the
+    // filter has to be in the query. Invariant 15.
     const [first] = await withTenant(c.get('tenant'), (tx) =>
       tx
         .select({ id: clients.id })
         .from(clients)
-        .where(eq(clients.portalEnabled, true))
+        .where(and(eq(clients.portalEnabled, true), isNull(clients.archivedAt)))
         .orderBy(asc(clients.name))
         .limit(1)
     )
     return first?.id ?? null
   }
 
+  /*
+   * A grant is not on its own a workspace they may open.
+   *
+   * `client_access` outlives both the portal toggle and archiving, so reading
+   * it alone answered with a workspace she had closed — the content calendar,
+   * ideas bank, feed preview and moodboard all resolved normally for a client
+   * whose portal was off, because only GET /api/portal ever checked the flag.
+   *
+   * Migration 0014 is what actually enforces this: the policies now return no
+   * rows for a closed workspace, so this join is the second of two gates. It
+   * earns its place by making the answer 404 "no workspace" rather than a
+   * workspace that is merely empty — which is the same distinction the
+   * ?client= branch above already draws for staff.
+   */
   const [grant] = await withTenant(c.get('tenant'), (tx) =>
     tx
       .select({ clientId: clientAccess.clientId })
       .from(clientAccess)
-      .where(eq(clientAccess.userId, currentUser.id))
+      .innerJoin(clients, eq(clients.id, clientAccess.clientId))
+      .where(
+        and(
+          eq(clientAccess.userId, currentUser.id),
+          eq(clients.portalEnabled, true)
+        )
+      )
       .limit(1)
   )
   return grant?.clientId ?? null

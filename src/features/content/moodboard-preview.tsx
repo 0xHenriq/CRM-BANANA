@@ -9,6 +9,7 @@ import { uploadMedia } from '@/lib/upload'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { QueryError } from '@/components/layout/query-error'
 import { UploadButton } from '@/components/upload-button'
 
 /**
@@ -35,7 +36,7 @@ export function MoodboardPreview({
   const queryClient = useQueryClient()
   const [progress, setProgress] = useState<number | null>(null)
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['moodboard', clientId],
     queryFn: () =>
       api.get<{ clientId: string; items: MoodboardItem[] }>(
@@ -93,6 +94,15 @@ export function MoodboardPreview({
         <div className='mb-3 crate-rule' />
         {isLoading ? (
           <Skeleton className='h-24' />
+        ) : isError ? (
+          /* Before the empty state, not after it: a failed request rendered
+             "Your moodboard is empty for now." to the client, which is a lie
+             about their own workspace and gives them nothing to do about it. */
+          <QueryError
+            title='Could not load the moodboard'
+            error={error as Error}
+            onRetry={() => refetch()}
+          />
         ) : shown.length === 0 ? (
           <p className='text-sm text-muted-foreground'>
             {canEdit

@@ -98,8 +98,20 @@ export function InvoicesPanel({
       api.get<{ invoices: Invoice[] }>(`/invoices?client=${clientId}`),
   })
 
-  const invalidate = () =>
+  /**
+   * Both keys, because there are two.
+   *
+   * The list reads ['invoices', …] and the payment dialog reads ['invoice',
+   * id] for that invoice's receipts. Prefix matching is element-wise, so
+   * 'invoices' does not match 'invoice' — recording a payment refreshed the
+   * list and left the receipts list beside it a version behind, showing her
+   * one fewer receipt than the invoice had. Same trap as ['client'] versus
+   * ['clients'] on the pipeline board.
+   */
+  const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['invoices'] })
+    queryClient.invalidateQueries({ queryKey: ['invoice'] })
+  }
 
   const patch = useMutation({
     mutationFn: ({ id, ...body }: { id: string; status?: string }) =>

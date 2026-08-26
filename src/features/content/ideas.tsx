@@ -299,6 +299,11 @@ function IdeaRow({
       // every key the change touches, not just the one on screen.
       await queryClient.invalidateQueries({ queryKey: ['next-steps'] })
       await queryClient.invalidateQueries({ queryKey: ['clients'] })
+      // Deleting the item cascades its assets, so a post that filled a cell in
+      // the feed grid leaves a hole. The grid went on rendering the deleted
+      // post's thumbnail, whose asset endpoint now answers 404 — a broken
+      // image where the fix is one more key.
+      await queryClient.invalidateQueries({ queryKey: ['feed'] })
     },
     onError: (err: Error) => toast.error(err.message),
   })

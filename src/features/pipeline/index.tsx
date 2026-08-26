@@ -260,17 +260,34 @@ export function Pipeline() {
         )}
       </Main>
 
+      {/*
+        Keyed by the deal, so every opening starts clean.
+
+        This dialog is always mounted and only toggled by `deal`, so its typed
+        date survived being closed. Set a due date on one card, open a second,
+        press Save without touching the field, and the FIRST card's date was
+        written to the second — the input showed blank because it was keyed,
+        while the state behind the Save button still held the old value. A
+        payment date she never chose, on a live row, with a timeline entry
+        saying she chose it. Keying the component resets that state with it.
+      */}
       <PaymentDueDialog
+        key={dueFor?.id ?? 'closed'}
         deal={dueFor}
         onClose={() => setDueFor(null)}
         onSave={(paymentDue) => {
           if (!dueFor) return
           // Setting a date implies she is chasing it, so an untracked deal
           // moves to awaiting in the same request rather than needing two.
+          //
+          // Only when there IS a date, though. This fired on the date being
+          // null as well, so "Clear date" — and Save on an empty field —
+          // marked an untracked deal "Awaiting payment" with nothing to be
+          // awaiting by, which is the orange badge that can never turn red.
           setPayment.mutate({
             id: dueFor.id,
             paymentDue,
-            ...(dueFor.paymentStatus === 'none'
+            ...(paymentDue && dueFor.paymentStatus === 'none'
               ? { paymentStatus: 'awaiting' as const }
               : {}),
           })
@@ -309,9 +326,6 @@ function PaymentDueDialog({
           <Input
             id='pay-due'
             type='date'
-            // Keyed on the deal so opening a second card does not inherit the
-            // date typed for the first.
-            key={deal?.id ?? 'none'}
             defaultValue={deal?.paymentDue ?? ''}
             onChange={(e) => setValue(e.target.value)}
           />
