@@ -71,10 +71,17 @@ const EXT_TO_DOCUMENT_MIME: Record<string, string> = {
 /**
  * HEIC/HEIF major brands — an iPhone's default photo format.
  *
- * Not accepted: sharp's prebuilt binaries decode AVIF but not HEIC, so these
- * would store as an unreadable original with no thumbnail. They are listed
- * only so `sniffMime` can refuse them rather than mistaking the container for
- * an MP4.
+ * These share the ISO base media container with MP4, so without naming them
+ * the `ftyp` catch-all below calls an iPhone photo `video/mp4`: it is stored
+ * as a video, ffprobe finds no stream, no poster comes out, and the feed
+ * renders a tile nothing can play.
+ *
+ * They were refused outright until now, because sharp cannot decode them —
+ * verified across six real photos and every combination of `failOn` and
+ * `unlimited`: the header parses but the pixels always fail with
+ * "source: bad seek", since sharp's prebuilt libheif carries the AV1 decoder
+ * for AVIF and no HEVC one. VPS4's ffmpeg 6.1 cannot open a HEIF at all.
+ * They are decoded by libheif-js instead — see `heicToJpeg`.
  */
 const HEIF_IMAGE_BRANDS = new Set([
   'heic',
@@ -85,6 +92,9 @@ const HEIF_IMAGE_BRANDS = new Set([
   'hevx',
   'hevm',
   'hevs',
+  // A multi-image sequence, which an iPhone writes for a burst or a Live
+  // Photo's still. libheif hands back the primary image for these too.
+  'msf1',
 ])
 
 /**
@@ -284,19 +294,148 @@ async function processDocument(
   }
 }
 
+/**
+ * Image formats we accept but never STORE.
+ *
+ * IMAGE_MIME is the list of things that can sit on disk and be served back to
+ * a browser. These three cannot: no browser but Safari renders HEIC, none
+ * render TIFF, and an SVG served from our own origin is a script that runs
+ * there. Each is converted on the way in, so everything downstream — the feed
+ * grid, the logo endpoint, `imageTypeForKey` — keeps dealing only with formats
+ * it already understands.
+ *
+ * The value is what the bytes become.
+ */
+const CONVERTED_IMAGE_MIME: Record<string, string> = {
+  'image/heic': 'image/jpeg',
+  'image/tiff': 'image/jpeg',
+  // PNG, not JPEG: a logo is the common case and it needs its transparency.
+  'image/svg+xml': 'image/png',
+}
+
+/** Every image mime we will take, whether or not it is one we store. */
+export function isImageMime(mime: string): boolean {
+  return Boolean(IMAGE_MIME[mime] || CONVERTED_IMAGE_MIME[mime])
+}
+
+/** The longest edge a rasterised vector is given. Beyond this is waste. */
+const SVG_RASTER_EDGE = 1024
+
+/**
+ * Rasterise a vector at a useful size, not at the size it happens to declare.
+ *
+ * A vector has no resolution, only a declared viewport, and brand marks
+ * routinely declare a tiny one — a 24x24 icon is normal. Rendering at face
+ * value gives a 24px PNG, and RESIZING that up afterwards just enlarges 24
+ * pixels: the logo would arrive visibly blurry and look like our fault.
+ *
+ * So the density is raised instead, which makes librsvg draw the geometry at
+ * the larger size rather than scaling a small bitmap. 72 is librsvg's default
+ * and corresponds to the declared size, so the factor is simply how much
+ * bigger we want it.
+ */
+async function rasteriseSvg(buf: Buffer): Promise<Buffer> {
+  const probe = await sharp(buf).metadata()
+  const edge = Math.max(probe.width ?? 0, probe.height ?? 0)
+
+  // Never shrink a vector that already declares a large viewport, and never
+  // ask librsvg for an absurd canvas if it declares a 1x1 one.
+  const scale = edge > 0 ? Math.min(Math.max(SVG_RASTER_EDGE / edge, 1), 32) : 1
+
+  return sharp(buf, { density: Math.round(72 * scale) })
+    .resize({
+      width: SVG_RASTER_EDGE,
+      height: SVG_RASTER_EDGE,
+      fit: 'inside',
+      withoutEnlargement: true,
+    })
+    .png()
+    .toBuffer()
+}
+
+/**
+ * An iPhone photo, decoded.
+ *
+ * libheif-js rather than sharp or ffmpeg, and the reason is worth recording:
+ * sharp's prebuilt libheif has the AV1 decoder (so AVIF works) and no HEVC
+ * one, and VPS4's ffmpeg 6.1 predates HEIF support entirely — verified on both
+ * machines. libheif-js is WebAssembly, which also means there is no native
+ * module to rebuild on the host, so dev and production decode identically.
+ *
+ * A modern iPhone photo is a GRID of 512px HEVC tiles, which is what defeated
+ * every other route: libheif assembles them, so this returns the whole
+ * picture rather than one corner of it.
+ */
+async function heicToJpeg(buf: Buffer): Promise<Buffer> {
+  // Loaded on demand: the WASM bundle is several megabytes and most uploads
+  // are not HEIC, so the boot cost is not worth paying up front.
+  const { default: libheif } = await import('libheif-js/wasm-bundle.js')
+
+  const images = new libheif.HeifDecoder().decode(buf)
+  const image = images?.[0]
+  if (!image) throw new Error('That photo could not be read.')
+
+  const width = image.get_width()
+  const height = image.get_height()
+  if (!width || !height) throw new Error('That photo could not be read.')
+
+  const raw = { data: Buffer.alloc(width * height * 4), width, height }
+  await new Promise<void>((resolve, reject) => {
+    image.display(raw, (result) =>
+      result ? resolve() : reject(new Error('That photo could not be read.'))
+    )
+  })
+
+  // Quality 88 rather than the default 80: this JPEG replaces the original
+  // she uploaded, so it is the only copy and should not visibly lose anything.
+  return sharp(raw.data, { raw: { width, height, channels: 4 } })
+    .jpeg({ quality: 88 })
+    .toBuffer()
+}
+
+/**
+ * Convert anything we accept but cannot serve into something we can.
+ *
+ * Runs before processUpload picks a pipeline, so processImage only ever sees a
+ * format it can both thumbnail and hand back to a browser.
+ */
+async function toStorableImage(
+  buf: Buffer,
+  mime: string
+): Promise<{ buf: Buffer; mime: string }> {
+  const target = CONVERTED_IMAGE_MIME[mime]
+  if (!target) return { buf, mime }
+
+  if (mime === 'image/heic') {
+    return { buf: await heicToJpeg(buf), mime: target }
+  }
+
+  if (mime === 'image/svg+xml') {
+    return { buf: await rasteriseSvg(buf), mime: target }
+  }
+
+  // TIFF, which sharp reads natively.
+  return { buf: await sharp(buf).jpeg({ quality: 88 }).toBuffer(), mime: target }
+}
+
 export async function processUpload(
   buf: Buffer,
   mime: string,
   prefix: string
 ): Promise<ProcessedMedia> {
-  if (IMAGE_MIME[mime]) return processImage(buf, mime, prefix)
   if (VIDEO_MIME[mime]) return processVideo(buf, mime, prefix)
   if (DOCUMENT_MIME[mime]) return processDocument(buf, mime, prefix)
+
+  if (isImageMime(mime)) {
+    const storable = await toStorableImage(buf, mime)
+    return processImage(storable.buf, storable.mime, prefix)
+  }
+
   throw new Error(`Unsupported file type: ${mime}`)
 }
 
 export function isAcceptedMime(mime: string): boolean {
-  return Boolean(IMAGE_MIME[mime] || VIDEO_MIME[mime])
+  return Boolean(isImageMime(mime) || VIDEO_MIME[mime])
 }
 
 /** Whether a document mime is one the File Folder will store. */
@@ -393,16 +532,52 @@ export function sniffMime(buf: Buffer): string | null {
     if (ascii12.startsWith('qt')) return 'video/quicktime'
     if (ascii12.startsWith('avif') || ascii12.startsWith('mif1'))
       return 'image/avif'
-    // HEIC shares the ISO base media container with MP4, so the catch-all
-    // below classified an iPhone photo as video/mp4: it was stored as a
-    // video, ffprobe found no stream, no poster frame came out, and the feed
-    // rendered a tile nothing can play. Naming the brands turns that into the
-    // 415 that tells her which formats to send instead.
-    if (HEIF_IMAGE_BRANDS.has(ascii12.slice(0, 4))) return null
+    // An iPhone photo, named rather than left to the catch-all below — see
+    // HEIF_IMAGE_BRANDS. It is converted on the way in rather than stored.
+    if (HEIF_IMAGE_BRANDS.has(ascii12.slice(0, 4))) return 'image/heic'
     return 'video/mp4'
   }
 
   if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3)
     return 'video/webm'
+
+  // TIFF, in both byte orders. A scan or a print-ready export arrives as one,
+  // and no browser renders it — sharp can, so it is converted like HEIC.
+  if (
+    (b[0] === 0x49 && b[1] === 0x49 && b[2] === 0x2a && b[3] === 0x00) ||
+    (b[0] === 0x4d && b[1] === 0x4d && b[2] === 0x00 && b[3] === 0x2a)
+  ) {
+    return 'image/tiff'
+  }
+
+  if (looksLikeSvg(buf)) return 'image/svg+xml'
+
   return null
+}
+
+/**
+ * Whether a buffer is an SVG document.
+ *
+ * SVG has no magic number — it is XML — so this is a shape check rather than a
+ * signature. It must be tight in one direction specifically: an uploaded HTML
+ * file is a stored-XSS vector, so the opening token has to be `<?xml` or
+ * `<svg` and never `<!doctype html`. A `<svg>` buried inside an HTML document
+ * does not match, which is the point.
+ *
+ * Nothing is served from these bytes either way — an SVG is rasterised on
+ * ingest and the original is discarded, so a false positive costs a failed
+ * render, not an execution.
+ */
+function looksLikeSvg(buf: Buffer): boolean {
+  // A BOM, then whitespace, then the first token. 4 KB is generous room for
+  // an XML declaration, a doctype and a comment header before <svg appears.
+  // The BOM is written as an escape, never as a literal: a byte-order mark
+  // pasted into source is invisible in every editor and lint refuses it.
+  const head = buf
+    .subarray(0, 4096)
+    .toString('utf8')
+    .replace(/^\uFEFF/, '')
+    .trimStart()
+  if (!head.startsWith('<?xml') && !head.startsWith('<svg')) return false
+  return /<svg[\s>]/i.test(head)
 }

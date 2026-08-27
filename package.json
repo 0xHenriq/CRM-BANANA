@@ -66,6 +66,7 @@
     "drizzle-orm": "^0.45.2",
     "hono": "^4.13.2",
     "input-otp": "^1.4.2",
+    "libheif-js": "^1.19.8",
     "lucide-react": "^1.8.0",
     "pg": "^8.23.0",
     "pino": "^10.3.1",

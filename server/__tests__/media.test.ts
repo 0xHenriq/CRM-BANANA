@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { sniffDocumentMime, sniffMime } from '../lib/media.js'
+import {
+  IMAGE_MIME,
+  isAcceptedMime,
+  isImageMime,
+  sniffDocumentMime,
+  sniffMime,
+} from '../lib/media.js'
 import {
   contentDisposition,
   humanSize,
@@ -48,20 +54,90 @@ describe('sniffMime', () => {
    * HEIC is an iPhone's default photo format and shares its container with
    * MP4, so the `ftyp` catch-all called it video/mp4: it was accepted, stored
    * as a video, produced no poster frame, and rendered as a tile nothing can
-   * play. Refusing it here is what produces the 415 that names the formats
-   * she can send instead.
+   * play. Naming the brands is what stops that.
+   *
+   * It used to assert `null` — a deliberate refusal, because sharp cannot
+   * decode HEIC. That refusal is what a real upload hit: she added a photo to
+   * a client's moodboard and got a 415. They are now decoded by libheif-js and
+   * converted to JPEG, so the assertion is that the brand is RECOGNISED. What
+   * must never come back is `video/mp4`.
    */
   it.each(['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs'])(
-    'refuses the HEIC brand %s rather than calling it mp4',
+    'reads the HEIC brand %s as a photo, never as mp4',
     (brand) => {
-      expect(sniffMime(ftyp(brand))).toBeNull()
+      expect(sniffMime(ftyp(brand))).toBe('image/heic')
     }
   )
+
+  it.each([
+    ['little-endian', Buffer.from([0x49, 0x49, 0x2a, 0x00, 0x08])],
+    ['big-endian', Buffer.from([0x4d, 0x4d, 0x00, 0x2a, 0x00])],
+  ])('reads a %s TIFF', (_name, buf) => {
+    expect(sniffMime(buf)).toBe('image/tiff')
+  })
+
+  /**
+   * SVG has no magic number, so this is a shape check — and the shape has to
+   * exclude HTML specifically. An uploaded HTML file served from our own
+   * origin is stored XSS; matching it as an image would put it through a
+   * rasteriser instead of refusing it, which is not the answer we want on
+   * record even though nothing is served from those bytes.
+   */
+  it.each([
+    ['a bare svg element', '<svg xmlns="http://www.w3.org/2000/svg"><g/></svg>'],
+    ['an xml declaration first', '<?xml version="1.0"?>\n<svg viewBox="0 0 1 1"/>'],
+    ['leading whitespace', '\n\n  <svg width="10" height="10"/>'],
+  ])('reads %s as an SVG', (_name, text) => {
+    expect(sniffMime(Buffer.from(text))).toBe('image/svg+xml')
+  })
+
+  it.each([
+    ['an HTML document that contains an svg', '<!doctype html><html><body><svg onload="alert(1)"></svg></body></html>'],
+    ['an HTML fragment', '<html><svg/></html>'],
+    ['xml that is not an svg', '<?xml version="1.0"?><rss><channel/></rss>'],
+  ])('does not read %s as an SVG', (_name, text) => {
+    expect(sniffMime(Buffer.from(text))).toBeNull()
+  })
 
   it('returns null for bytes it does not recognise', () => {
     expect(sniffMime(Buffer.from('#!/bin/sh\nrm -rf /\n'))).toBeNull()
     expect(sniffMime(Buffer.alloc(0))).toBeNull()
   })
+})
+
+/**
+ * What we take versus what we STORE.
+ *
+ * These are two different lists and conflating them is how a logo upload got
+ * refused for a format the pipeline can handle: the route checked IMAGE_MIME,
+ * which is the storage map, rather than asking whether it is an image at all.
+ */
+describe('isImageMime', () => {
+  it.each(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'])(
+    'accepts %s, which is stored as-is',
+    (mime) => {
+      expect(isImageMime(mime)).toBe(true)
+      expect(isAcceptedMime(mime)).toBe(true)
+    }
+  )
+
+  it.each(['image/heic', 'image/tiff', 'image/svg+xml'])(
+    'accepts %s, which is converted on the way in',
+    (mime) => {
+      expect(isImageMime(mime)).toBe(true)
+      expect(isAcceptedMime(mime)).toBe(true)
+      // Not storable: nothing may ever write these bytes to disk, because a
+      // browser cannot render the first two and must not execute the third.
+      expect(IMAGE_MIME[mime]).toBeUndefined()
+    }
+  )
+
+  it.each(['video/mp4', 'application/pdf', 'text/plain'])(
+    'does not call %s an image',
+    (mime) => {
+      expect(isImageMime(mime)).toBe(false)
+    }
+  )
 })
 
 describe('parseRange', () => {

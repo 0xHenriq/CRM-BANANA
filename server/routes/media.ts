@@ -15,12 +15,14 @@ import {
   MAX_UPLOAD_BYTES,
   isAcceptedDocumentMime,
   isAcceptedMime,
+  isImageMime,
   processUpload,
   sniffDocumentMime,
   sniffMime,
 } from '../lib/media.js'
 import { isUuid, resolveClientId } from '../lib/resolve-client.js'
 
+import { logger } from '../logger.js'
 import { storage } from '../lib/storage.js'
 import { requireAuth, requireStaff } from '../middleware/session.js'
 
@@ -153,21 +155,49 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
    * The general allowlist accepts MP4 for content and moodboard tiles, and a
    * client's mark rendered as an unplayable video tile in the corner of their
    * own portal would be a strange thing to have shipped.
+   *
+   * `isImageMime`, not `IMAGE_MIME`: the latter is the list of formats we
+   * STORE, and HEIC, TIFF and SVG are accepted-and-converted rather than
+   * stored. Checking the storage map here refused a logo we can handle —
+   * which is exactly the shape of the bug this whole area keeps producing.
    */
-  if (target === 'logo' && (!sniffed || !IMAGE_MIME[sniffed])) {
+  if (target === 'logo' && (!sniffed || !isImageMime(sniffed))) {
     return c.json(
-      { error: 'A logo needs to be an image — JPEG, PNG, WebP, GIF or AVIF.' },
+      {
+        error:
+          'A logo needs to be an image — JPEG, PNG, SVG, WebP, GIF, AVIF, HEIC or TIFF.',
+      },
       415
     )
   }
 
   if (!accepted) {
+    /**
+     * Say what was refused, in the log as well as to her.
+     *
+     * A 415 used to leave no trace at all: the request line said 415 and
+     * nothing said what the file was, so answering "why did my upload fail"
+     * meant reconstructing it from the timestamps of the requests around it.
+     * The first bytes are what the decision was actually made on, so they are
+     * what gets recorded.
+     */
+    logger.warn(
+      {
+        target,
+        filename: name,
+        sizeBytes: file.size,
+        sniffed,
+        head: buf.subarray(0, 12).toString('hex'),
+      },
+      'upload refused: unsupported file type'
+    )
+
     return c.json(
       {
         error:
           target === 'file'
-            ? 'That file type is not supported. PDF, Word, Excel, PowerPoint, CSV and plain text are, along with images and video.'
-            : 'That does not look like an image or a video we can handle. JPEG, PNG, WebP, GIF, AVIF, MP4, MOV and WebM are supported.',
+            ? `“${name}” is not a file type we support. PDF, Word, Excel, PowerPoint, CSV and plain text are, along with images and video.`
+            : `“${name}” is not an image or a video we can handle. JPEG, PNG, SVG, WebP, GIF, AVIF, HEIC, TIFF, MP4, MOV and WebM are supported.`,
       },
       415
     )
@@ -475,7 +505,24 @@ async function streamKey(
    */
   download?: { filename: string }
 ) {
-  const total = await storage.size(key)
+  /**
+   * A row whose bytes are gone is NOT FOUND, not a server fault.
+   *
+   * `storage.size` raises ENOENT, which reached the error handler as a 500
+   * with a stack trace — so a single dangling `storage_key` filled the log
+   * with the shape of a real incident, and the browser was told the server
+   * had broken when the honest answer is that the file is absent. A row can
+   * outlive its bytes: a database restored from a dump taken after the last
+   * uploads snapshot has exactly this state, and it is a recoverable one.
+   */
+  let total: number
+  try {
+    total = await storage.size(key)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err
+    logger.warn({ key }, 'stored object is missing from disk')
+    return c.json({ error: 'Not found' }, 404)
+  }
 
   const extra: Record<string, string> = download
     ? {

@@ -147,7 +147,8 @@ The database is shared with production. **There is no separate development datab
 | `better-auth` | Sessions, the single organization, members, invitations |
 | `@tanstack/react-router` | File-based routing, route guards |
 | `@tanstack/react-query` | Server state, optimistic mutations |
-| `sharp` | Image thumbnails (400px webp) |
+| `sharp` | Image thumbnails (400px webp), SVG rasterising, TIFF decoding |
+| `libheif-js` | HEIC decoding — an iPhone photo. WebAssembly, so there is nothing to rebuild on the host; sharp's bundled libheif has the AV1 decoder for AVIF and no HEVC one, and VPS4's ffmpeg 6.1 cannot open a HEIF at all |
 | `pino` | Structured logs |
 | `zod` | Request validation |
 | `@dnd-kit/*` | Pipeline board drag-and-drop |
@@ -273,7 +274,7 @@ npm run test:coverage
 
 The contract suite also binds the two copies of hashtag normalisation and the `canSeePortal` predicate. See invariant 17.
 
-Current counts: **106 component tests, 195 server tests.** If a change drops either number, you deleted a test.
+Current counts: **106 component tests, 214 server tests.** If a change drops either number, you deleted a test.
 
 ### The Isolation Suite Covers Three Distinct Failure Modes
 
@@ -362,7 +363,9 @@ server/
     audit.ts             audit() + recordActivity(), both take the tx
     storage.ts           StorageDriver; LocalDiskDriver; path-escape guard
     media.ts             sharp thumbnails, ffmpeg posters, magic-number sniffing,
-                         document sniffing (PDF/OOXML/CSV), 1 GB ceiling
+                         document sniffing (PDF/OOXML/CSV), 1 GB ceiling.
+                         HEIC/TIFF/SVG are accepted and CONVERTED on ingest —
+                         see CONVERTED_IMAGE_MIME
     seed-workspace.ts    Her 10 links (TikTok/Instagram/Facebook first) /
                          5 file slots / 4 onboarding to-dos
     hashtags.ts          normaliseHashtags/parseHashtagInput. MIRRORED in
@@ -900,6 +903,31 @@ for a London agency.
 **The bad behavior:** A component takes `markOnly` and `canEdit`. `markOnly` returns early — before the branch that renders the upload control — so passing both gives a control that cannot be used, with no warning, no type error and nothing in the console. You then pass both at a call site and report the feature as delivered.
 
 **The correct behavior:** When you add a prop that short-circuits rendering, check every other prop it now silences. Either make them compose or make the combination impossible in the type. Then write the test for the combination — `markOnly` plus `canEdit` renders a file input — because the compiler will never catch this class of defect.
+
+---
+
+### Failure Mode 22: A refusal that records nothing
+
+**The bad behavior:** an upload is rejected with a 415 and the only trace is
+the request line — `POST /api/media/upload 415`. Nothing says what the file
+was, what it was sniffed as, or which screen sent it.
+
+**What happened:** she added a photo to a client's moodboard and it was
+refused. Answering "why" meant reading the timestamps of the requests either
+side of it to work out which screen she was on, then reproducing the pipeline
+against a matrix of real files to find which format it must have been. The
+answer — an iPhone HEIC — was a one-line lookup that took an hour, because the
+one place that knew it threw the fact away.
+
+**The correct behavior:** whatever decides to refuse something is the only code
+that knows why. It logs the decision and the evidence it decided on — here the
+target, the filename, the size, the sniffed type and the first bytes. Same rule
+as never discarding stderr in a verification script (Failure Mode 8): the
+message that explains the failure is the whole point.
+
+**And the message the human sees should name the file.** "That does not look
+like an image or a video we can handle" is a sentence about a file she cannot
+identify when she has selected four of them.
 
 ---
 
