@@ -379,6 +379,17 @@ async function heicToJpeg(buf: Buffer): Promise<Buffer> {
   const height = image.get_height()
   if (!width || !height) throw new Error('That photo could not be read.')
 
+  /**
+   * `display` applies the container's rotation. Do not "correct" this.
+   *
+   * A phone stores the sensor buffer landscape with an `irot` property saying
+   * how to turn it, and the two obvious ways of checking disagree: `sips -g
+   * pixelWidth` reports the ROTATED size while `sips -s format png` exports
+   * the UNROTATED buffer. Comparing our output's dimensions against the first
+   * makes a correct decode look transposed, and acting on that would rotate
+   * every photo ninety degrees. Compared as pictures rather than as numbers,
+   * this is the one that comes out upright.
+   */
   const raw = { data: Buffer.alloc(width * height * 4), width, height }
   await new Promise<void>((resolve, reject) => {
     image.display(raw, (result) =>

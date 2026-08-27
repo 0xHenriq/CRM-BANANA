@@ -381,6 +381,25 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
       await storage.remove(result.replaced)
     }
 
+    /**
+     * A moodboard tile and a logo reference the THUMBNAIL, so the full-size
+     * original they were derived from is referenced by nothing.
+     *
+     * Storing the thumbnail is deliberate — a mark rendered at 40px does not
+     * need a 4 MB PNG behind it — but the original was still written to disk
+     * and then abandoned. Verified on production: 25 files, 18 referenced by
+     * any row, 7 orphans, one of them from the logo she uploaded this week.
+     * Small today because the seeded images are small; her actual uploads are
+     * 3 MB photos off a phone, and every tile would have left one behind.
+     *
+     * Guarded on thumbKey existing: when sharp cannot derive one, the ORIGINAL
+     * is what got stored, and removing it would delete the image itself.
+     */
+    const derivedOnly = target === 'moodboard' || target === 'logo'
+    if (derivedOnly && processed.thumbKey) {
+      await storage.remove(processed.storageKey)
+    }
+
     return c.json(result, 201)
 
   } catch (err) {
