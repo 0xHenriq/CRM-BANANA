@@ -11,6 +11,7 @@ import {
   humanSize,
   imageTypeForKey,
   parseRange,
+  keysReferencedBy,
 } from '../routes/media.js'
 
 /**
@@ -25,6 +26,23 @@ function ftyp(brand: string): Buffer {
   const buf = Buffer.alloc(16)
   buf.write('ftyp', 4, 'ascii')
   buf.write(brand, 8, 'ascii')
+  return buf
+}
+
+/**
+ * A complete `ftyp` box: size, major brand, minor version, compatible brands.
+ *
+ * The compatible list is the half that decides a generic HEIF, and the plain
+ * helper above cannot carry it — its size field is zero, which is exactly the
+ * unreadable-header case the sniffer has to survive as well.
+ */
+function ftypBox(major: string, compatible: string[]): Buffer {
+  const size = 16 + compatible.length * 4
+  const buf = Buffer.alloc(size)
+  buf.writeUInt32BE(size, 0)
+  buf.write('ftyp', 4, 'ascii')
+  buf.write(major, 8, 'ascii')
+  compatible.forEach((brand, i) => buf.write(brand, 16 + i * 4, 'ascii'))
   return buf
 }
 
@@ -68,6 +86,57 @@ describe('sniffMime', () => {
       expect(sniffMime(ftyp(brand))).toBe('image/heic')
     }
   )
+
+  /**
+   * The generic HEIF brands name a container, not a codec.
+   *
+   * `mif1` appears in the COMPATIBLE brands of both a real iPhone HEIC
+   * (major heic: mif1 MiHB MiHE MiPr miaf heic tmap) and a real AVIF (major
+   * avif: mif1 avif miaf), so a test that read it as a major brand and
+   * answered AVIF stored a HEVC-coded still with a `.avif` extension — a file
+   * no browser renders, with no thumbnail, no error and nothing in the log.
+   */
+  it('reads a generic HEIF carrying HEVC as a photo, not as AVIF', () => {
+    expect(sniffMime(ftypBox('mif1', ['mif1', 'heic']))).toBe('image/heic')
+  })
+
+  it('still reads a generic HEIF carrying AV1 as AVIF', () => {
+    // AVIF must be decided before anything looks at mif1, or this one is lost.
+    expect(sniffMime(ftypBox('mif1', ['mif1', 'avif', 'miaf']))).toBe(
+      'image/avif'
+    )
+  })
+
+  it('sends an unqualified HEIF to the decoder that reads both', () => {
+    // libheif handles HEVC and AV1, so the ambiguous case is safe there.
+    expect(sniffMime(ftypBox('mif1', []))).toBe('image/heic')
+    expect(sniffMime(ftypBox('msf1', ['msf1', 'hevc']))).toBe('image/heic')
+  })
+
+  /**
+   * The declared box size is a number out of the file, and sniffMime runs over
+   * the whole upload — which may be a 1 GB video. Trusting it would walk the
+   * entire buffer four bytes at a time: 268 million iterations for that video,
+   * on the event loop, for every upload. The scan is capped instead.
+   */
+  it('does not walk the whole file when the box size is nonsense', () => {
+    const big = Buffer.alloc(8 * 1024 * 1024)
+    big.writeUInt32BE(0xffffffff, 0)
+    big.write('ftyp', 4, 'ascii')
+    big.write('isom', 8, 'ascii')
+
+    const started = Date.now()
+    expect(sniffMime(big)).toBe('video/mp4')
+    // Generous: the capped scan is a few dozen reads. An uncapped one over
+    // 8 MB is two million, and over a real upload far worse.
+    expect(Date.now() - started).toBeLessThan(250)
+  })
+
+  it('a real mp4 is unaffected by reading the compatible brands', () => {
+    expect(sniffMime(ftypBox('isom', ['isom', 'iso2', 'mp41']))).toBe(
+      'video/mp4'
+    )
+  })
 
   it.each([
     ['little-endian', Buffer.from([0x49, 0x49, 0x2a, 0x00, 0x08])],
@@ -138,6 +207,54 @@ describe('isImageMime', () => {
       expect(isImageMime(mime)).toBe(false)
     }
   )
+})
+
+/**
+ * Which of the produced objects the written row actually keeps.
+ *
+ * Read off the returned row, so it is what was stored rather than a guess.
+ * Two narrower versions of this rule both leaked: one tested the request's
+ * `target` string, which the insert does not agree with for an unrecognised
+ * target, and one asked only whether the thumbnail had been stored, which
+ * misses the File Folder discarding its thumbnail and a video moodboard tile
+ * discarding its poster.
+ */
+describe('keysReferencedBy', () => {
+  it('a content asset keeps all three, so nothing is removed', () => {
+    const keys = keysReferencedBy({
+      asset: { storageKey: 'c/a.mp4', thumbKey: null, posterKey: 'c/a.webp' },
+    })
+    expect(keys).toEqual(['c/a.mp4', 'c/a.webp'])
+  })
+
+  it('a File Folder document keeps only the original', () => {
+    // `files` has no thumbnail column, so a thumbnail derived for one is
+    // referenced by nothing the moment it is written.
+    expect(keysReferencedBy({ file: { storageKey: 'c/deck.pdf' } })).toEqual([
+      'c/deck.pdf',
+    ])
+  })
+
+  it('a moodboard tile keeps whichever key was actually stored', () => {
+    expect(
+      keysReferencedBy({ moodboardItem: { storageKey: 'c/thumb.webp' } })
+    ).toEqual(['c/thumb.webp'])
+  })
+
+  it('a logo keeps its logoKey, and never the superseded one', () => {
+    // `replaced` is a bare string and belongs to the PREVIOUS logo, which is
+    // removed on its own path. Counting it here would keep dead bytes alive.
+    const keys = keysReferencedBy({
+      client: { id: 'c1', logoKey: 'c/new.webp' },
+      replaced: 'c/old.webp',
+    })
+    expect(keys).toEqual(['c/new.webp'])
+  })
+
+  it('answers empty rather than throwing when there is no result', () => {
+    expect(keysReferencedBy(null)).toEqual([])
+    expect(keysReferencedBy(undefined)).toEqual([])
+  })
 })
 
 describe('parseRange', () => {

@@ -92,9 +92,6 @@ const HEIF_IMAGE_BRANDS = new Set([
   'hevx',
   'hevm',
   'hevs',
-  // A multi-image sequence, which an iPhone writes for a burst or a Live
-  // Photo's still. libheif hands back the primary image for these too.
-  'msf1',
 ])
 
 /**
@@ -318,6 +315,23 @@ export function isImageMime(mime: string): boolean {
   return Boolean(IMAGE_MIME[mime] || CONVERTED_IMAGE_MIME[mime])
 }
 
+/**
+ * A file whose type we recognised and whose contents we could not read.
+ *
+ * Distinct from any other failure on purpose. A decode that fails is the
+ * FILE's problem — a truncated download, a variant libheif will not open — and
+ * the honest answer is 415 with something she can act on. A failure to write
+ * the bytes afterwards is OUR problem and must stay a 500: telling her a
+ * perfectly good photo "may be damaged" because the disk was full would send
+ * her looking for a fault that is not hers.
+ */
+export class UnreadableMediaError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options)
+    this.name = 'UnreadableMediaError'
+  }
+}
+
 /** The longest edge a rasterised vector is given. Beyond this is waste. */
 const SVG_RASTER_EDGE = 1024
 
@@ -373,11 +387,12 @@ async function heicToJpeg(buf: Buffer): Promise<Buffer> {
 
   const images = new libheif.HeifDecoder().decode(buf)
   const image = images?.[0]
-  if (!image) throw new Error('That photo could not be read.')
+  if (!image) throw new UnreadableMediaError('That photo could not be read.')
 
   const width = image.get_width()
   const height = image.get_height()
-  if (!width || !height) throw new Error('That photo could not be read.')
+  if (!width || !height)
+    throw new UnreadableMediaError('That photo could not be read.')
 
   /**
    * `display` applies the container's rotation. Do not "correct" this.
@@ -393,7 +408,9 @@ async function heicToJpeg(buf: Buffer): Promise<Buffer> {
   const raw = { data: Buffer.alloc(width * height * 4), width, height }
   await new Promise<void>((resolve, reject) => {
     image.display(raw, (result) =>
-      result ? resolve() : reject(new Error('That photo could not be read.'))
+      result
+        ? resolve()
+        : reject(new UnreadableMediaError('That photo could not be read.'))
     )
   })
 
@@ -417,6 +434,25 @@ async function toStorableImage(
   const target = CONVERTED_IMAGE_MIME[mime]
   if (!target) return { buf, mime }
 
+  try {
+    return await convertImage(buf, mime, target)
+  } catch (err) {
+    // Only the decode is wrapped. Storage happens after this returns, so a
+    // disk fault keeps its own identity and its own status code.
+    throw new UnreadableMediaError(
+      err instanceof UnreadableMediaError
+        ? err.message
+        : 'That file could not be read.',
+      { cause: err }
+    )
+  }
+}
+
+async function convertImage(
+  buf: Buffer,
+  mime: string,
+  target: string
+): Promise<{ buf: Buffer; mime: string }> {
   if (mime === 'image/heic') {
     return { buf: await heicToJpeg(buf), mime: target }
   }
@@ -425,7 +461,20 @@ async function toStorableImage(
     return { buf: await rasteriseSvg(buf), mime: target }
   }
 
-  // TIFF, which sharp reads natively.
+  /**
+   * TIFF, which sharp reads natively — but not always to a JPEG.
+   *
+   * JPEG has no alpha channel, so a transparent region flattens to BLACK.
+   * Verified: a TIFF of a mark on a transparent ground came out as that mark
+   * in a black box, which on a client's portal reads as a broken image rather
+   * than as a logo. A scan or a print export is the common case and JPEG is
+   * right for it; a designer's layered export is the case that has alpha, and
+   * for that PNG keeps what was sent.
+   */
+  const meta = await sharp(buf).metadata()
+  if (meta.hasAlpha) {
+    return { buf: await sharp(buf).png().toBuffer(), mime: 'image/png' }
+  }
   return { buf: await sharp(buf).jpeg({ quality: 88 }).toBuffer(), mime: target }
 }
 
@@ -539,15 +588,7 @@ export function sniffMime(buf: Buffer): string | null {
   const ascii12 = b.subarray(8, 12).toString('ascii')
   if (b.subarray(0, 4).toString('ascii') === 'RIFF' && ascii12.startsWith('WEBP'))
     return 'image/webp'
-  if (ascii4 === 'ftyp') {
-    if (ascii12.startsWith('qt')) return 'video/quicktime'
-    if (ascii12.startsWith('avif') || ascii12.startsWith('mif1'))
-      return 'image/avif'
-    // An iPhone photo, named rather than left to the catch-all below — see
-    // HEIF_IMAGE_BRANDS. It is converted on the way in rather than stored.
-    if (HEIF_IMAGE_BRANDS.has(ascii12.slice(0, 4))) return 'image/heic'
-    return 'video/mp4'
-  }
+  if (ascii4 === 'ftyp') return sniffIsoBrand(buf)
 
   if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3)
     return 'video/webm'
@@ -564,6 +605,61 @@ export function sniffMime(buf: Buffer): string | null {
   if (looksLikeSvg(buf)) return 'image/svg+xml'
 
   return null
+}
+
+/**
+ * What an ISO base media file actually is, from all of its brands.
+ *
+ * MP4, MOV, HEIC and AVIF share this container, and the MAJOR brand alone does
+ * not settle it. `mif1` and `msf1` are the generic HEIF brands: they say "a
+ * HEIF image" and leave the codec to the compatible brands that follow. The
+ * previous test read the major brand only and answered AVIF for those, so a
+ * generic HEIF carrying HEVC was stored with a `.avif` extension — a file no
+ * browser can render, with no thumbnail, no error, and nothing in the log.
+ *
+ * Verified against real files: an iPhone HEIC is major `heic` with compatible
+ * `mif1 MiHB MiHE MiPr miaf heic tmap`, and an AVIF is major `avif` with
+ * compatible `mif1 avif miaf`. Both list `mif1`, which is exactly why the
+ * order below matters — AVIF has to be decided before anything looks at the
+ * generic brand.
+ */
+const FTYP_SCAN_LIMIT = 16 + 64 * 4
+
+function sniffIsoBrand(buf: Buffer): string {
+  const major = buf.subarray(8, 12).toString('ascii')
+
+  /*
+   * 4 bytes of box size, 'ftyp', the major brand, a minor version, then the
+   * compatible brands to the end of the box. A size we cannot trust simply
+   * yields fewer brands, which degrades to deciding on the major one.
+   *
+   * Capped, and not as a nicety: the size is a number out of the file, and
+   * this runs over a buffer that may be a 1 GB video. Trusting a corrupt or
+   * hostile length would walk the whole upload four bytes at a time. A real
+   * ftyp box carries a handful of brands — an iPhone HEIC has seven.
+   */
+  const boxSize = buf.readUInt32BE(0)
+  const end = Math.min(boxSize, buf.length, FTYP_SCAN_LIMIT)
+  const brands = new Set<string>([major])
+  for (let at = 16; at + 4 <= end; at += 4) {
+    brands.add(buf.subarray(at, at + 4).toString('ascii'))
+  }
+
+  // QuickTime writes 'qt  '.
+  if (major.startsWith('qt')) return 'video/quicktime'
+
+  // Before the HEIF checks, because an AVIF's compatible brands include mif1.
+  if (brands.has('avif') || brands.has('avis')) return 'image/avif'
+
+  // HEVC-coded stills, and the generic HEIF brands that name no codec at all.
+  // libheif decodes whichever of the two it turns out to be, so pointing the
+  // ambiguous case at it is the safe direction.
+  for (const brand of brands) {
+    if (HEIF_IMAGE_BRANDS.has(brand)) return 'image/heic'
+  }
+  if (major === 'mif1' || major === 'msf1') return 'image/heic'
+
+  return 'video/mp4'
 }
 
 /**

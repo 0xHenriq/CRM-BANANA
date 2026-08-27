@@ -17,6 +17,7 @@ import {
   isAcceptedMime,
   isImageMime,
   processUpload,
+  UnreadableMediaError,
   sniffDocumentMime,
   sniffMime,
 } from '../lib/media.js'
@@ -65,6 +66,47 @@ export function humanSize(bytes: number): string {
 }
 
 const UPLOAD_LIMIT_LABEL = humanSize(MAX_UPLOAD_BYTES)
+
+/**
+ * Every storage key the row that was just written actually points at.
+ *
+ * `processUpload` produces up to three objects — the original, a thumbnail, a
+ * poster — and the different targets keep different subsets of them. Anything
+ * it produced that the row does not name is referenced by nothing, and this is
+ * how that set is worked out: read off the RETURNED ROW, so the answer is what
+ * was stored rather than a second guess at what should have been.
+ *
+ * Each target discards something different, which is why guessing does not
+ * work:
+ *
+ *   content asset  keeps all three
+ *   File Folder    keeps the original; `files` has no thumbnail column at all
+ *   moodboard tile keeps the thumbnail, or the original when there is none
+ *   logo           keeps the thumbnail, and a video never gets here
+ *
+ * Two earlier attempts at this were both too narrow. The first tested the
+ * request's `target` string, and the insert falls through to a moodboard tile
+ * for any target it does not recognise. The second asked only whether the
+ * thumbnail had been stored, and so never noticed that a video in the File
+ * Folder abandons its poster and an image in the File Folder abandons its
+ * thumbnail — 11 stray files in one pass over the upload matrix.
+ */
+export function keysReferencedBy(result: object | null | undefined): string[] {
+  if (!result) return []
+
+  const keys: string[] = []
+  for (const value of Object.values(result)) {
+    // `replaced` is a bare string, and is removed separately — it belongs to
+    // the logo this upload superseded, not to the row just written.
+    if (!value || typeof value !== 'object') continue
+    const row = value as Record<string, unknown>
+    for (const field of ['storageKey', 'thumbKey', 'posterKey', 'logoKey']) {
+      const key = row[field]
+      if (typeof key === 'string' && key) keys.push(key)
+    }
+  }
+  return keys
+}
 
 
 /* ------------------------------------------------------------------ upload */
@@ -260,14 +302,18 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
   try {
     processed = await processUpload(buf, sniffed, clientId)
   } catch (err) {
+    /**
+     * Only a failure to READ the file is her problem.
+     *
+     * Anything else — a full disk, a permissions fault, a missing upload
+     * directory — is ours, and rethrowing keeps it a 500 rather than telling
+     * her a perfectly good photo may be damaged and sending her looking for a
+     * fault that is not hers.
+     */
+    if (!(err instanceof UnreadableMediaError)) throw err
+
     logger.warn(
-      {
-        err,
-        target,
-        filename: name,
-        sizeBytes: file.size,
-        sniffed,
-      },
+      { err, target, filename: name, sizeBytes: file.size, sniffed },
       'upload refused: recognised but could not be read'
     )
     return c.json(
@@ -411,33 +457,67 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
       return { moodboardItem: row }
     })
 
-    // After the commit, never inside it: a logo removed by a transaction that
-    // then rolled back would leave a client with a broken image.
-    if (result && 'replaced' in result && result.replaced) {
-      await storage.remove(result.replaced)
-    }
-
     /**
-     * A moodboard tile and a logo reference the THUMBNAIL, so the full-size
-     * original they were derived from is referenced by nothing.
+     * Everything from here runs AFTER the commit, and is wrapped in its own
+     * try so it can never reach the catch below.
      *
-     * Storing the thumbnail is deliberate — a mark rendered at 40px does not
-     * need a 4 MB PNG behind it — but the original was still written to disk
-     * and then abandoned. Verified on production: 25 files, 18 referenced by
-     * any row, 7 orphans, one of them from the logo she uploaded this week.
-     * Small today because the seeded images are small; her actual uploads are
-     * 3 MB photos off a phone, and every tile would have left one behind.
-     *
-     * Guarded on thumbKey existing: when sharp cannot derive one, the ORIGINAL
-     * is what got stored, and removing it would delete the image itself.
+     * That catch deletes the uploaded bytes and answers 400. A failure while
+     * tidying up a superseded file would therefore delete the bytes a
+     * committed row still points at, and report failure for an upload that
+     * worked — which the comment on the audit write above records as having
+     * already happened once, in this handler. The upload succeeded; failing to
+     * remove a byproduct is waste, and waste must not be reported as failure.
      */
-    const derivedOnly = target === 'moodboard' || target === 'logo'
-    if (derivedOnly && processed.thumbKey) {
-      await storage.remove(processed.storageKey)
+    try {
+      // A replaced logo's bytes. Replacing a mark five times should not leave
+      // five files nothing references.
+      if (result && 'replaced' in result && result.replaced) {
+        await storage.remove(result.replaced)
+      }
+
+      /*
+       * Whatever was produced and is not pointed at by the row now goes.
+       *
+       * Subtracting from what the row references, rather than naming the
+       * cases, is what makes this correct for all four targets — including
+       * the ones where the discarded object is the poster or the thumbnail
+       * rather than the original.
+       */
+      const kept = new Set(keysReferencedBy(result))
+      const produced = [
+        processed.storageKey,
+        processed.thumbKey,
+        processed.posterKey,
+      ]
+
+      /*
+       * A row that references nothing is not a row that needs tidying up — it
+       * is a shape this code did not understand.
+       *
+       * Every branch returns a row carrying at least one key, so an empty set
+       * means a future branch returns something new. Acting on it would delete
+       * every byte of a COMMITTED row and leave her with an image that cannot
+       * be recovered. Keeping a few stray files is the recoverable mistake, so
+       * that is the one to make.
+       */
+      if (kept.size === 0) {
+        logger.warn(
+          { result },
+          'upload committed but referenced no stored key — leaving its bytes alone'
+        )
+      } else {
+        for (const key of produced) {
+          if (key && !kept.has(key)) await storage.remove(key)
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        { err, key: processed.storageKey },
+        'upload committed, but superseded bytes could not be removed'
+      )
     }
 
     return c.json(result, 201)
-
   } catch (err) {
     // The bytes are already on disk; if attaching them failed there is nothing
     // pointing at them, so clean up rather than leaving an orphan.

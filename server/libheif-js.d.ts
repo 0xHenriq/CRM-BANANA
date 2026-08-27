@@ -7,8 +7,13 @@
  * shape of `display` would be a silent black image rather than a type error.
  *
  * The `.js` in the specifier is not optional — the package has no `exports`
- * map, so NodeNext resolution needs the real filename, and `HeifDecoder` hangs
- * off the CommonJS default export rather than being a detected named one.
+ * map, so NodeNext resolution needs the real filename.
+ *
+ * There is DELIBERATELY no named export here. `HeifDecoder` exists only on the
+ * CommonJS default export: cjs-module-lexer cannot see it, so
+ * `import { HeifDecoder } from 'libheif-js/wasm-bundle.js'` type-checks and is
+ * `undefined` at runtime. Declaring the named export would have made the
+ * compiler endorse that. Reach it through the default.
  */
 declare module 'libheif-js/wasm-bundle.js' {
   /** One image inside a HEIF container. An iPhone photo has exactly one. */
@@ -28,10 +33,10 @@ declare module 'libheif-js/wasm-bundle.js' {
     ): void
   }
 
-  export class HeifDecoder {
+  export interface HeifDecoder {
     decode(buffer: Buffer): HeifImage[]
   }
 
-  const libheif: { HeifDecoder: typeof HeifDecoder }
+  const libheif: { HeifDecoder: new () => HeifDecoder }
   export default libheif
 }
