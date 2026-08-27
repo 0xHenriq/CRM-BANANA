@@ -241,7 +241,43 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
   }
   if (!clientId) return c.json({ error: 'No workspace selected' }, 400)
 
-  const processed = await processUpload(buf, sniffed, clientId)
+  /**
+   * A file we recognise is not necessarily a file we can read.
+   *
+   * This call sits OUTSIDE the try below, so anything it threw reached the
+   * global handler as a 500 "Internal server error". That was near-unreachable
+   * while every accepted format was stored as-sent — the only throw was an
+   * unsupported mime, which the check above has already excluded. It stopped
+   * being unreachable the moment HEIC, TIFF and SVG began being DECODED here:
+   * a truncated download, a HEIC variant libheif cannot open, or an SVG
+   * librosvg refuses are all ordinary inputs now, and every one of them would
+   * have told her the server was broken.
+   *
+   * Nothing is on disk when this fails — the conversion happens before the
+   * first putBuffer — so there is nothing to clean up, only something to say.
+   */
+  let processed: Awaited<ReturnType<typeof processUpload>>
+  try {
+    processed = await processUpload(buf, sniffed, clientId)
+  } catch (err) {
+    logger.warn(
+      {
+        err,
+        target,
+        filename: name,
+        sizeBytes: file.size,
+        sniffed,
+      },
+      'upload refused: recognised but could not be read'
+    )
+    return c.json(
+      {
+        error: `“${name}” could not be read. It may be damaged, or a variant of ${sniffed} we cannot open — try exporting it as a JPEG or PNG.`,
+      },
+      415
+    )
+  }
+
   const actorId = c.get('user')?.id ?? null
 
 
