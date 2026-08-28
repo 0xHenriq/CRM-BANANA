@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from '@tanstack/react-router'
 import {
@@ -13,16 +13,22 @@ import {
   Trash2,
   MessageSquare,
   ArrowRightLeft,
+  X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   api,
   ApiError,
+  BRAND_COLOR_ROLES,
+  BRAND_COLOR_SLOTS,
+  brandPalette,
   formatMoney,
+  normaliseHex,
   type ClientDetail,
   CLIENT_STATUSES,
   type PortalWorkspace,
 } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -44,6 +50,7 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { ClientLogo } from '@/components/client-logo'
 import { ConfigDrawer } from '@/components/config-drawer'
@@ -54,12 +61,15 @@ import { PageHead } from '@/components/layout/page-head'
 import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
+import { CalendarPreview } from '@/features/content/calendar-preview'
+import { IdeasPreview } from '@/features/content/ideas-preview'
 import { MoodboardPreview } from '@/features/content/moodboard-preview'
 import { NextSteps } from '@/features/content/review-queue'
 import { InvoicesPanel } from '@/features/invoices/panel'
 import { LinkStack } from '@/features/portal/link-stack'
 import { FileFolder, TaskList } from '@/features/portal/panels'
 import { useWorkspace } from '@/features/portal/use-workspace'
+import { CLIENT_TAB_LABEL, CLIENT_TAB_VALUES, type ClientTab } from './tabs'
 import {
   ClientStatusPill,
   DealStagePill,
@@ -67,9 +77,42 @@ import {
   CLIENT_LABEL,
 } from './status-pill'
 
-export function ClientDetailPage() {
+export function ClientDetailPage({
+  tab,
+  onTabChange,
+}: {
+  tab: ClientTab
+  onTabChange: (next: ClientTab) => void
+}) {
   const { clientId } = useParams({ from: '/_authenticated/clients_/$clientId' })
   const queryClient = useQueryClient()
+  const { setClientId } = useWorkspace()
+
+  /**
+   * Opening a client's page makes that client the active workspace.
+   *
+   * Without this the panels here show client X while every link out of them —
+   * "Open board", the Content Calendar row in the link stack — lands on
+   * whichever workspace was last persisted, which may be a different client
+   * entirely. That is precisely the defect use-workspace.ts was written to end:
+   * a selection living in one place and guessed in another, so you approve or
+   * schedule against the wrong client without anything on screen saying so.
+   *
+   * On the PAGE and not in ClientWorkspace, which is where it used to live:
+   * that component now mounts only on the Work and Files tabs, so opening a
+   * client and staying on Overview would have left the previous client active
+   * — and the Ideas and Calendar previews on the Work tab read the workspace
+   * client too. The rule is "opening a client's page", so it belongs to the
+   * page.
+   */
+  useEffect(() => {
+    setClientId(clientId)
+  }, [clientId, setClientId])
+
+  // Radix hands back a plain string; the route's schema is what guarantees the
+  // value is one of ours, so the cast is narrowing to what has already been
+  // validated rather than an assumption.
+  const setTab = (next: string) => onTabChange(next as ClientTab)
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['client', clientId],
@@ -77,7 +120,6 @@ export function ClientDetailPage() {
   })
 
   const [confirmArchive, setConfirmArchive] = useState(false)
-  const [brandTouched, setBrandTouched] = useState(false)
 
   const archive = useMutation({
     mutationFn: () => api.post(`/clients/${clientId}/archive`, {}),
@@ -234,252 +276,128 @@ export function ClientDetailPage() {
         <NextSteps variant='agency' clientId={clientId} />
 
         {/*
-          The workspace, on the agency's own client page.
-          
-          She asked to see "the same kind of info as the homepage" here, and she
-          was right to: the client page held the CRM half — status, deals,
-          contacts — while the links, files, to-dos and moodboard she actually
-          works in lived on a different screen behind a workspace switcher. Two
-          screens about one client, neither of which showed the whole of it.
+          Four tabs, because thirteen blocks in one column is not a page.
 
-          The very same components as the portal homepage, so the two cannot
-          drift into showing different things or behaving differently. They read
-          ['portal', clientId], which is the key the panels invalidate, so an
-          edit made here refreshes there and the other way round.
+          NextSteps stays ABOVE them on purpose: it is the "what do I do now"
+          panel and hiding it behind a tab would mean she has to remember to go
+          and look, which is exactly the thing it exists to stop.
+
+          Each panel keeps its own query. Lifting them into one loader would
+          couple four independent screens together and lose the invalidation
+          that already works — the workspace panels invalidate ['portal', id]
+          and the CRM cards ['client', id], and an edit in one refreshes the
+          other today.
         */}
-        {client.portalEnabled ? (
-          <ClientWorkspace clientId={clientId} />
-        ) : (
-          /*
-            Say why rather than showing nothing. A client at proposal or paused
-            has no seeded workspace at all, so the panels would be four empty
-            boxes — but silently omitting them reads as a missing feature. The
-            toggle that fixes it is a few lines further down this same page.
-          */
-          <Card className='mb-5 crate-card border-dashed'>
-            <CardContent className='py-4 text-sm text-muted-foreground'>
-              <strong>{client.name}</strong> has no workspace yet. Turn on{' '}
-              <strong>Client portal</strong> below to create their link stack,
-              file folder and onboarding to-do&rsquo;s.
-            </CardContent>
-          </Card>
-        )}
+        <Tabs value={tab} onValueChange={setTab} className='gap-5'>
+          <TabsList>
+            {CLIENT_TAB_VALUES.map((value) => (
+              <TabsTrigger key={value} value={value} className='px-4'>
+                {CLIENT_TAB_LABEL[value]}
+              </TabsTrigger>
+            ))}
+          </TabsList>
 
-        <div className='grid gap-5 lg:grid-cols-3'>
-          <div className='space-y-5 lg:col-span-2'>
-            <Card className='crate-card'>
-              <CardHeader>
-                <CardTitle className='pb-2 display text-lg crate-rule'>
-                  Account
-                </CardTitle>
-              </CardHeader>
-              <CardContent className='grid gap-4 sm:grid-cols-2'>
-                {/*
-                  Renaming was the gap. Status and the portal toggle were
-                  editable, but a client typed in with a typo could only be
-                  fixed by creating a second one — which is how two of these
-                  ended up on her list in the first place.
+          <TabsContent value='overview'>
+            <div className='grid gap-5 lg:grid-cols-3'>
+              <div className='space-y-5 lg:col-span-2'>
+                <BrandCard client={client} patch={patch} />
+                <AccountCard
+                  client={client}
+                  seats={seats}
+                  patch={patch}
+                  restore={restore}
+                  onArchive={() => setConfirmArchive(true)}
+                />
+                <ContactsCard clientId={clientId} contacts={contacts} />
+              </div>
 
-                  On blur rather than on every keystroke: a PATCH per character
-                  would put a hundred rows through the activity log for one
-                  rename.
-                */}
-                <div className='grid gap-1.5'>
-                  <Label htmlFor='client-rename'>Name</Label>
-                  <Input
-                    id='client-rename'
-                    defaultValue={client.name}
-                    key={`name-${client.id}-${client.updatedAt}`}
-                    onBlur={(e) => {
-                      const next = e.target.value.trim()
-                      if (next && next !== client.name) {
-                        patch.mutate({ name: next })
-                      }
-                    }}
-                  />
-                </div>
+              <TimelineCard clientId={clientId} timeline={timeline} />
+            </div>
+          </TabsContent>
 
-                <div className='grid gap-1.5'>
-                  <Label htmlFor='client-brand'>Brand colour</Label>
-                  <div className='flex h-9 items-center gap-2.5'>
-                    <input
-                      id='client-brand'
-                      type='color'
-                      className='size-9 cursor-pointer rounded-md border border-border bg-transparent p-1'
-                      defaultValue={client.brandColor ?? '#f5c518'}
-                      key={`brand-${client.id}-${client.updatedAt}`}
-                      /*
-                       * Gated on a real interaction, not on the value.
-                       *
-                       * Every client has brand_color null, so the swatch shows
-                       * the fallback — and comparing that fallback against the
-                       * stored null makes them "different". Tabbing through
-                       * this card was enough to assign a colour nobody chose.
-                       *
-                       * onChange alone would be worse: Chrome fires it
-                       * continuously while a colour is dragged, so one pick
-                       * would be a dozen PATCHes and a dozen activity rows.
-                       * So onChange records that she touched it and blur is
-                       * what saves.
-                       */
-                      onChange={() => setBrandTouched(true)}
-                      onBlur={(e) => {
-                        if (!brandTouched) return
-                        setBrandTouched(false)
-                        if (e.target.value !== client.brandColor) {
-                          patch.mutate({ brandColor: e.target.value })
-                        }
-                      }}
-                    />
-                    <span className='text-sm text-muted-foreground'>
-                      {/* It is what the initials sit on when there is no logo. */}
-                      Behind their initials
-                    </span>
-                  </div>
-                </div>
+          <TabsContent value='work'>
+            <div className='space-y-5'>
+              {/*
+                Ideas and the calendar are NOT behind the portal gate below.
+                Content items belong to the client, not to their workspace, so
+                she can plan and schedule for someone still at proposal stage —
+                which is when a moodboard and a calendar are most of the pitch.
+              */}
+              <div className='grid items-start gap-5 lg:grid-cols-2'>
+                <IdeasPreview clientId={clientId} />
+                <CalendarPreview clientId={clientId} />
+              </div>
 
-                <div className='grid gap-1.5'>
-                  <Label>Status</Label>
-                  <Select
-                    value={client.status}
-                    onValueChange={(v) => patch.mutate({ status: v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {CLIENT_STATUSES.map((s) => (
-                        <SelectItem key={s} value={s}>
-                          {CLIENT_LABEL[s]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+              <MoodboardPreview clientId={clientId} canEdit />
 
-                <div className='grid gap-1.5'>
-                  <Label htmlFor='portal-toggle'>Client portal</Label>
-                  <div className='flex h-9 items-center gap-2.5'>
-                    <Switch
-                      id='portal-toggle'
-                      checked={client.portalEnabled}
-                      onCheckedChange={(v) =>
-                        patch.mutate({ portalEnabled: v })
-                      }
-                    />
-                    <span className='text-sm text-muted-foreground'>
-                      {client.portalEnabled
-                        ? `${seats.length} seat${seats.length === 1 ? '' : 's'} with access`
-                        : 'Closed'}
-                    </span>
-                  </div>
-                </div>
+              {client.portalEnabled ? (
+                <ClientWorkspace clientId={clientId} section='work' />
+              ) : (
+                <NoWorkspace name={client.name} />
+              )}
+            </div>
+          </TabsContent>
 
-                {/*
-                  Archive, not delete.
-
-                  She asked to be able to remove a client, and two on her list
-                  are not hers. This takes them off every screen and closes
-                  their portal, and Restore puts them back — because a client
-                  is the parent of their content, files, invoices, receipts and
-                  every uploaded byte, and a real delete would take all of it
-                  with no way back that does not involve a backup.
-                */}
-                <div className='flex flex-wrap items-center justify-between gap-2 pt-4 crate-rule sm:col-span-2'>
-                  {client.archivedAt ? (
-                    <>
-                      <p className='text-xs text-muted-foreground'>
-                        Archived. Hidden from your client list, and their portal
-                        is closed. Nothing has been deleted.
-                      </p>
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        onClick={() => restore.mutate()}
-                        disabled={restore.isPending}
-                      >
-                        {restore.isPending ? (
-                          <Loader2 className='animate-spin' />
-                        ) : (
-                          <ArchiveRestore />
-                        )}
-                        Restore
-                      </Button>
-                    </>
+          <TabsContent value='money'>
+            <div className='space-y-5'>
+              {/* What this client owes, on the page about this client. */}
+              <InvoicesPanel clientId={clientId} canEdit />
+              <Card className='crate-card'>
+                <CardHeader>
+                  <CardTitle className='pb-2 display text-lg crate-rule'>
+                    Deals
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {deals.length === 0 ? (
+                    <p className='text-sm text-muted-foreground'>
+                      No deals yet. Add one from the Pipeline board.
+                    </p>
                   ) : (
-                    <>
-                      <p className='text-xs text-muted-foreground'>
-                        Archiving takes this client off your list, pipeline and
-                        next steps, and closes their portal. It deletes nothing
-                        and can be undone.
-                      </p>
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        onClick={() => setConfirmArchive(true)}
-                      >
-                        <Archive />
-                        Archive client
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* What this client owes, on the page about this client. */}
-            <InvoicesPanel clientId={clientId} canEdit />
-
-            <ContactsCard clientId={clientId} contacts={contacts} />
-
-            <Card className='crate-card'>
-              <CardHeader>
-                <CardTitle className='pb-2 display text-lg crate-rule'>
-                  Deals
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {deals.length === 0 ? (
-                  <p className='text-sm text-muted-foreground'>
-                    No deals yet. Add one from the Pipeline board.
-                  </p>
-                ) : (
-                  <ul className='divide-y divide-bd-rule-soft'>
-                    {deals.map((d) => (
-                      <li
-                        key={d.id}
-                        className='flex items-center justify-between gap-3 py-2.5'
-                      >
-                        <div className='min-w-0'>
-                          <p className='truncate text-sm font-semibold'>
-                            {d.title}
-                          </p>
-                          {d.expectedClose && (
-                            <p className='text-xs text-muted-foreground'>
-                              Expected {d.expectedClose}
+                    <ul className='divide-y divide-bd-rule-soft'>
+                      {deals.map((d) => (
+                        <li
+                          key={d.id}
+                          className='flex items-center justify-between gap-3 py-2.5'
+                        >
+                          <div className='min-w-0'>
+                            <p className='truncate text-sm font-semibold'>
+                              {d.title}
                             </p>
-                          )}
-                        </div>
-                        <div className='flex shrink-0 items-center gap-3'>
-                          <span className='display text-base'>
-                            {formatMoney(d.value, d.currency)}
-                          </span>
-                          {/* The same badge the pipeline shows. "Which of
-                              these has he actually paid" is asked here more
-                              often than on the board. */}
-                          <PaymentBadge deal={d} />
-                          <DealStagePill stage={d.stage} />
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+                            {d.expectedClose && (
+                              <p className='text-xs text-muted-foreground'>
+                                Expected {d.expectedClose}
+                              </p>
+                            )}
+                          </div>
+                          <div className='flex shrink-0 items-center gap-3'>
+                            <span className='display text-base'>
+                              {formatMoney(d.value, d.currency)}
+                            </span>
+                            {/* The same badge the pipeline shows. "Which of
+                                these has he actually paid" is asked here more
+                                often than on the board. */}
+                            <PaymentBadge deal={d} />
+                            <DealStagePill stage={d.stage} />
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
 
-          <TimelineCard clientId={clientId} timeline={timeline} />
-        </div>
+          <TabsContent value='files'>
+            {client.portalEnabled ? (
+              <ClientWorkspace clientId={clientId} section='files' />
+            ) : (
+              <NoWorkspace name={client.name} />
+            )}
+          </TabsContent>
+        </Tabs>
+
 
         {/*
         Named confirmation, and the wording says what it does NOT do.
@@ -513,6 +431,365 @@ export function ClientDetailPage() {
         />
       </Main>
     </>
+  )
+}
+
+/**
+ * Anything that mutates the client row goes through the page's one PATCH.
+ *
+ * Typed structurally rather than as a UseMutationResult so these cards state
+ * exactly what they need — a way to send a partial client — and cannot quietly
+ * start reaching for status, reset() or the mutation's cached data.
+ */
+type PatchMutation = { mutate: (body: Record<string, unknown>) => void }
+
+function AccountCard({
+  client,
+  seats,
+  patch,
+  restore,
+  onArchive,
+}: {
+  client: ClientDetail['client']
+  seats: ClientDetail['seats']
+  patch: PatchMutation
+  restore: { mutate: () => void; isPending: boolean }
+  onArchive: () => void
+}) {
+  return (
+    <Card className='crate-card'>
+      <CardHeader>
+        <CardTitle className='pb-2 display text-lg crate-rule'>
+          Account
+        </CardTitle>
+      </CardHeader>
+      <CardContent className='grid gap-4 sm:grid-cols-2'>
+        {/*
+          Renaming was the gap. Status and the portal toggle were
+          editable, but a client typed in with a typo could only be
+          fixed by creating a second one — which is how two of these
+          ended up on her list in the first place.
+
+          On blur rather than on every keystroke: a PATCH per character
+          would put a hundred rows through the activity log for one
+          rename.
+        */}
+        <div className='grid gap-1.5'>
+          <Label htmlFor='client-rename'>Name</Label>
+          <Input
+            id='client-rename'
+            defaultValue={client.name}
+            key={`name-${client.id}-${client.updatedAt}`}
+            onBlur={(e) => {
+              const next = e.target.value.trim()
+              if (next && next !== client.name) {
+                patch.mutate({ name: next })
+              }
+            }}
+          />
+        </div>
+
+        <div className='grid gap-1.5'>
+          <Label>Status</Label>
+          <Select
+            value={client.status}
+            onValueChange={(v) => patch.mutate({ status: v })}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CLIENT_STATUSES.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {CLIENT_LABEL[s]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className='grid gap-1.5'>
+          <Label htmlFor='portal-toggle'>Client portal</Label>
+          <div className='flex h-9 items-center gap-2.5'>
+            <Switch
+              id='portal-toggle'
+              checked={client.portalEnabled}
+              onCheckedChange={(v) =>
+                patch.mutate({ portalEnabled: v })
+              }
+            />
+            <span className='text-sm text-muted-foreground'>
+              {client.portalEnabled
+                ? `${seats.length} seat${seats.length === 1 ? '' : 's'} with access`
+                : 'Closed'}
+            </span>
+          </div>
+        </div>
+
+        {/*
+          Archive, not delete.
+
+          She asked to be able to remove a client, and two on her list
+          are not hers. This takes them off every screen and closes
+          their portal, and Restore puts them back — because a client
+          is the parent of their content, files, invoices, receipts and
+          every uploaded byte, and a real delete would take all of it
+          with no way back that does not involve a backup.
+        */}
+        <div className='flex flex-wrap items-center justify-between gap-2 pt-4 crate-rule sm:col-span-2'>
+          {client.archivedAt ? (
+            <>
+              <p className='text-xs text-muted-foreground'>
+                Archived. Hidden from your client list, and their portal
+                is closed. Nothing has been deleted.
+              </p>
+              <Button
+                size='sm'
+                variant='outline'
+                onClick={() => restore.mutate()}
+                disabled={restore.isPending}
+              >
+                {restore.isPending ? (
+                  <Loader2 className='animate-spin' />
+                ) : (
+                  <ArchiveRestore />
+                )}
+                Restore
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className='text-xs text-muted-foreground'>
+                Archiving takes this client off your list, pipeline and
+                next steps, and closes their portal. It deletes nothing
+                and can be undone.
+              </p>
+              <Button
+                size='sm'
+                variant='outline'
+                onClick={() => onArchive()}
+              >
+                <Archive />
+                Archive client
+              </Button>
+            </>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/**
+ * The brief, the tone of voice, and the five brand colours.
+ *
+ * All three are things she was keeping somewhere else: the brief was going
+ * into the Activity log, which is append-only and scrolls away, so a live
+ * campaign's brief ended up under three months of "called, no answer"; the
+ * tone of voice was in her head; and there was one brand colour where a brand
+ * has five.
+ *
+ * First card on the page because it is what the page is about. Everything
+ * below it — status, portal, invoices — is administration.
+ */
+function BrandCard({
+  client,
+  patch,
+}: {
+  client: ClientDetail['client']
+  patch: PatchMutation
+}) {
+  const palette = brandPalette(client.brandColors)
+
+  /**
+   * Which swatch she has actually touched, per slot.
+   *
+   * A ref rather than state because nothing on screen depends on it, and the
+   * gate itself is the thing that matters: `<input type="color">` reports a
+   * value even when it has never been opened, so saving on "the value differs
+   * from what is stored" assigns a colour to every slot she tabs past. That is
+   * not hypothetical — it is the bug the single colour input had, where every
+   * client's null brand colour "differed" from the yellow the picker showed,
+   * and a tab through this card wrote a colour nobody chose plus an activity
+   * row claiming she chose it.
+   *
+   * onChange records the touch (it fires continuously while a colour is
+   * dragged, so it must not be the thing that saves); blur saves.
+   */
+  const touched = useRef<boolean[]>(
+    Array.from({ length: BRAND_COLOR_SLOTS }, () => false)
+  )
+
+  /** Writes the whole palette, because the PATCH takes the whole palette. */
+  const commit = (slot: number, value: string) => {
+    if (palette[slot] === value) return
+    const next = [...palette]
+    next[slot] = value
+    patch.mutate({ brandColors: next })
+  }
+
+  return (
+    <Card className='crate-card'>
+      <CardHeader>
+        <CardTitle className='pb-2 display text-lg crate-rule'>
+          Brand
+        </CardTitle>
+      </CardHeader>
+      <CardContent className='space-y-5'>
+        <div className='grid gap-1.5'>
+          <Label htmlFor='client-brief'>Project brief</Label>
+          <Textarea
+            id='client-brief'
+            /*
+             * Keyed on the client, NOT on updatedAt like the name field above.
+             *
+             * updatedAt changes on every save anywhere on this page, which
+             * remounts the field — harmless for a one-line name, and a way to
+             * lose half a paragraph here if an unrelated panel saves while she
+             * is typing. Nothing but this field writes this field, so there is
+             * no server-side change to pick up.
+             */
+            key={`brief-${client.id}`}
+            defaultValue={client.brief ?? ''}
+            placeholder='What are we making for them, and why? Campaign, goals, audience, must-haves.'
+            className='min-h-28 resize-y'
+            onBlur={(e) => {
+              const next = e.target.value.trim()
+              if (next !== (client.brief ?? '')) patch.mutate({ brief: next })
+            }}
+          />
+          <p className='text-xs text-muted-foreground'>
+            Yours. Not shown in their portal.
+          </p>
+        </div>
+
+        <div className='grid gap-1.5'>
+          <Label htmlFor='client-tone'>Tone of voice</Label>
+          <Textarea
+            id='client-tone'
+            key={`tone-${client.id}`}
+            defaultValue={client.toneOfVoice ?? ''}
+            placeholder='How they want to sound. Warm and plain? Playful? Never emoji?'
+            className='min-h-20 resize-y'
+            onBlur={(e) => {
+              const next = e.target.value.trim()
+              if (next !== (client.toneOfVoice ?? '')) {
+                patch.mutate({ toneOfVoice: next })
+              }
+            }}
+          />
+          <p className='text-xs text-muted-foreground'>
+            Shown in their portal, so they can check you got it right.
+          </p>
+        </div>
+
+        <div className='grid gap-2'>
+          <Label>Brand colours</Label>
+          <div className='flex flex-wrap gap-4'>
+            {BRAND_COLOR_ROLES.map((role, slot) => {
+              const value = palette[slot]
+              return (
+                <div key={role} className='grid w-28 gap-1.5'>
+                  <div className='flex items-center gap-2'>
+                    <input
+                      type='color'
+                      aria-label={role}
+                      className={cn(
+                        'size-9 shrink-0 cursor-pointer rounded-md bg-transparent p-1',
+                        value
+                          ? 'border border-border'
+                          : 'border border-dashed border-muted-foreground/60 opacity-60'
+                      )}
+                      /* A slot she has not set opens on the house yellow —
+                         somewhere to start rather than a black square. */
+                      defaultValue={value || '#f5c518'}
+                      key={`swatch-${client.id}-${slot}-${client.updatedAt}`}
+                      onChange={() => {
+                        touched.current[slot] = true
+                      }}
+                      onBlur={(e) => {
+                        if (!touched.current[slot]) return
+                        touched.current[slot] = false
+                        commit(slot, e.target.value.toLowerCase())
+                      }}
+                    />
+                    {value && (
+                      <Button
+                        type='button'
+                        size='icon'
+                        variant='ghost'
+                        className='size-7'
+                        aria-label={`Clear ${role}`}
+                        onClick={() => commit(slot, '')}
+                      >
+                        <X className='size-3.5' />
+                      </Button>
+                    )}
+                  </div>
+                  {/*
+                    A text field beside the picker because a palette arrives as
+                    a list of hex codes from a brand guide, and a colour picker
+                    cannot be pasted into. normaliseHex takes it with or
+                    without the hash, three digits or six, any case.
+                  */}
+                  <Input
+                    aria-label={`${role} hex`}
+                    className='h-7 px-2 font-mono text-xs'
+                    placeholder='Not set'
+                    key={`hex-${client.id}-${slot}-${client.updatedAt}`}
+                    defaultValue={value}
+                    onBlur={(e) => {
+                      const raw = e.target.value.trim()
+                      if (raw === '') {
+                        commit(slot, '')
+                        return
+                      }
+                      const hex = normaliseHex(raw)
+                      if (!hex) {
+                        // Say what was wrong and put the field back, rather
+                        // than sending it and letting the server answer.
+                        toast.error(
+                          `"${raw}" is not a colour. Try a hex code like #1a2b3c.`
+                        )
+                        e.target.value = value
+                        return
+                      }
+                      commit(slot, hex)
+                    }}
+                  />
+                  <span className='text-[0.6875rem] text-muted-foreground'>
+                    {role}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+          <p className='text-xs text-muted-foreground'>
+            Primary 1 is what their initials sit on when they have no logo.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+/**
+ * Shown on the Work and Files tabs when the portal has never been opened.
+ *
+ * Saying why rather than showing nothing: a client at proposal or paused has
+ * no seeded workspace at all, so the panels would be four empty boxes — and
+ * silently omitting them reads as a missing feature rather than a switch that
+ * has not been thrown.
+ */
+function NoWorkspace({ name }: { name: string }) {
+  return (
+    <Card className='crate-card border-dashed'>
+      <CardContent className='py-4 text-sm text-muted-foreground'>
+        <strong>{name}</strong> has no workspace yet. Turn on{' '}
+        <strong>Client portal</strong> on the Overview tab to create their link
+        stack, file folder and onboarding to-do&rsquo;s.
+      </CardContent>
+    </Card>
   )
 }
 
@@ -770,27 +1047,13 @@ function TimelineCard({
  * this page had its own idea of what a workspace contains, the two screens
  * start disagreeing about the same client.
  */
-function ClientWorkspace({ clientId }: { clientId: string }) {
-  const { setClientId } = useWorkspace()
-
-  /**
-   * Opening a client's page makes that client the active workspace.
-   *
-   * Without this the panels here show client X while every link out of them —
-   * "Open board", the Content Calendar row in the link stack — lands on
-   * whichever workspace was last persisted, which may be a different client
-   * entirely. That is precisely the defect use-workspace.ts was written to end:
-   * a selection living in one place and guessed in another, so you approve or
-   * schedule against the wrong client without anything on screen saying so.
-   *
-   * Setting it rather than threading `?client=` through every destination
-   * keeps one source of truth, and it matches what opening a client's page
-   * means: this is the client I am working on now.
-   */
-  useEffect(() => {
-    setClientId(clientId)
-  }, [clientId, setClientId])
-
+function ClientWorkspace({
+  clientId,
+  section,
+}: {
+  clientId: string
+  section: 'work' | 'files'
+}) {
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['portal', clientId],
     queryFn: () => api.get<PortalWorkspace>(`/portal?client=${clientId}`),
@@ -798,7 +1061,7 @@ function ClientWorkspace({ clientId }: { clientId: string }) {
 
   if (isLoading) {
     return (
-      <div className='mb-5 grid gap-5 lg:grid-cols-2'>
+      <div className='grid gap-5 lg:grid-cols-2'>
         <Skeleton className='h-56' />
         <Skeleton className='h-56' />
       </div>
@@ -807,26 +1070,25 @@ function ClientWorkspace({ clientId }: { clientId: string }) {
 
   if (isError || !data) {
     return (
-      <div className='mb-5'>
-        <QueryError
-          title='Could not load this client&rsquo;s workspace'
-          error={error as Error}
-          onRetry={() => refetch()}
-        />
-      </div>
+      <QueryError
+        title='Could not load this client&rsquo;s workspace'
+        error={error as Error}
+        onRetry={() => refetch()}
+      />
     )
   }
 
+  // One query, two tabs. Both sections read ['portal', clientId], so the second
+  // one costs nothing and neither can show a different workspace from the
+  // other — which is the whole reason this fetches the portal's own payload.
+  if (section === 'work') {
+    return <LinkStack links={data.links} canEdit clientId={clientId} />
+  }
+
   return (
-    <>
-      <MoodboardPreview clientId={clientId} canEdit />
-      <div className='mb-5 grid items-start gap-5 lg:grid-cols-2'>
-        <LinkStack links={data.links} canEdit clientId={clientId} />
-        <div className='space-y-5'>
-          <FileFolder files={data.files} canEdit clientId={clientId} />
-          <TaskList tasks={data.tasks} canEdit clientId={clientId} />
-        </div>
-      </div>
-    </>
+    <div className='grid items-start gap-5 lg:grid-cols-2'>
+      <FileFolder files={data.files} canEdit clientId={clientId} />
+      <TaskList tasks={data.tasks} canEdit clientId={clientId} />
+    </div>
   )
 }

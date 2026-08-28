@@ -1,6 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { api, type PortalWorkspace } from '@/lib/api'
-import { Card, CardContent } from '@/components/ui/card'
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ClientLogo } from '@/components/client-logo'
 import { ConfigDrawer } from '@/components/config-drawer'
@@ -141,6 +146,33 @@ export function PortalHome() {
           click.
         */}
         <MoodboardPreview clientId={workspaceId} canEdit={isStaff} />
+
+        {/*
+          How they want to sound, shown back to them.
+
+          She writes it on the client page; this is the half that makes it
+          worth writing — the client reads it and says "no, warmer than that",
+          which is the correction that otherwise arrives three posts in.
+          Absent rather than empty when she has not written one: a card headed
+          "Tone of voice" with nothing under it invites them to wonder whether
+          she forgot.
+        */}
+        {client.toneOfVoice && (
+          <Card className='mb-5 crate-card'>
+            <CardHeader>
+              <CardTitle className='flex items-center gap-2 display text-lg'>
+                <span className='size-2.5 rounded-full border-[1.5px] border-bd-ink bg-tag-story' />
+                Tone of voice
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className='mb-3 crate-rule' />
+              <p className='text-sm whitespace-pre-wrap'>
+                {client.toneOfVoice}
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
         {isStaff && (
           <Card className='mb-5 crate-card border-dashed'>

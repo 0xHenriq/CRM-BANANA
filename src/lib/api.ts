@@ -285,8 +285,14 @@ export type ClientDetail = {
     name: string
     slug: string
     status: ClientStatus
+    /** Mirrors brandColors[0]. Read the palette, write the palette. */
     brandColor: string | null
+    /** Five slots — two primary, three secondary. '' is an unset slot, and an
+     *  empty array is a palette that has never been touched. */
+    brandColors: string[]
     logoKey: string | null
+    brief: string | null
+    toneOfVoice: string | null
     portalEnabled: boolean
     archivedAt: string | null
     createdAt: string
@@ -394,6 +400,7 @@ export type PortalWorkspace = {
     name: string
     brandColor: string | null
     logoKey: string | null
+    toneOfVoice: string | null
     portalEnabled: boolean
   }
   links: PortalLink[]
@@ -593,6 +600,59 @@ export function formatShortDate(iso: string | null | undefined): string {
   const month = SHORT_MONTHS[m - 1]
   if (!month) return ''
   return `${d} ${month}`
+}
+
+/**
+ * How many brand colours a client has. Two primary, three secondary.
+ *
+ * Bound to the server's `BRAND_COLOR_SLOTS` in contract.test.ts — the PATCH
+ * schema requires exactly this many, so a UI that renders a different number
+ * would 400 on every save.
+ */
+export const BRAND_COLOR_SLOTS = 5
+
+/** The slot labels, in order. Index is the slot. */
+export const BRAND_COLOR_ROLES = [
+  'Primary 1',
+  'Primary 2',
+  'Secondary 1',
+  'Secondary 2',
+  'Secondary 3',
+] as const
+
+/**
+ * What a person types, turned into what the server accepts, or null.
+ *
+ * A brand palette arrives from a brand guide as a list of hex codes, so the
+ * field has to take a paste — and pasted hex comes with a hash or without one,
+ * in three digits or six, in whatever case the guide used. Every one of those
+ * is unambiguous, so rejecting them would be pedantry the person has to work
+ * around by hand.
+ *
+ * Returns null for anything genuinely not a colour, including empty input, so
+ * the caller has one thing to check. Output is always lowercase `#rrggbb`,
+ * which is exactly what the server's regex accepts and what `<input
+ * type="color">` reports — the same value from all three routes in, so a
+ * colour picked and the same colour pasted compare equal.
+ */
+export function normaliseHex(input: string): string | null {
+  const body = input.trim().replace(/^#/, '').toLowerCase()
+  if (/^[0-9a-f]{3}$/.test(body)) {
+    return `#${body[0]}${body[0]}${body[1]}${body[1]}${body[2]}${body[2]}`
+  }
+  if (/^[0-9a-f]{6}$/.test(body)) return `#${body}`
+  return null
+}
+
+/**
+ * A client's palette as exactly BRAND_COLOR_SLOTS entries.
+ *
+ * Stored short — an empty array is every client who has never set one — and
+ * read positionally, because the slots are named roles. One helper so the
+ * card, the swatches and the save path cannot disagree about what slot 3 is.
+ */
+export function brandPalette(colors: string[] | null | undefined): string[] {
+  return Array.from({ length: BRAND_COLOR_SLOTS }, (_, i) => colors?.[i] ?? '')
 }
 
 /**

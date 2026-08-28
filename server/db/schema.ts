@@ -136,8 +136,47 @@ export const clients = pgTable(
     name: text('name').notNull(),
     slug: text('slug').notNull().unique(),
     status: clientStatus('status').notNull().default('lead'),
+    /**
+     * A mirror of `brandColors[0]`, not a field in its own right.
+     *
+     * ClientLogo's initials fallback and the portal payload both read this,
+     * and rewriting every one of those to index an array would gain nothing.
+     * It is kept in step on the single write path in the PATCH handler and is
+     * deliberately absent from that handler's schema — see migration 0015.
+     */
     brandColor: text('brand_color'),
+    /**
+     * Five brand colours: two primary, three secondary.
+     *
+     * Positional and fixed-length, because the slots are named roles rather
+     * than a list — '' is "this slot is unset", and an empty array is a client
+     * whose palette has never been touched. Read slot i as
+     * `brandColors[i] || fallback`.
+     */
+    brandColors: text('brand_colors')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
     logoKey: text('logo_key'),
+    /**
+     * The campaign brief, in the one place she can edit it.
+     *
+     * She was pasting these into the activity log, which is append-only and
+     * scrolls away — so the brief for a live campaign sat under three months
+     * of "called, no answer". Not shown in the portal — /api/portal selects
+     * its columns explicitly and this is not among them. That is a product
+     * choice rather than a security boundary: `clients_select` lets a client
+     * read their own row whole, as it always has, so anything that returns
+     * this column to them returns it. If it ever needs to be secret, it needs
+     * a column gate like `invoices` has, not a convention.
+     */
+    brief: text('brief'),
+    /**
+     * How this client wants to be written. Deliberately client-visible — it is
+     * a thing they tell her, and showing it back is how they check she got it
+     * right.
+     */
+    toneOfVoice: text('tone_of_voice'),
     /**
      * Archived, not deleted.
      *

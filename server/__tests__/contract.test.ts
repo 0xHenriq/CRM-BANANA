@@ -14,7 +14,10 @@ import {
   invoiceStatus,
   paymentStatus,
 } from '../db/schema.js'
-import { CLIENT_STATUSES as SERVER_CLIENT_STATUSES } from '../routes/clients.js'
+import {
+  BRAND_COLOR_SLOTS as SERVER_BRAND_SLOTS,
+  CLIENT_STATUSES as SERVER_CLIENT_STATUSES,
+} from '../routes/clients.js'
 import { INVOICE_STATUSES as SERVER_INVOICE_STATUSES } from '../routes/invoices.js'
 import { hhmm } from '../lib/audit.js'
 import { compareSteps } from '../routes/next-steps.js'
@@ -45,6 +48,10 @@ import {
   formatTime,
   sumPence,
   toPence,
+  BRAND_COLOR_ROLES,
+  BRAND_COLOR_SLOTS as UI_BRAND_SLOTS,
+  brandPalette,
+  normaliseHex,
 } from '../../src/lib/api.js'
 
 /**
@@ -125,6 +132,70 @@ describe('client statuses', () => {
     expect([...CLIENT_STATUS_ORDER].sort()).toEqual([...UI_CLIENT_STATUSES].sort())
     expect(CLIENT_STATUS_ORDER).toHaveLength(UI_CLIENT_STATUSES.length)
     expect(new Set(CLIENT_STATUS_ORDER).size).toBe(CLIENT_STATUS_ORDER.length)
+  })
+})
+
+/**
+ * The brand palette is fixed-length and positional, and three places have to
+ * agree about that: the PATCH schema requires exactly five entries, the card
+ * renders one swatch per role, and `brandPalette` pads whatever is stored up
+ * to that length. Any two of them disagreeing is a 400 on every save or a
+ * silently dropped colour.
+ */
+describe('brand palette', () => {
+  it('is the same number of slots on both sides, with a label for each', () => {
+    expect(UI_BRAND_SLOTS).toBe(SERVER_BRAND_SLOTS)
+    expect(BRAND_COLOR_ROLES).toHaveLength(UI_BRAND_SLOTS)
+    expect(new Set(BRAND_COLOR_ROLES).size).toBe(BRAND_COLOR_ROLES.length)
+  })
+
+  it('pads a short or empty stored palette to full length', () => {
+    // Every client starts with '{}' — read positionally, that must still
+    // answer five slots rather than undefined.
+    expect(brandPalette([])).toEqual(['', '', '', '', ''])
+    expect(brandPalette(null)).toHaveLength(UI_BRAND_SLOTS)
+    expect(brandPalette(['#112233'])).toEqual(['#112233', '', '', '', ''])
+  })
+
+  it('never lengthens a palette that is already full', () => {
+    const full = ['#111111', '#222222', '#333333', '#444444', '#555555']
+    expect(brandPalette(full)).toEqual(full)
+  })
+
+  /**
+   * The binding that matters: everything normaliseHex accepts must be
+   * something the server's PATCH schema accepts, or the field takes a value
+   * the save then rejects.
+   */
+  it('produces only what the server regex accepts', () => {
+    const serverAccepts = /^#[0-9a-fA-F]{6}$/
+    const inputs = [
+      '#1A2B3C',
+      '1a2b3c',
+      '#abc',
+      'ABC',
+      '  #ff0055  ',
+      '#FFFFFF',
+      '000',
+    ]
+    for (const raw of inputs) {
+      const hex = normaliseHex(raw)
+      expect(hex, raw).not.toBeNull()
+      expect(hex, raw).toMatch(serverAccepts)
+      // Lowercase, so a picked colour and a pasted one compare equal.
+      expect(hex, raw).toBe(hex!.toLowerCase())
+    }
+  })
+
+  it('expands three digits by doubling, not by padding', () => {
+    expect(normaliseHex('#abc')).toBe('#aabbcc')
+    expect(normaliseHex('#f00')).toBe('#ff0000')
+  })
+
+  it('refuses anything that is not a colour, including blank', () => {
+    for (const raw of ['', '   ', '#', 'red', '#12345', '#1234567', '#gghhii']) {
+      expect(normaliseHex(raw), raw).toBeNull()
+    }
   })
 })
 

@@ -30,6 +30,11 @@ portalRoutes.get('/', async (c) => {
         name: clients.name,
         brandColor: clients.brandColor,
         logoKey: clients.logoKey,
+        // Client-visible on purpose — it is what they told her, shown back so
+        // they can check she got it right. `brief` is deliberately NOT here:
+        // this select is an explicit column list precisely so adding a column
+        // to `clients` never quietly widens what a client can read.
+        toneOfVoice: clients.toneOfVoice,
         portalEnabled: clients.portalEnabled,
       })
       .from(clients)

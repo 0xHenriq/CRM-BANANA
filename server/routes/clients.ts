@@ -195,17 +195,70 @@ clientRoutes.get('/:id', async (c) => {
   return c.json(result)
 })
 
+/**
+ * Five slots, and '' means "not set".
+ *
+ * `.length(5)` rather than `.max(5)` because the slots are named roles and a
+ * short array would silently reassign them — send three colours and the two
+ * secondaries she had chosen are gone with nothing on screen saying so. The
+ * client always sends the whole palette.
+ */
+export const BRAND_COLOR_SLOTS = 5
+const brandColorsSchema = z
+  .array(
+    z.union([
+      z.literal(''),
+      z
+        .string()
+        .regex(/^#[0-9a-fA-F]{6}$/, 'A brand colour must look like #1a2b3c')
+        // One spelling per colour. The browser lowercases before sending, but
+        // anything else reaching this route would otherwise be able to store
+        // #AABBCC beside #aabbcc — the same colour, twice, comparing unequal.
+        .transform((v) => v.toLowerCase()),
+    ])
+  )
+  .length(
+    BRAND_COLOR_SLOTS,
+    `Send all ${BRAND_COLOR_SLOTS} brand colour slots, using "" for the ones that are not set.`
+  )
+
 const updateSchema = z.object({
   name: z.string().min(1).max(120).optional(),
   status: z.enum(CLIENT_STATUSES).optional(),
-  brandColor: z.string().max(32).nullable().optional(),
+  // brandColor is NOT here on purpose. It mirrors brandColors[0] and is set
+  // below from the palette, so there is one way to change a brand colour
+  // rather than two that can disagree. Migration 0015 argues the case.
+  brandColors: brandColorsSchema.optional(),
+  brief: z.string().max(20000).nullable().optional(),
+  toneOfVoice: z.string().max(5000).nullable().optional(),
   portalEnabled: z.boolean().optional(),
 })
+
+/**
+ * Blank is absent.
+ *
+ * Clearing a textarea sends '', and stored as '' the field is "set to nothing"
+ * — which reads as empty on screen but is a different value from never having
+ * been filled in, so `brief IS NULL` stops meaning what it says. One
+ * representation for "no brief".
+ */
+function blankToNull(v: string | null | undefined): string | null | undefined {
+  if (v === undefined) return undefined
+  const trimmed = v?.trim() ?? ''
+  return trimmed === '' ? null : trimmed
+}
 
 clientRoutes.patch('/:id', async (c) => {
   const id = c.req.param('id')
   const parsed = updateSchema.safeParse(await c.req.json().catch(() => null))
-  if (!parsed.success) return c.json({ error: 'Invalid request' }, 400)
+  // Say which field and why, like the contact and deal handlers already do.
+  // "Invalid request" against a form with eight inputs on it is not an answer.
+  if (!parsed.success) {
+    return c.json(
+      { error: parsed.error.issues[0]?.message ?? 'Invalid request' },
+      400
+    )
+  }
 
   const actorId = c.get('user')?.id ?? null
   const patch = parsed.data
@@ -234,6 +287,16 @@ clientRoutes.patch('/:id', async (c) => {
       .update(clients)
       .set({
         ...patch,
+        ...(patch.brief === undefined ? {} : { brief: blankToNull(patch.brief) }),
+        ...(patch.toneOfVoice === undefined
+          ? {}
+          : { toneOfVoice: blankToNull(patch.toneOfVoice) }),
+        // brand_color follows slot 1 rather than being written beside it, so
+        // the logo's initials fallback can never show a colour the palette
+        // does not. An unset slot 1 puts it back to null — the yellow default.
+        ...(patch.brandColors === undefined
+          ? {}
+          : { brandColor: patch.brandColors[0] || null }),
         ...(opensPortal === undefined ? {} : { portalEnabled: opensPortal }),
         updatedAt: new Date(),
       })
