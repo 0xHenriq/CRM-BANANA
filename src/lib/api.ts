@@ -467,6 +467,14 @@ export type FeedCell = {
   type: ContentType
   status: ContentStatus
   scheduledAt: string | null
+  /**
+   * 'HH:MM:SS' as Postgres returns it, or null.
+   *
+   * The feed endpoint has always selected this (see the `scheduled_time`
+   * column in the /api/media/feed query) and this type simply never declared
+   * it, so it arrived over the wire and was invisible to the compiler.
+   */
+  scheduledTime: string | null
   feedOrder: number | null
   assetId: string
   assetKind: 'image' | 'video'
@@ -512,6 +520,37 @@ export function fileUrl(fileId: string): string {
 export function logoUrl(clientId: string, logoKey: string): string {
   const version = logoKey.slice(logoKey.lastIndexOf('/') + 1)
   return `/api/media/clients/${clientId}/logo?v=${encodeURIComponent(version)}`
+}
+
+/**
+ * A 'YYYY-MM-DD' column as a short, readable day: '1 Sep'.
+ *
+ * Two decisions, both deliberate.
+ *
+ * The date is read from its LOCAL parts and never through `new Date(iso)`: a
+ * bare date string parses as UTC midnight, so it renders as the previous day
+ * west of Greenwich and misreports an evening east of it. Same trap
+ * `isPastDate` above exists to avoid.
+ *
+ * The month names are a fixed table rather than `toLocaleDateString`, which is
+ * the usual way to do this and is wrong here for two reasons. Its output moves
+ * with the ICU data built into whichever Node is running, so a test asserting
+ * it passes on one machine and fails on another — this was found exactly that
+ * way. And `en-GB` abbreviates September to "Sept", four characters, which is
+ * a real problem in a feed cell a third of a grid wide.
+ */
+const SHORT_MONTHS = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+]
+
+export function formatShortDate(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const [y, m, d] = iso.split('-').map(Number)
+  if (!y || !m || !d) return ''
+  const month = SHORT_MONTHS[m - 1]
+  if (!month) return ''
+  return `${d} ${month}`
 }
 
 /**

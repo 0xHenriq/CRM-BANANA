@@ -25,6 +25,7 @@ export function ClientLogo({
   brandColor,
   canEdit = false,
   markOnly = false,
+  round = false,
   className,
 }: {
   clientId: string
@@ -34,6 +35,15 @@ export function ClientLogo({
   canEdit?: boolean
   /** Just the mark — no name, no upload control. For dense lists. */
   markOnly?: boolean
+  /**
+   * A full circle rather than the usual rounded square.
+   *
+   * For the client page header, where their mark takes the place the agency's
+   * own stamp used to occupy — a circle. It only changes a border radius, so
+   * it composes with `markOnly` and `canEdit` rather than silencing either;
+   * that combination is what made the earlier `markOnly` bug invisible.
+   */
+  round?: boolean
   className?: string
 }) {
   const queryClient = useQueryClient()
@@ -69,16 +79,24 @@ export function ClientLogo({
       : (words[0]?.slice(0, 2) ?? '?')
   ).toUpperCase()
 
+  const radius = round ? 'rounded-full' : 'rounded-xl'
+
   const mark = logoKey ? (
     <img
       src={logoUrl(clientId, logoKey)}
       alt={`${name} logo`}
-      className='size-11 shrink-0 rounded-xl border border-border bg-white object-contain'
+      className={cn(
+        'size-11 shrink-0 border border-border bg-white object-contain',
+        radius
+      )}
     />
   ) : (
     <span
       aria-hidden
-      className='grid size-11 shrink-0 place-items-center rounded-xl border border-border display text-sm tracking-wide'
+      className={cn(
+        'grid size-11 shrink-0 place-items-center border border-border display text-sm tracking-wide',
+        radius
+      )}
       style={
         brandColor
           ? { backgroundColor: brandColor, color: readableOn(brandColor) }
@@ -107,7 +125,10 @@ export function ClientLogo({
       <label
         htmlFor={inputId}
         title={logoKey ? `Change ${name}'s logo` : `Upload ${name}'s logo`}
-        className='cursor-pointer rounded-xl transition focus-within:ring-2 focus-within:ring-ring hover:opacity-80'
+        className={cn(
+          'cursor-pointer transition focus-within:ring-2 focus-within:ring-ring hover:opacity-80',
+          radius
+        )}
       >
         {mark}
         <span className='sr-only'>
@@ -130,7 +151,12 @@ export function ClientLogo({
         }}
       />
       {upload.isPending && (
-        <span className='absolute inset-0 grid place-items-center rounded-xl bg-bd-ink/60 text-[0.625rem] font-bold text-white'>
+        <span
+          className={cn(
+            'absolute inset-0 grid place-items-center bg-bd-ink/60 text-[0.625rem] font-bold text-white',
+            radius
+          )}
+        >
           {progress === null ? '…' : `${Math.round(progress * 100)}%`}
         </span>
       )}

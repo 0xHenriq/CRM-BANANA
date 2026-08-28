@@ -195,25 +195,21 @@ export function ClientDetailPage() {
       </Header>
 
       <Main>
+        {/*
+          Their mark where the agency's stamp used to be.
+
+          The "EST. BD LDN" circle is ours, and on a page that is entirely
+          about one client it was the least useful thing in the header. The
+          mark takes that position — round, so it reads as the same object —
+          and because ClientLogo is an upload target when `canEdit`, the
+          circle is also how she sets their logo. One mark, not two: there
+          used to be a second `markOnly` copy at the start of this row.
+        */}
         <PageHead
           eyebrow='Client account'
           title={client.name}
-          stamp={{ top: 'EST.', big: 'BD', bottom: 'LDN' }}
           actions={
             <div className='flex items-center gap-3'>
-              {/*
-                The same mark as the portal homepage, on the page where she
-                actually administers the client. Uploading from either place
-                writes the same column — this is not a second logo.
-              */}
-              <ClientLogo
-                clientId={clientId}
-                name={client.name}
-                logoKey={client.logoKey}
-                brandColor={client.brandColor}
-                canEdit
-                markOnly
-              />
               <Button variant='outline' size='sm' asChild>
                 <Link to='/clients'>
                   <ArrowLeft />
@@ -221,6 +217,15 @@ export function ClientDetailPage() {
                 </Link>
               </Button>
               <ClientStatusPill status={client.status} />
+              <ClientLogo
+                clientId={clientId}
+                name={client.name}
+                logoKey={client.logoKey}
+                brandColor={client.brandColor}
+                canEdit
+                markOnly
+                round
+              />
             </div>
           }
         />

@@ -72,7 +72,6 @@ export function ClientsList() {
         <PageHead
           eyebrow='Accounts'
           title='Clients'
-          stamp={{ top: 'BD', big: 'CL', bottom: 'LDN' }}
           actions={
             <div className='flex items-center gap-2'>
               <Button

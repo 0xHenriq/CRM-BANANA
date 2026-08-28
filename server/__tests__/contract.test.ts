@@ -37,6 +37,7 @@ import {
   outstandingPence,
   paymentState,
   formatPence,
+  formatShortDate,
   formatTime,
   sumPence,
   toPence,
@@ -224,6 +225,51 @@ describe('posting time', () => {
  * suite only by accident of where they live; they are pure functions and the
  * arithmetic is what matters, so they are pinned here.
  */
+/**
+ * A date rendered from LOCAL parts.
+ *
+ * The feed grid shows a posting date next to each title, and the obvious
+ * `new Date('2026-09-01')` parses as UTC midnight — which renders as 31 August
+ * for anyone west of Greenwich and, on an evening render, misreports the day
+ * east of it. Same trap `isPastDate` above exists to avoid.
+ */
+describe('formatShortDate', () => {
+  it('renders the day that was stored, not the UTC one', () => {
+    // A date the UTC reading would move: midnight UTC on the 1st is still the
+    // 31st in New York, and this must say the 1st wherever it is read.
+    expect(formatShortDate('2026-09-01')).toBe('1 Sep')
+    expect(formatShortDate('2026-01-31')).toBe('31 Jan')
+    expect(formatShortDate('2026-12-25')).toBe('25 Dec')
+  })
+
+  it('abbreviates every month to three characters', () => {
+    // Not `toLocaleDateString`: en-GB gives "Sept" for September, which is a
+    // character too many for a feed cell, and its output moves with the ICU
+    // data in whichever Node is running.
+    const months = Array.from({ length: 12 }, (_, i) =>
+      formatShortDate(`2026-${String(i + 1).padStart(2, '0')}-05`)
+    )
+    expect(months).toEqual([
+      '5 Jan', '5 Feb', '5 Mar', '5 Apr', '5 May', '5 Jun',
+      '5 Jul', '5 Aug', '5 Sep', '5 Oct', '5 Nov', '5 Dec',
+    ])
+  })
+
+  it('renders nothing for a month outside the calendar', () => {
+    expect(formatShortDate('2026-13-01')).toBe('')
+    expect(formatShortDate('2026-00-01')).toBe('')
+  })
+
+  it('renders nothing for an absent or unusable date', () => {
+    // An undated idea is the common case — the cell shows its title alone
+    // rather than an em dash standing in for a date nobody set.
+    expect(formatShortDate(null)).toBe('')
+    expect(formatShortDate(undefined)).toBe('')
+    expect(formatShortDate('')).toBe('')
+    expect(formatShortDate('not-a-date')).toBe('')
+  })
+})
+
 describe('money', () => {
   it.each([
     ['2400.00', 240000],

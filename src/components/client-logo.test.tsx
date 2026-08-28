@@ -49,6 +49,42 @@ describe('ClientLogo', () => {
   })
 
   /**
+   * `round` is a third prop on a component that already had two which once
+   * silently contradicted each other — `markOnly` used to return before the
+   * upload control rendered, so `markOnly` + `canEdit` gave a control that
+   * could not be used. A new prop earns a test of the COMBINATION, not of
+   * itself: round must change the shape and silence nothing.
+   */
+  it('round makes a circle and still allows the upload it is wrapped in', async () => {
+    const { container } = await render(
+      wrap(
+        <ClientLogo
+          clientId='c1'
+          name='Change of Perspective'
+          logoKey={null}
+          canEdit
+          markOnly
+          round
+        />
+      )
+    )
+    // The mark is a circle...
+    expect(container.querySelector('.rounded-full')).not.toBeNull()
+    expect(container.querySelector('.rounded-xl')).toBeNull()
+    // ...and the file input is still there, which is the half that regressed
+    // last time a prop short-circuited this component.
+    expect(container.querySelector('input[type="file"]')).not.toBeNull()
+  })
+
+  it('defaults to the rounded square everywhere else', async () => {
+    const { container } = await render(
+      wrap(<ClientLogo clientId='c1' name='Acme Corp' logoKey={null} markOnly />)
+    )
+    expect(container.querySelector('.rounded-xl')).not.toBeNull()
+    expect(container.querySelector('.rounded-full')).toBeNull()
+  })
+
+  /**
    * Her palette runs bright, and white initials on a bright colour cannot be
    * read.
    *

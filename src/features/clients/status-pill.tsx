@@ -20,12 +20,26 @@ const CLIENT_TONE: Record<ClientStatus, string> = {
   churned: 'bg-tag-graphic',
 }
 
+/**
+ * The words SHE uses, which are not the words the database uses.
+ *
+ * This map is the single label source: the status pill, the group headings on
+ * the Clients list and the dropdown on a client page all read from it, so the
+ * stored `client_status` enum never has to change to rename what she sees.
+ *
+ * "Deleted" is her word for the last group, and it names something this
+ * product deliberately cannot do. A client is the parent of contacts, deals,
+ * content and its assets, files, invoices, receipts, tasks and notes, all
+ * ON DELETE CASCADE, plus uploaded bytes a database restore does not bring
+ * back. Archiving is the reversible mechanism that exists instead. Do not add
+ * a delete to make the code match the label.
+ */
 const CLIENT_LABEL: Record<ClientStatus, string> = {
   lead: 'Lead',
   proposal: 'Proposal',
   active: 'Active',
-  paused: 'Paused',
-  churned: 'Churned',
+  paused: 'Completed',
+  churned: 'Deleted',
 }
 
 const STAGE_LABEL: Record<DealStage, string> = {

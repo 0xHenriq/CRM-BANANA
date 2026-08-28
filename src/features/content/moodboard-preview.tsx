@@ -68,7 +68,7 @@ export function MoodboardPreview({
       <CardHeader className='flex flex-row items-center justify-between'>
         <CardTitle className='flex items-center gap-2 display text-lg'>
           <span className='size-2.5 rounded-full border-[1.5px] border-bd-ink bg-bd-yellow' />
-          Social Moodboard
+          Brand Moodboard
         </CardTitle>
         <div className='flex items-center gap-2'>
           {canEdit && (

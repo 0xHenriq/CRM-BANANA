@@ -2,7 +2,13 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Play, GripVertical } from 'lucide-react'
 import { toast } from 'sonner'
-import { api, assetUrl, type FeedCell } from '@/lib/api'
+import {
+  api,
+  assetUrl,
+  formatShortDate,
+  formatTime,
+  type FeedCell,
+} from '@/lib/api'
 import { useWorkspace, withClient } from '@/features/portal/use-workspace'
 import { WorkspaceSwitcher } from '@/features/portal/workspace-switcher'
 import { cn } from '@/lib/utils'
@@ -126,7 +132,11 @@ export function FeedPreview() {
                         isStaff && 'cursor-grab active:cursor-grabbing',
                         dragIndex === i && 'opacity-40'
                       )}
-                      title={`${TYPE_LABEL[cell.type]}: ${cell.title}`}
+                      title={`${TYPE_LABEL[cell.type]}: ${cell.title}${
+                        cell.scheduledAt
+                          ? ` · ${formatShortDate(cell.scheduledAt)}${cell.scheduledTime ? ` at ${formatTime(cell.scheduledTime)}` : ''}`
+                          : ''
+                      }`}
                     >
                       <img
                         src={assetUrl(
@@ -150,8 +160,23 @@ export function FeedPreview() {
                         <GripVertical className='absolute top-1 left-1 size-3.5 text-white opacity-0 drop-shadow group-hover:opacity-100' />
                       )}
 
-                      <span className='absolute inset-x-0 bottom-0 truncate bg-bd-ink/75 px-1 py-0.5 text-[0.5625rem] text-bd-cream'>
-                        {cell.title}
+                      {/*
+                        Title and posting date together.
+
+                        Nine thumbnails in date order look identical to nine in
+                        any other order; the date is what makes the grid read
+                        as a plan. An undated cell simply shows its title —
+                        the row is not padded with an em dash for it.
+                      */}
+                      <span className='absolute inset-x-0 bottom-0 flex items-baseline gap-1 bg-bd-ink/75 px-1 py-0.5 text-[0.5625rem] text-bd-cream'>
+                        <span className='min-w-0 flex-1 truncate'>
+                          {cell.title}
+                        </span>
+                        {cell.scheduledAt && (
+                          <span className='shrink-0 font-bold tabular-nums opacity-90'>
+                            {formatShortDate(cell.scheduledAt)}
+                          </span>
+                        )}
                       </span>
                     </button>
                   )

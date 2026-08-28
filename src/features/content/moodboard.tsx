@@ -111,7 +111,7 @@ export function Moodboard() {
       <Main>
         <PageHead
           eyebrow='Visual direction'
-          title='Social Moodboard'
+          title='Brand Moodboard'
           stamp={{ top: 'MOOD', big: '❦', bottom: 'BOARD' }}
           actions={
             isStaff ? (

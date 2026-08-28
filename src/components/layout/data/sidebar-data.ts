@@ -47,7 +47,7 @@ export const sidebarData: SidebarData = {
         { title: 'Content Calendar', url: '/portal/calendar', icon: CalendarDays },
         { title: 'Ideas Bank', url: '/portal/ideas', icon: Lightbulb },
         { title: 'Feed Preview', url: '/portal/feed', icon: Grid3x3 },
-        { title: 'Social Moodboard', url: '/portal/moodboard', icon: Palette },
+        { title: 'Brand Moodboard', url: '/portal/moodboard', icon: Palette },
       ],
     },
     {
