@@ -10,7 +10,13 @@ import {
   ExternalLink,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { api, type ClientStatus, type ClientSummary } from '@/lib/api'
+import {
+  api,
+  CLIENT_STATUSES,
+  CLIENT_STATUS_ORDER,
+  type ClientStatus,
+  type ClientSummary,
+} from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -120,7 +126,7 @@ export function ClientsList() {
             work, then things she is chasing, then the dormant ones.
           */
           <div className='space-y-8'>
-            {STATUS_ORDER.map((status) => {
+            {CLIENT_STATUS_ORDER.map((status) => {
               // An archived client keeps whatever status it had, so it would
               // otherwise reappear inside Active — which is the one place she
               // archived it to get it out of.
@@ -262,30 +268,6 @@ function Metric({
   )
 }
 
-const STATUSES: ClientStatus[] = [
-  'lead',
-  'proposal',
-  'active',
-  'paused',
-  'churned',
-]
-
-/**
- * Display order for the grouped list, which is NOT the order of the enum.
- *
- * The enum runs lead -> churned because that is the lifecycle. This runs by
- * how much attention each state deserves on a Monday morning: the clients she
- * is delivering for, then the ones she is chasing, then the dormant ones she
- * only needs to see to know they are still there.
- */
-const STATUS_ORDER: ClientStatus[] = [
-  'active',
-  'proposal',
-  'lead',
-  'paused',
-  'churned',
-]
-
 function NewClientDialog() {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
@@ -343,7 +325,7 @@ function NewClientDialog() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {STATUSES.map((s) => (
+                {CLIENT_STATUSES.map((s) => (
                   <SelectItem key={s} value={s}>
                     {CLIENT_LABEL[s]}
                   </SelectItem>

@@ -20,7 +20,10 @@ export const clientRoutes = new Hono()
 // clearer answer than an empty list when someone is debugging.
 clientRoutes.use('*', requireStaff)
 
-const CLIENT_STATUSES = [
+// Exported so contract.test.ts can bind it to the Postgres enum and to the
+// browser's copy. This vocabulary lived in five places and none of them were
+// checked against each other.
+export const CLIENT_STATUSES = [
   'lead',
   'proposal',
   'active',

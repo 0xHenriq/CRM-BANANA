@@ -59,7 +59,49 @@ export const api = {
 
 /* ------------------------------------------------------------------ types */
 
-export type ClientStatus = 'lead' | 'proposal' | 'active' | 'paused' | 'churned'
+/**
+ * Client lifecycle, and the single client-side source of truth.
+ *
+ * A const array rather than a bare union type, for the same reason DEAL_STAGES
+ * below is one: the vocabulary existed in five places — the Postgres enum, the
+ * server's list, this type, and a hand-written copy in each of two screens —
+ * and only a runtime array can be compared against the server's in a test.
+ * See `client statuses` in server/__tests__/contract.test.ts.
+ *
+ * The words she READS are separate and deliberately different: see
+ * CLIENT_LABEL in src/features/clients/status-pill.tsx, where `paused` renders
+ * as "Completed" and `churned` as "Deleted".
+ */
+export const CLIENT_STATUSES = [
+  'lead',
+  'proposal',
+  'active',
+  'paused',
+  'churned',
+] as const
+
+export type ClientStatus = (typeof CLIENT_STATUSES)[number]
+
+/**
+ * Display order for the grouped Clients list, which is NOT the enum order.
+ *
+ * The enum runs lead -> churned because that is the lifecycle. This runs by
+ * how much attention each state deserves on a Monday morning: the clients she
+ * is delivering for, then the ones she is chasing, then the dormant ones she
+ * only needs to see to know they are still there.
+ *
+ * It must contain every status exactly once. The Clients page renders one
+ * group per entry, so a status missing from here does not fall to the bottom
+ * of the page — those clients disappear from it entirely. A contract test
+ * asserts it is a permutation.
+ */
+export const CLIENT_STATUS_ORDER: readonly ClientStatus[] = [
+  'active',
+  'proposal',
+  'lead',
+  'paused',
+  'churned',
+]
 
 /**
  * Board order, and the single client-side source of truth. The server has its

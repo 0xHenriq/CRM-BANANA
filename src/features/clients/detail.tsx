@@ -20,7 +20,7 @@ import {
   ApiError,
   formatMoney,
   type ClientDetail,
-  type ClientStatus,
+  CLIENT_STATUSES,
   type PortalWorkspace,
 } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -66,14 +66,6 @@ import {
   PaymentBadge,
   CLIENT_LABEL,
 } from './status-pill'
-
-const STATUSES: ClientStatus[] = [
-  'lead',
-  'proposal',
-  'active',
-  'paused',
-  'churned',
-]
 
 export function ClientDetailPage() {
   const { clientId } = useParams({ from: '/_authenticated/clients_/$clientId' })
@@ -356,7 +348,7 @@ export function ClientDetailPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {STATUSES.map((s) => (
+                      {CLIENT_STATUSES.map((s) => (
                         <SelectItem key={s} value={s}>
                           {CLIENT_LABEL[s]}
                         </SelectItem>

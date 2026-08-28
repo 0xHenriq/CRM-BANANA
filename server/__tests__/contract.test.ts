@@ -8,11 +8,13 @@ import {
   CONTENT_TYPES as SERVER_TYPES,
 } from '../routes/content.js'
 import {
+  clientStatus,
   contentStatus,
   contentType,
   invoiceStatus,
   paymentStatus,
 } from '../db/schema.js'
+import { CLIENT_STATUSES as SERVER_CLIENT_STATUSES } from '../routes/clients.js'
 import { INVOICE_STATUSES as SERVER_INVOICE_STATUSES } from '../routes/invoices.js'
 import { hhmm } from '../lib/audit.js'
 import { compareSteps } from '../routes/next-steps.js'
@@ -28,6 +30,8 @@ import {
   parseHashtagInput as clientParse,
 } from '../../src/lib/hashtags.js'
 import {
+  CLIENT_STATUSES as UI_CLIENT_STATUSES,
+  CLIENT_STATUS_ORDER,
   CONTENT_STATUSES as CLIENT_STATUSES,
   CONTENT_TYPES as CLIENT_TYPES,
   DEAL_STAGES as CLIENT_STAGES,
@@ -93,6 +97,37 @@ describe('content vocabulary', () => {
  * rather than waiting to be marked. A stored "overdue" would be a status that
  * silently goes stale, which is worse than none.
  */
+/**
+ * Client lifecycle, bound across all three copies.
+ *
+ * This vocabulary was the one the product did NOT check. It exists in the
+ * Postgres enum, in the create/update schemas on the server, and in the
+ * browser — and the two screens that render it each had a fourth and fifth
+ * hand-written copy until these lists replaced them.
+ *
+ * Note the aliases: elsewhere in this file "CLIENT" means the browser. Here
+ * the subject is literally a client of the agency, so the browser copy is
+ * UI_CLIENT_STATUSES and the API copy is SERVER_CLIENT_STATUSES.
+ */
+describe('client statuses', () => {
+  it('match across the Postgres enum, the API and the browser', () => {
+    expect([...SERVER_CLIENT_STATUSES]).toEqual([...UI_CLIENT_STATUSES])
+    expect([...clientStatus.enumValues]).toEqual([...UI_CLIENT_STATUSES])
+  })
+
+  /**
+   * The Clients page renders one group per entry in this order, so a status
+   * missing from it does not sort to the bottom — those clients vanish from
+   * the page altogether. The order is deliberately different from the enum;
+   * the MEMBERS must be identical.
+   */
+  it('the display order is a permutation, not a subset', () => {
+    expect([...CLIENT_STATUS_ORDER].sort()).toEqual([...UI_CLIENT_STATUSES].sort())
+    expect(CLIENT_STATUS_ORDER).toHaveLength(UI_CLIENT_STATUSES.length)
+    expect(new Set(CLIENT_STATUS_ORDER).size).toBe(CLIENT_STATUS_ORDER.length)
+  })
+})
+
 describe('payment status', () => {
   it('matches across the enum, the API and the client', () => {
     expect([...SERVER_PAYMENTS]).toEqual([...CLIENT_PAYMENTS])

@@ -17,6 +17,7 @@ import {
   api,
   fileUrl,
   formatBytes,
+  formatShortDate,
   type NoticePost,
   type PortalFile,
   type PortalTask,
@@ -842,7 +843,10 @@ export function DueDate({ date }: { date: string }) {
         ? 'Today'
         : days === 1
           ? 'Tomorrow'
-          : due.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+          : // formatShortDate, not toLocaleDateString: en-GB abbreviates
+            // September to "Sept", and the feed grid renders the same month as
+            // "Sep". One product should not spell a month two ways.
+            formatShortDate(date)
 
   return (
     <span
