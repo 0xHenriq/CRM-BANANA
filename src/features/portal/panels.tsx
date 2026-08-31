@@ -98,6 +98,29 @@ export function FileFolder({
     onSettled: () => setProgress(null),
   })
 
+  /**
+   * The same upload, aimed at a row that already exists.
+   *
+   * Uploading a signed agreement used to leave the "Agreement" slot reading
+   * "Empty slot" and put agreement-signed.pdf at the bottom of the list — two
+   * rows for one document, and the category she had set up left unfilled.
+   * This fills the slot and keeps its name.
+   */
+  const fillSlot = useMutation({
+    mutationFn: async ({ fileId, file }: { fileId: string; file: File }) => {
+      setProgress(0)
+      await uploadMedia(file, {
+        clientId,
+        target: 'file',
+        fileId,
+        onProgress: setProgress,
+      })
+    },
+    onSuccess: invalidate,
+    onError: (err: Error) => toast.error(err.message),
+    onSettled: () => setProgress(null),
+  })
+
   const create = useMutation({
     mutationFn: () =>
       api.post(`/portal/files?client=${clientId}`, {
@@ -198,6 +221,12 @@ export function FileFolder({
                 onSetUrl={(externalUrl) =>
                   update.mutate({ id: file.id, externalUrl })
                 }
+                onUpload={(chosen) =>
+                  fillSlot.mutate({ fileId: file.id, file: chosen })
+                }
+                uploading={
+                  fillSlot.isPending && fillSlot.variables?.fileId === file.id
+                }
                 onDelete={() => remove.mutate(file.id)}
               />
             ))}
@@ -258,11 +287,15 @@ function FileRow({
   file,
   canEdit,
   onSetUrl,
+  onUpload,
+  uploading,
   onDelete,
 }: {
   file: PortalFile
   canEdit: boolean
   onSetUrl: (url: string) => void
+  onUpload: (chosen: File) => void
+  uploading: boolean
   onDelete: () => void
 }) {
   const [editing, setEditing] = useState(false)
@@ -336,6 +369,32 @@ function FileRow({
             <span className='shrink-0 text-xs text-muted-foreground'>
               Empty slot
             </span>
+          )}
+
+          {/*
+            Fill this exact slot, keeping its name.
+            
+            On every row, not only the empty ones: replacing last year's
+            agreement with this year's is the same action, and the superseded
+            bytes are removed server-side rather than left behind.
+          */}
+          {canEdit && (
+            <UploadButton
+              size='sm'
+              variant='ghost'
+              className='h-7 shrink-0 px-2 text-xs'
+              label={uploaded ? 'Replace' : 'Upload'}
+              icon={<Upload className='size-3' />}
+              // One file per slot — "Agreement" holds an agreement, not four.
+              // No `accept`: the card-level button sets none either, and the
+              // server decides from the bytes and says what it refused.
+              multiple={false}
+              pending={uploading}
+              onFiles={(list) => {
+                const chosen = list[0]
+                if (chosen) onUpload(chosen)
+              }}
+            />
           )}
         </>
       )}

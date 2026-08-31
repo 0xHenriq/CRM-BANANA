@@ -27,6 +27,8 @@ export async function uploadMedia(
     clientId: string | null
     target: 'content' | 'moodboard' | 'file' | 'logo'
     contentItemId?: string
+    /** Fills an existing File Folder row instead of adding a new one. */
+    fileId?: string
     caption?: string
     /** 0..1, or null once the bytes are sent and the server is working. */
     onProgress?: (fraction: number | null) => void
@@ -36,6 +38,7 @@ export async function uploadMedia(
   form.append('file', file)
   form.append('target', opts.target)
   if (opts.contentItemId) form.append('contentItemId', opts.contentItemId)
+  if (opts.fileId) form.append('fileId', opts.fileId)
   if (opts.caption) form.append('caption', opts.caption)
 
   const qs = opts.clientId ? `?client=${opts.clientId}` : ''

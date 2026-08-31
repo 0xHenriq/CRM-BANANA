@@ -43,12 +43,22 @@ const DEFAULT_LINKS = [
   { label: 'Shot List', icon: 'camera', url: '' },
 ] as const
 
-const DEFAULT_FILES = [
+/**
+ * The named slots the File Folder opens with. These ARE the categories.
+ *
+ * Exported so migration 0017's backfill and this list cannot disagree about
+ * what a new workspace gets: seeding only runs when a portal is first opened,
+ * so anything added here never reaches a client who already has a workspace
+ * unless a migration puts it there too.
+ */
+export const DEFAULT_FILES = [
   'Agreement',
   'Invoices',
   'Reports',
   'Social Strategy',
   'Shoot Planning',
+  // She asked for this one by name.
+  'Brief',
 ] as const
 
 /**

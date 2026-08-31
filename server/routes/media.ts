@@ -166,6 +166,17 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
     ? String(form['contentItemId'])
     : null
   const caption = form['caption'] ? String(form['caption']) : null
+  /**
+   * Fill an existing File Folder row rather than adding another one.
+   *
+   * Without it, uploading a signed agreement left the seeded "Agreement" slot
+   * still reading "Empty slot" AND added a second row called
+   * agreement-signed.pdf at the bottom — which is what she was describing when
+   * she said the folder "doesn't allow uploads into here or to categorise what
+   * it is". The named rows ARE the categories; they simply could not be
+   * filled.
+   */
+  const fileId = form['fileId'] ? String(form['fileId']) : null
   const name = file.name || 'Untitled'
 
   /**
@@ -278,6 +289,30 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
     )
     if (!item) return c.json({ error: 'That content item does not exist' }, 404)
     clientId = item.clientId
+  } else if (target === 'file' && fileId) {
+    /*
+     * Same rule, same reason: the ROW decides, not `?client=`.
+     *
+     * Filling a slot writes the bytes into a per-client directory, and taking
+     * that directory from the query string let the two disagree — verified by
+     * sending one client's fileId with another's `?client=`: the row stayed
+     * with its rightful owner (RLS saw to that) while its bytes were written
+     * under the other client's prefix. Nobody could reach data they should
+     * not, but the storage layout then lied about who a file belonged to, and
+     * anything walking those directories would mis-attribute it.
+     */
+    if (!isUuid(fileId)) {
+      return c.json({ error: 'That file slot does not exist' }, 404)
+    }
+    const [row] = await withTenant(c.get('tenant'), (tx) =>
+      tx
+        .select({ clientId: files.clientId })
+        .from(files)
+        .where(eq(files.id, fileId))
+        .limit(1)
+    )
+    if (!row) return c.json({ error: 'That file slot does not exist' }, 404)
+    clientId = row.clientId
   } else {
     clientId = await resolveClientId(c)
   }
@@ -393,6 +428,35 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
       }
 
       if (target === 'file') {
+        if (fileId) {
+          // Re-read inside the transaction for the key being superseded. The
+          // row's existence and its client were settled above, before any
+          // bytes were written.
+          const [before] = await tx
+            .select({ id: files.id, storageKey: files.storageKey })
+            .from(files)
+            .where(eq(files.id, fileId))
+            .limit(1)
+          if (!before) throw new Error('That file slot does not exist')
+
+          const [row] = await tx
+            .update(files)
+            .set({
+              storageKey: processed.storageKey,
+              mime: processed.mime,
+              sizeBytes: processed.sizeBytes,
+              uploadedBy: actorId,
+            })
+            .where(eq(files.id, fileId))
+            .returning()
+
+          // The row's NAME is deliberately untouched: the whole point is that
+          // "Agreement" stays called Agreement when the signed PDF lands in
+          // it. `replaced` frees the bytes of anything it superseded, using
+          // the same post-commit path a replaced logo uses.
+          return { file: row, replaced: before.storageKey }
+        }
+
         const [row] = await tx
           .insert(files)
           .values({
