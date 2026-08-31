@@ -49,7 +49,7 @@ import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { ContentDetailDialog } from './detail-dialog'
-import { StatusPill, TypePill } from './pills'
+import { ApprovalOverduePill, StatusPill, TypePill } from './pills'
 import { STATUS_LABEL, TYPE_LABEL } from './vocabulary'
 
 type SortKey = 'title' | 'type' | 'scheduledAt' | 'status'
@@ -319,7 +319,14 @@ function IdeaRow({
         {item.scheduledAt ?? '—'}
       </TableCell>
       <TableCell>
-        <StatusPill status={item.status} />
+        {/* Two pills, not one: the status still says where the post is in the
+            process, and the red one says the date went past without an answer.
+            Collapsing them into a single "overdue" status would lose the fact
+            that it is still sitting at ready-for-review. */}
+        <div className='flex flex-wrap items-center gap-1.5'>
+          <StatusPill status={item.status} />
+          <ApprovalOverduePill item={item} />
+        </div>
       </TableCell>
       {isStaff && (
         <TableCell>

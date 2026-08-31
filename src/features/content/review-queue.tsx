@@ -154,6 +154,17 @@ function StepRow({
             : 'To-do'}
         </span>
       </span>
+      {/*
+        No "Approval not received" pill here, deliberately.
+
+        This panel already answers it twice: the line above reads "Waiting on
+        the client", and DueDate renders a RED "3d overdue" badge for any date
+        that has passed. A third red badge saying the same thing is noise, and
+        two reds side by side make each other look less urgent rather than
+        more. The pill earns its place on the Ideas Bank table and on the post
+        itself, where the scheduled date is plain grey text and nothing else
+        marks it as missed.
+      */}
       {step.due ? (
         <DueDate date={step.due} />
       ) : (

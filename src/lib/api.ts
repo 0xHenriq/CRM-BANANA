@@ -174,6 +174,31 @@ export function isPastDate(iso: string | null | undefined): boolean {
   return then < new Date(now.getFullYear(), now.getMonth(), now.getDate())
 }
 
+/**
+ * A post that has sailed past its own posting date with nobody having said yes.
+ *
+ * Derived, never stored — the same rule as overdue payments and overdue
+ * invoices. A stored "approval overdue" flag would need something running at
+ * midnight to stay true, and a status that goes stale is worse than no status.
+ *
+ * `ready_for_review` is the only status this can apply to, and that is the
+ * whole rule rather than a shortcut. It is the one state meaning "sent to the
+ * client, nobody has decided": approving moves the row to `scheduled` or
+ * `approved`, and requesting changes moves it to `in_progress`, so any other
+ * status has already had its answer. An `approved` post sitting past its date
+ * is a different failure — nobody published it — and calling that an approval
+ * problem would send her chasing a client who already replied.
+ *
+ * No date means no deadline, so an undated item waiting for review is never
+ * overdue. `isPastDate` returns false for null, which is exactly that.
+ */
+export function isApprovalOverdue(item: {
+  status: ContentStatus
+  scheduledAt: string | null
+}): boolean {
+  return item.status === 'ready_for_review' && isPastDate(item.scheduledAt)
+}
+
 export function paymentState(deal: {
   paymentStatus: PaymentStatus
   paymentDue: string | null

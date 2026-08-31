@@ -41,6 +41,7 @@ import {
   PAYMENT_STATUSES as CLIENT_PAYMENTS,
   INVOICE_STATUSES as CLIENT_INVOICE_STATUSES,
   invoiceState,
+  isApprovalOverdue,
   outstandingPence,
   paymentState,
   formatPence,
@@ -142,6 +143,69 @@ describe('client statuses', () => {
  * to that length. Any two of them disagreeing is a 400 on every save or a
  * silently dropped colour.
  */
+/**
+ * The red "Approval not received" tag.
+ *
+ * Derived at render like overdue payments and overdue invoices, so these are
+ * the tests that stop it drifting. The rule is narrow on purpose and the tests
+ * say why for each excluded status.
+ */
+describe('overdue approval', () => {
+  const iso = (offsetDays: number) => {
+    const d = new Date()
+    d.setDate(d.getDate() + offsetDays)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+
+  it('flags a post sent for review whose day has passed', () => {
+    expect(
+      isApprovalOverdue({ status: 'ready_for_review', scheduledAt: iso(-1) })
+    ).toBe(true)
+  })
+
+  it('does not flag one whose day is still to come', () => {
+    expect(
+      isApprovalOverdue({ status: 'ready_for_review', scheduledAt: iso(1) })
+    ).toBe(false)
+  })
+
+  it('does not flag one due today — she still has the day to chase it', () => {
+    expect(
+      isApprovalOverdue({ status: 'ready_for_review', scheduledAt: iso(0) })
+    ).toBe(false)
+  })
+
+  it('never flags an undated post: no date is no deadline', () => {
+    expect(
+      isApprovalOverdue({ status: 'ready_for_review', scheduledAt: null })
+    ).toBe(false)
+  })
+
+  /**
+   * The important half. Every other status has already had its answer —
+   * approving moves the row to scheduled/approved and requesting changes moves
+   * it to in_progress — so flagging one would send her chasing a client who
+   * already replied. An `approved` post past its date is a publishing failure,
+   * not an approval one.
+   */
+  it('never flags a status that has already been decided', () => {
+    for (const status of CLIENT_STATUSES) {
+      if (status === 'ready_for_review') continue
+      expect(
+        isApprovalOverdue({ status, scheduledAt: iso(-30) }),
+        status
+      ).toBe(false)
+    }
+  })
+
+  it('covers every status the enum has, so a new one cannot be forgotten', () => {
+    // If a status is added to the enum, this list grows with it and the loop
+    // above starts asserting about it — which is the point.
+    expect(CLIENT_STATUSES).toContain('ready_for_review')
+    expect(CLIENT_STATUSES.length).toBeGreaterThan(1)
+  })
+})
+
 describe('brand palette', () => {
   it('is the same number of slots on both sides, with a label for each', () => {
     expect(UI_BRAND_SLOTS).toBe(SERVER_BRAND_SLOTS)

@@ -45,7 +45,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { UploadButton } from '@/components/upload-button'
 import { HashtagEditor } from './hashtag-editor'
-import { StatusPill, TypePill } from './pills'
+import { ApprovalOverduePill, StatusPill, TypePill } from './pills'
 import { STATUS_LABEL, TYPE_LABEL } from './vocabulary'
 
 /**
@@ -82,6 +82,13 @@ export function ContentDetailDialog({
     await queryClient.invalidateQueries({ queryKey: ['next-steps'] })
     // The dashboard's awaiting count comes from the client list.
     await queryClient.invalidateQueries({ queryKey: ['clients'] })
+    // Feed cells carry title, status and the scheduled date, so a patch or a
+    // decision made here changes what the grid shows. This used to be bolted
+    // on at two of the five call sites — the upload and the duplicate — which
+    // left `patch` and `decide` refreshing everything EXCEPT the grid: the
+    // client approved a post and its cell still read "Ready for review".
+    // Every caller needs it, so it belongs in the shared helper.
+    await queryClient.invalidateQueries({ queryKey: ['feed'] })
   }
 
   const patch = useMutation({
@@ -115,8 +122,6 @@ export function ContentDetailDialog({
     },
     onSuccess: async () => {
       await invalidate()
-      // The feed grid is built from these assets, so it is stale now too.
-      await queryClient.invalidateQueries({ queryKey: ['feed'] })
     },
     onError: (err: Error) => toast.error(err.message),
     onSettled: () => setProgress(null),
@@ -133,7 +138,6 @@ export function ContentDetailDialog({
       api.post<{ assetsCopied: number }>(`/content/${itemId}/duplicate`),
     onSuccess: async (result) => {
       await invalidate()
-      await queryClient.invalidateQueries({ queryKey: ['feed'] })
       toast.success(
         result.assetsCopied
           ? `Copied to the Ideas Bank with ${result.assetsCopied} asset${result.assetsCopied === 1 ? '' : 's'}.`
@@ -188,6 +192,7 @@ export function ContentDetailDialog({
                 <div className='flex flex-wrap items-center gap-2 pt-1'>
                   <TypePill type={item.type} />
                   <StatusPill status={item.status} />
+                  <ApprovalOverduePill item={item} />
                   {item.scheduledAt ? (
                     <span className='text-xs text-muted-foreground'>
                       Scheduled {item.scheduledAt}
@@ -439,13 +444,24 @@ export function ContentDetailDialog({
                   placeholder='Optional note — what needs changing?'
                   className='min-h-14 resize-y bg-card'
                 />
+                {/*
+                  The spinner goes on the button that was actually pressed.
+
+                  Both buttons disable while a decision is in flight, which is
+                  right — content_approvals is append-only, so a double click
+                  writes two rows that can never be tidied up. But the spinner
+                  was hard-wired to Approve, so requesting changes greyed both
+                  buttons and span the APPROVE one: for as long as the request
+                  took, the screen said she was approving a post she had just
+                  sent back. `decide.variables` is the decision in flight.
+                */}
                 <div className='flex flex-wrap gap-2'>
                   <Button
                     size='sm'
                     onClick={() => decide.mutate('approved')}
                     disabled={decide.isPending}
                   >
-                    {decide.isPending ? (
+                    {decide.isPending && decide.variables === 'approved' ? (
                       <Loader2 className='animate-spin' />
                     ) : (
                       <Check />
@@ -458,7 +474,12 @@ export function ContentDetailDialog({
                     onClick={() => decide.mutate('changes_requested')}
                     disabled={decide.isPending}
                   >
-                    <Undo2 />
+                    {decide.isPending &&
+                    decide.variables === 'changes_requested' ? (
+                      <Loader2 className='animate-spin' />
+                    ) : (
+                      <Undo2 />
+                    )}
                     Request changes
                   </Button>
                 </div>
