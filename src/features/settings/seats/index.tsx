@@ -5,10 +5,12 @@ import { toast } from 'sonner'
 import {
   api,
   formatShortDate,
+  type InviteResult,
   localDayOf,
   type ClientSummary,
 } from '@/lib/api'
 import { copyText } from '@/lib/copy-text'
+import { useCurrentUser } from '@/hooks/use-current-user'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -68,6 +70,7 @@ type Seats = {
  */
 export function SettingsSeats() {
   const queryClient = useQueryClient()
+  const { data: currentUser } = useCurrentUser()
   const [confirmRemove, setConfirmRemove] = useState<
     Seats['members'][number] | null
   >(null)
@@ -97,8 +100,13 @@ export function SettingsSeats() {
           : 'Seat removed.'
       )
       await queryClient.invalidateQueries({ queryKey: ['seats'] })
-      // Their access rows are gone, so the client page's seat list is stale.
+      // Their client_access rows are gone, and TWO other screens count those:
+      // the client page's seat list (['client', id]) and the "Seats" metric on
+      // every card in the Clients list (['clients', …]). Prefix matching means
+      // these two keys cover both, but they are element-wise — ['client'] does
+      // NOT match ['clients'], which is why both are here rather than one.
       await queryClient.invalidateQueries({ queryKey: ['client'] })
+      await queryClient.invalidateQueries({ queryKey: ['clients'] })
     },
     onError: (err: Error) => toast.error(err.message),
   })
@@ -159,20 +167,40 @@ export function SettingsSeats() {
                         <p className='truncate text-sm font-semibold'>
                           {m.name || m.email}
                         </p>
-                        <p className='truncate text-xs text-muted-foreground'>
-                          {m.email}
-                        </p>
+                        {/* Only when it adds something. An account with no
+                            name fell back to the email above, and then
+                            printed the same email again underneath it. */}
+                        {m.name && (
+                          <p className='truncate text-xs text-muted-foreground'>
+                            {m.email}
+                          </p>
+                        )}
                       </div>
                       <RolePill role={m.role} isStaff={m.isStaff} />
-                      <Button
-                        size='icon'
-                        variant='ghost'
-                        className='size-7'
-                        aria-label={`Remove ${m.email}`}
-                        onClick={() => setConfirmRemove(m)}
-                      >
-                        <Trash2 className='size-3.5' />
-                      </Button>
+                      {/*
+                        No remove button on your own row.
+                        
+                        The server refuses it — she cannot leave the agency
+                        with no owner — so offering the button here only ever
+                        produced a confirmation dialog followed by a 409. A
+                        control whose single outcome is an error is worse than
+                        no control.
+                      */}
+                      {m.userId === currentUser?.id ? (
+                        <span className='px-2 text-[0.6875rem] text-muted-foreground'>
+                          You
+                        </span>
+                      ) : (
+                        <Button
+                          size='icon'
+                          variant='ghost'
+                          className='size-7'
+                          aria-label={`Remove ${m.email}`}
+                          onClick={() => setConfirmRemove(m)}
+                        >
+                          <Trash2 className='size-3.5' />
+                        </Button>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -231,12 +259,30 @@ export function SettingsSeats() {
           title={`Remove ${confirmRemove?.email}?`}
           desc={
             <>
-              They lose their seat immediately, and{' '}
-              <strong>every workspace they could see closes with it</strong>.
-              Their sign-in still exists but there will be nothing behind it.
+              {/*
+                Staff and clients lose different things, so the warning says
+                which. A staff member holds no client_access rows at all —
+                they see every client through app_is_staff() — so telling her
+                "every workspace they could see closes" would be describing
+                something that does not happen.
+              */}
+              {confirmRemove?.isStaff ? (
+                <>
+                  They lose their seat immediately and stop being agency staff,
+                  so the CRM closes to them.
+                </>
+              ) : (
+                <>
+                  They lose their seat immediately, and{' '}
+                  <strong>every workspace they could see closes with it</strong>
+                  .
+                </>
+              )}
               <br />
               <br />
-              Nothing they uploaded or approved is deleted.
+              Their sign-in still exists but there will be nothing behind it,
+              and nothing they uploaded or approved is deleted. You can add
+              them back later with the same address.
             </>
           }
           confirmText='Remove seat'
@@ -260,9 +306,20 @@ function RolePill({ role, isStaff }: { role: string; isStaff: boolean }) {
         isStaff ? 'bg-bd-yellow' : 'bg-bd-sand'
       )}
     >
-      {/* "owner" comes off the member row lowercase; "Client" is ours. Two
-          capitalisations side by side in one list looks like a bug. */}
-      {isStaff ? role.charAt(0).toUpperCase() + role.slice(1) : 'Client'}
+      {/*
+        "owner" comes off the member row lowercase while "Client" is ours, and
+        two capitalisations side by side in one list read as a bug. The row can
+        also hold a comma-separated list — isStaffRole splits on commas for
+        exactly that reason — which rendered as "Owner,admin".
+      */}
+      {isStaff
+        ? role
+            .split(',')
+            .map((r) => r.trim())
+            .filter(Boolean)
+            .map((r) => r.charAt(0).toUpperCase() + r.slice(1))
+            .join(' · ')
+        : 'Client'}
     </span>
   )
 }
@@ -297,17 +354,28 @@ function InviteDialog({
 
   const invite = useMutation({
     mutationFn: () =>
-      api.post<{ inviteUrl: string }>('/seats/invite', {
+      api.post<InviteResult>('/seats/invite', {
         email: email.trim(),
         role,
         clientIds: role === 'client' ? clientIds : [],
       }),
     onSuccess: async (result) => {
-      // The dialog stays open and switches to showing the link. Closing on
-      // success would be the usual thing and would throw away the one piece of
-      // information the whole flow exists to produce.
-      setInviteUrl(result.inviteUrl)
+      if (result.kind === 'granted') {
+        // Already had an account: access is live now and there is no link.
+        toast.success(
+          `${result.email} already has a login — access granted to ${result.workspacesGranted} workspace${result.workspacesGranted === 1 ? '' : 's'}. Nothing to send.`
+        )
+        setOpen(false)
+        reset()
+      } else {
+        // The dialog stays open and switches to showing the link. Closing on
+        // success would be the usual thing and would throw away the one piece
+        // of information the whole flow exists to produce.
+        setInviteUrl(result.inviteUrl)
+      }
       await queryClient.invalidateQueries({ queryKey: ['seats'] })
+      await queryClient.invalidateQueries({ queryKey: ['client'] })
+      await queryClient.invalidateQueries({ queryKey: ['clients'] })
     },
     onError: (err: Error) => toast.error(err.message),
   })

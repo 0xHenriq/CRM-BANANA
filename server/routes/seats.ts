@@ -109,11 +109,90 @@ seatsRoutes.post('/invite', async (c) => {
     }
   }
 
+  const organizationId = await getOrganizationId()
+
+  /**
+   * Somebody who already has an account is GRANTED access, not invited.
+   *
+   * Invitations only work for an address with no account: the accept handler
+   * refuses one that exists ("Sign in instead") and Better Auth refuses to
+   * invite an existing member outright. So without this branch, the whole
+   * flow dead-ends for two ordinary situations — a contact who works across
+   * two of her clients, and anyone whose seat was removed and is being added
+   * back — and the only thing on screen was "Could not create the
+   * invitation."
+   *
+   * Matched case-insensitively, because contacts and invitations are both
+   * typed by hand and `user.email` is compared exactly everywhere else. Left
+   * exact, "Jane@x.com" would miss the existing "jane@x.com" and go on to
+   * mint an invitation that can never be accepted.
+   */
+  const [existingUser] = await db
+    .select({ id: user.id, email: user.email })
+    .from(user)
+    .where(sql`lower(${user.email}) = lower(${email})`)
+    .limit(1)
+
+  if (existingUser) {
+    const [existingMember] = await db
+      .select({ id: member.id, role: member.role })
+      .from(member)
+      .where(
+        and(
+          eq(member.userId, existingUser.id),
+          eq(member.organizationId, organizationId)
+        )
+      )
+      .limit(1)
+
+    // Already a seat holder: no seat is consumed, so the cap below does not
+    // apply and must not block. Granting a second workspace to an existing
+    // client is exactly the thing that should still work at 10 of 10.
+    if (existingMember) {
+      if (role !== CLIENT_ROLE) {
+        return c.json(
+          {
+            error: `${existingUser.email} already has a seat. Remove it first if you need to change what they are.`,
+          },
+          409
+        )
+      }
+      if (!isStaffRole(existingMember.role)) {
+        const granted = await withTenant(c.get('tenant'), (tx) =>
+          tx
+            .insert(clientAccess)
+            .values(
+              clientIds.map((clientId) => ({ userId: existingUser.id, clientId }))
+            )
+            .onConflictDoNothing()
+            .returning({ clientId: clientAccess.clientId })
+        )
+        logger.info(
+          { userId: existingUser.id, granted: granted.length },
+          'existing seat granted more workspaces'
+        )
+        return c.json({
+          kind: 'granted' as const,
+          email: existingUser.email,
+          workspacesGranted: granted.length,
+        })
+      }
+      return c.json(
+        {
+          error: `${existingUser.email} is agency staff and already sees every client.`,
+        },
+        409
+      )
+    }
+    // A user with no membership — their seat was removed at some point. Adding
+    // them back DOES consume a seat, so this falls through to the cap check
+    // and is handled after it.
+  }
+
   // Explicit pre-check rather than relying on the plugin to reject.
   // `membershipLimit` guards acceptance; without this, she could send fifteen
   // invitations and five people would hit an error after clicking their link —
   // the failure landing on her clients rather than on her.
-  const organizationId = await getOrganizationId()
   const [{ used }] = await db
     .select({ used: sql<number>`count(*)::int` })
     .from(member)
@@ -137,6 +216,48 @@ seatsRoutes.post('/invite', async (c) => {
     )
   }
 
+  /**
+   * The account outlived its seat. Put the seat back rather than inviting.
+   *
+   * Removing a seat deletes the membership and the workspace grants but leaves
+   * the login — so adding the same person back a week later hit the same
+   * dead end as any other existing account. The seat cap above has already
+   * been checked, because this genuinely consumes one.
+   */
+  if (existingUser) {
+    const restoredRole = role === CLIENT_ROLE ? CLIENT_ROLE : role
+    await db.insert(member).values({
+      id: crypto.randomUUID(),
+      organizationId,
+      userId: existingUser.id,
+      role: restoredRole,
+      createdAt: new Date(),
+    })
+
+    const granted = clientIds.length
+      ? await withTenant(c.get('tenant'), (tx) =>
+          tx
+            .insert(clientAccess)
+            .values(
+              clientIds.map((clientId) => ({ userId: existingUser.id, clientId }))
+            )
+            .onConflictDoNothing()
+            .returning({ clientId: clientAccess.clientId })
+        )
+      : []
+
+    logger.info(
+      { userId: existingUser.id, role: restoredRole, granted: granted.length },
+      'seat restored for an existing account'
+    )
+    return c.json({
+      kind: 'granted' as const,
+      email: existingUser.email,
+      workspacesGranted: granted.length,
+      restored: true,
+    })
+  }
+
   let invitationId: string
   try {
     const created = await auth.api.createInvitation({
@@ -145,17 +266,32 @@ seatsRoutes.post('/invite', async (c) => {
     })
     invitationId = created.id
   } catch (err) {
-    // membershipLimit rejections land here.
     logger.warn({ err, email, role }, 'invitation rejected')
-    return c.json(
-      {
-        error:
-          err instanceof Error && /limit/i.test(err.message)
+
+    /*
+     * Say which refusal it was.
+     *
+     * Every one of these used to read "Could not create the invitation.",
+     * which is true and useless: she cannot tell a typo from a duplicate from
+     * a full house, and the three have different fixes. Better Auth names the
+     * reason in a stable code, so it is read rather than guessed at from the
+     * message text.
+     */
+    const code =
+      err && typeof err === 'object' && 'body' in err
+        ? ((err as { body?: { code?: string } }).body?.code ?? '')
+        : ''
+
+    const message =
+      code === 'USER_IS_ALREADY_INVITED_TO_THIS_ORGANIZATION'
+        ? `${email} has already been invited. Revoke that invitation on the Seats page if you need to send a fresh link.`
+        : code === 'USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION'
+          ? `${email} already has a seat.`
+          : err instanceof Error && /limit/i.test(err.message)
             ? `All ${env.MAX_SEATS} seats are taken or reserved by a pending invitation.`
-            : 'Could not create the invitation.',
-      },
-      400
-    )
+            : 'Could not create the invitation.'
+
+    return c.json({ error: message }, 400)
   }
 
   // Staged in the database, not process memory: the user row does not exist
@@ -184,6 +320,7 @@ seatsRoutes.post('/invite', async (c) => {
   // Caddy on an internal port, so the request origin is not a URL anyone can
   // open. This link goes to a human.
   return c.json({
+    kind: 'invited' as const,
     invitationId,
     email,
     role,

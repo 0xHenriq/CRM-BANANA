@@ -23,6 +23,7 @@ import {
   BRAND_COLOR_SLOTS,
   brandPalette,
   formatMoney,
+  type InviteResult,
   normaliseHex,
   type ClientDetail,
   CLIENT_STATUSES,
@@ -217,7 +218,12 @@ export function ClientDetailPage({
     )
   }
 
-  const { client, contacts, deals, timeline, seats, pendingInvites } = data
+  // `pendingInvites` defaults because it is a NEW field on this payload: for a
+  // few seconds after a deploy, an open tab can render a response cached from
+  // before it, and `undefined.map` blanks the whole client page rather than
+  // degrading. An absent list genuinely is an empty list, so this is a default
+  // and not a guess.
+  const { client, contacts, deals, timeline, seats, pendingInvites = [] } = data
 
   return (
     <>
@@ -879,22 +885,36 @@ function ContactsCard({
 
   const invite = useMutation({
     mutationFn: (email: string) =>
-      api.post<{ inviteUrl: string }>('/seats/invite', {
+      api.post<InviteResult>('/seats/invite', {
         email,
         role: 'client',
         clientIds: [clientId],
       }),
     onSuccess: async (result) => {
-      const ok = await copyText(result.inviteUrl)
-      // Says what it did, and does not pretend to have emailed anyone.
-      toast[ok ? 'success' : 'error'](
-        ok
-          ? 'Invite link copied. Send it to them yourself — there is no email delivery yet.'
-          : `Invitation created, but the copy failed. The link is ${result.inviteUrl}`,
-        { duration: ok ? 6000 : 30000 }
-      )
+      // An address that already has an account is granted access outright —
+      // there is no link, because there is nothing for them to accept. They
+      // just sign in with what they already have.
+      if (result.kind === 'granted') {
+        toast.success(
+          result.restored
+            ? `${result.email} already had an account, so their seat is back and this workspace is open to them.`
+            : `${result.email} already has a login — this workspace is now open to them. Nothing to send.`
+        )
+      } else {
+        const ok = await copyText(result.inviteUrl)
+        // Says what it did, and does not pretend to have emailed anyone.
+        toast[ok ? 'success' : 'error'](
+          ok
+            ? 'Invite link copied. Send it to them yourself — there is no email delivery yet.'
+            : `Invitation created, but the copy failed. The link is ${result.inviteUrl}`,
+          { duration: ok ? 6000 : 30000 }
+        )
+      }
       await invalidate()
       await queryClient.invalidateQueries({ queryKey: ['seats'] })
+      // A grant writes client_access, which is the Seats metric on every card
+      // in the Clients list.
+      await queryClient.invalidateQueries({ queryKey: ['clients'] })
     },
     onError: (err: Error) => toast.error(err.message),
   })

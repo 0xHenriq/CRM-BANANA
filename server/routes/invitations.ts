@@ -75,10 +75,21 @@ invitationRoutes.post('/:id/accept', async (c) => {
     return c.json({ error: 'This invitation is no longer valid.' }, 404)
   }
 
+  /*
+   * Case-insensitive, matching the invite path.
+   *
+   * `user_email_unique` is a plain btree on `email`, so "Jane@x.com" and
+   * "jane@x.com" are two different rows to Postgres and would become two
+   * accounts for one person — with sign-in landing on whichever they happened
+   * to type. POST /seats/invite now refuses to mint an invitation for an
+   * address that already exists in any casing, so this is the second of two
+   * gates rather than the only one; it is here because two halves of one flow
+   * comparing the same field two different ways is how the gap comes back.
+   */
   const existing = await db
     .select({ id: user.id })
     .from(user)
-    .where(eq(user.email, inv.email))
+    .where(sql`lower(${user.email}) = lower(${inv.email})`)
     .limit(1)
 
   if (existing.length) {

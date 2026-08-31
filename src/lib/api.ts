@@ -119,6 +119,24 @@ export const DEAL_STAGES = [
 
 export type DealStage = (typeof DEAL_STAGES)[number]
 
+/**
+ * What POST /seats/invite did.
+ *
+ * Two genuinely different outcomes, so the caller is made to tell them apart:
+ * a brand-new address gets an invitation and a link to pass on; an address
+ * that already has an account is granted access there and then, and there is
+ * no link because there is nothing to accept. Rendering the second as the
+ * first would put the word "undefined" on her clipboard.
+ */
+export type InviteResult =
+  | { kind: 'invited'; email: string; inviteUrl: string }
+  | {
+      kind: 'granted'
+      email: string
+      workspacesGranted: number
+      restored?: boolean
+    }
+
 export type ClientSummary = {
   id: string
   name: string

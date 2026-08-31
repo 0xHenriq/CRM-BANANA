@@ -89,6 +89,20 @@ export function ContentDetailDialog({
     // client approved a post and its cell still read "Ready for review".
     // Every caller needs it, so it belongs in the shared helper.
     await queryClient.invalidateQueries({ queryKey: ['feed'] })
+    /*
+     * And the client's own page.
+     *
+     * Every mutation in this dialog writes an `activities` row — approving,
+     * requesting changes, renaming, rescheduling — and that row is the
+     * Activity timeline on the client page, which reads ['client', clientId].
+     * The dialog opens from Next Steps, which sits ON that page, so she could
+     * approve a post and watch the timeline below it not mention it.
+     *
+     * ['clients'] above does NOT cover this. Prefix matching is element-wise:
+     * ['clients'] and ['client', id] share no first element, and mistaking one
+     * for the other is the exact bug this codebase has already paid for twice.
+     */
+    await queryClient.invalidateQueries({ queryKey: ['client'] })
   }
 
   const patch = useMutation({
