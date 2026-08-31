@@ -1,5 +1,5 @@
 import { Client, Pool, type PoolClient } from 'pg'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 /**
  * Fixtures for the isolation suite.
@@ -92,6 +92,31 @@ export type Fixture = {
   /** Draft: her working copy. Neither it nor its payment may be visible. */
   invoiceADraft: string
   invoiceB: string
+  /** Client B's own post, so a token for one client cannot reach the other. */
+  contentB: string
+  /**
+   * Share links, and their token hashes.
+   *
+   * `review_links` sat in STAFF_ONLY_TABLES with ZERO rows, so every isolation
+   * assertion over it passed by having nothing to read — the table agreed with
+   * the suite rather than with Postgres. Four rows, covering the shapes the
+   * policies actually have to tell apart.
+   */
+  reviewLinkA: string
+  reviewLinkAHash: string
+  reviewLinkFeedA: string
+  reviewLinkFeedAHash: string
+  /** Points at client B, so a token cannot be used to read client A. */
+  reviewLinkB: string
+  reviewLinkBHash: string
+  /** Item-scoped but pointed at the HIDDEN item, which must stay unreadable. */
+  reviewLinkHidden: string
+  reviewLinkHiddenHash: string
+  /** Expired and revoked, so redemption failure is exercised, not assumed. */
+  reviewLinkExpired: string
+  reviewLinkExpiredHash: string
+  reviewLinkRevoked: string
+  reviewLinkRevokedHash: string
 }
 
 const TENANT_TABLES = [
@@ -163,6 +188,27 @@ export async function resetAndSeed(): Promise<Fixture> {
       moodboardB: randomUUID(),
       noticeA: randomUUID(),
       noticeB: randomUUID(),
+      contentB: randomUUID(),
+      reviewLinkA: randomUUID(),
+      reviewLinkFeedA: randomUUID(),
+      reviewLinkB: randomUUID(),
+      reviewLinkHidden: randomUUID(),
+      reviewLinkExpired: randomUUID(),
+      reviewLinkRevoked: randomUUID(),
+    }
+
+    // Hashes, exactly as the application stores them: sha256 hex of a token
+    // that is never written down. The tests redeem by hash, which is what
+    // withReviewToken does.
+    const hash = (raw: string) =>
+      createHash('sha256').update(raw).digest('hex')
+    const hashes = {
+      reviewLinkAHash: hash(`tok-a-${ids.reviewLinkA}`),
+      reviewLinkFeedAHash: hash(`tok-feed-${ids.reviewLinkFeedA}`),
+      reviewLinkBHash: hash(`tok-b-${ids.reviewLinkB}`),
+      reviewLinkHiddenHash: hash(`tok-hidden-${ids.reviewLinkHidden}`),
+      reviewLinkExpiredHash: hash(`tok-exp-${ids.reviewLinkExpired}`),
+      reviewLinkRevokedHash: hash(`tok-rev-${ids.reviewLinkRevoked}`),
     }
 
     await c.query(
@@ -175,8 +221,33 @@ export async function resetAndSeed(): Promise<Fixture> {
     await c.query(
       `insert into content_items(id, client_id, title, type, status, visible_to_client)
        values ($1,$2,'Shared for review','reel','ready_for_review',true),
-              ($3,$2,'Raw idea, rejected pitch','graphic','idea',false)`,
-      [ids.contentAVisible, clientA, ids.contentAHidden]
+              ($3,$2,'Raw idea, rejected pitch','graphic','idea',false),
+              ($4,$5,'Client B post','reel','ready_for_review',true)`,
+      [ids.contentAVisible, clientA, ids.contentAHidden, ids.contentB, clientB]
+    )
+
+    /*
+     * Six share links, covering every branch redemption has to tell apart:
+     * a live item link, a live feed link, one belonging to the OTHER client,
+     * one aimed at an item that is not shared with the client, one expired and
+     * one revoked. Without rows, `review_links` assertions were vacuous.
+     */
+    await c.query(
+      `insert into review_links(id, client_id, content_item_id, scope, token_hash, expires_at, revoked_at)
+       values ($1,  $2, $3,   'content_item', $4,  now() + interval '30 days', null),
+              ($5,  $2, null, 'feed',         $6,  now() + interval '30 days', null),
+              ($7,  $8, $9,   'content_item', $10, now() + interval '30 days', null),
+              ($11, $2, $12,  'content_item', $13, now() + interval '30 days', null),
+              ($14, $2, $3,   'content_item', $15, now() - interval '1 day',   null),
+              ($16, $2, $3,   'content_item', $17, now() + interval '30 days', now())`,
+      [
+        ids.reviewLinkA, clientA, ids.contentAVisible, hashes.reviewLinkAHash,
+        ids.reviewLinkFeedA, hashes.reviewLinkFeedAHash,
+        ids.reviewLinkB, clientB, ids.contentB, hashes.reviewLinkBHash,
+        ids.reviewLinkHidden, ids.contentAHidden, hashes.reviewLinkHiddenHash,
+        ids.reviewLinkExpired, hashes.reviewLinkExpiredHash,
+        ids.reviewLinkRevoked, hashes.reviewLinkRevokedHash,
+      ]
     )
 
     await c.query(
@@ -245,6 +316,13 @@ export async function resetAndSeed(): Promise<Fixture> {
        values ($1,$2,'image','september-grid-01.jpg')`,
       [clientA, ids.contentAVisible]
     )
+    // Client B's, so "a token for A cannot read B's creative" has something to
+    // fail on rather than passing because B owns no assets.
+    await c.query(
+      `insert into content_assets(client_id, content_item_id, kind, storage_key)
+       values ($1,$2,'image','client-b-secret.jpg')`,
+      [clientB, ids.contentB]
+    )
 
     /**
      * An organization and a pending invitation.
@@ -311,6 +389,7 @@ export async function resetAndSeed(): Promise<Fixture> {
       invoiceADraft,
       invoiceB,
       ...ids,
+      ...hashes,
     }
   } catch (err) {
     await c.query('rollback')
@@ -440,6 +519,34 @@ export const ALL_TENANT_TABLES = [
  * SQL helpers do with a malformed one — an empty string, or something that is
  * not a boolean at all. Those are the inputs a bug would actually produce.
  */
+/**
+ * Runs a query under a share link's session variables.
+ *
+ * Deliberately built from `asActorRaw` rather than calling `withReviewToken`:
+ * the point of these tests is what POSTGRES does with a review context, not
+ * what the redeeming helper does before it. Setting the GUCs by hand also
+ * exercises the case the helper would never produce — a review context for a
+ * link the helper would have refused — which is where a policy arm that
+ * forgot its `visible_to_client` term would show up.
+ */
+export async function asReviewer<T = unknown>(
+  review: { linkId: string; contentItemId?: string; feedClientId?: string },
+  sql: string,
+  params: unknown[] = []
+): Promise<T[]> {
+  return asActorRaw<T>(
+    {
+      'app.user_id': '',
+      'app.is_staff': 'false',
+      'app.review_link_id': review.linkId,
+      'app.review_content_id': review.contentItemId ?? '',
+      'app.review_feed_client_id': review.feedClientId ?? '',
+    },
+    sql,
+    params
+  )
+}
+
 export async function asActorRaw<T = unknown>(
   settings: Record<string, string>,
   sql: string,

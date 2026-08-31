@@ -21,6 +21,7 @@ import { Route as AuthenticatedClientsRouteImport } from './routes/_authenticate
 import { Route as AuthenticatedPipelineRouteImport } from './routes/_authenticated/pipeline'
 import { Route as AuthenticatedSettingsRouteRouteImport } from './routes/_authenticated/settings/route'
 import { Route as authAcceptInvitationInvitationIdRouteImport } from './routes/(auth)/accept-invitation/$invitationId'
+import { Route as shareShareTokenRouteImport } from './routes/(share)/share/$token'
 import { Route as AuthenticatedClientsClientIdRouteImport } from './routes/_authenticated/clients_.$clientId'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
 import { Route as AuthenticatedPortalIndexRouteImport } from './routes/_authenticated/portal/index'
@@ -96,6 +97,11 @@ const authAcceptInvitationInvitationIdRoute =
     path: '/accept-invitation/$invitationId',
     getParentRoute: () => rootRouteImport,
   } as any)
+const shareShareTokenRoute = shareShareTokenRouteImport.update({
+  id: '/(share)/share/$token',
+  path: '/share/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedClientsClientIdRoute =
   AuthenticatedClientsClientIdRouteImport.update({
     id: '/clients_/$clientId',
@@ -186,6 +192,7 @@ export interface FileRoutesByFullPath {
   '/clients': typeof AuthenticatedClientsRoute
   '/pipeline': typeof AuthenticatedPipelineRoute
   '/accept-invitation/$invitationId': typeof authAcceptInvitationInvitationIdRoute
+  '/share/$token': typeof shareShareTokenRoute
   '/clients/$clientId': typeof AuthenticatedClientsClientIdRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/portal/calendar': typeof AuthenticatedPortalCalendarRoute
@@ -211,6 +218,7 @@ export interface FileRoutesByTo {
   '/pipeline': typeof AuthenticatedPipelineRoute
   '/': typeof AuthenticatedIndexRoute
   '/accept-invitation/$invitationId': typeof authAcceptInvitationInvitationIdRoute
+  '/share/$token': typeof shareShareTokenRoute
   '/clients/$clientId': typeof AuthenticatedClientsClientIdRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/portal/calendar': typeof AuthenticatedPortalCalendarRoute
@@ -239,6 +247,7 @@ export interface FileRoutesById {
   '/_authenticated/pipeline': typeof AuthenticatedPipelineRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/(auth)/accept-invitation/$invitationId': typeof authAcceptInvitationInvitationIdRoute
+  '/(share)/share/$token': typeof shareShareTokenRoute
   '/_authenticated/clients_/$clientId': typeof AuthenticatedClientsClientIdRoute
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/_authenticated/portal/calendar': typeof AuthenticatedPortalCalendarRoute
@@ -267,6 +276,7 @@ export interface FileRouteTypes {
     | '/clients'
     | '/pipeline'
     | '/accept-invitation/$invitationId'
+    | '/share/$token'
     | '/clients/$clientId'
     | '/errors/$error'
     | '/portal/calendar'
@@ -292,6 +302,7 @@ export interface FileRouteTypes {
     | '/pipeline'
     | '/'
     | '/accept-invitation/$invitationId'
+    | '/share/$token'
     | '/clients/$clientId'
     | '/errors/$error'
     | '/portal/calendar'
@@ -319,6 +330,7 @@ export interface FileRouteTypes {
     | '/_authenticated/pipeline'
     | '/_authenticated/'
     | '/(auth)/accept-invitation/$invitationId'
+    | '/(share)/share/$token'
     | '/_authenticated/clients_/$clientId'
     | '/_authenticated/errors/$error'
     | '/_authenticated/portal/calendar'
@@ -343,6 +355,7 @@ export interface RootRouteChildren {
   errors500Route: typeof errors500Route
   errors503Route: typeof errors503Route
   authAcceptInvitationInvitationIdRoute: typeof authAcceptInvitationInvitationIdRoute
+  shareShareTokenRoute: typeof shareShareTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -429,6 +442,13 @@ declare module '@tanstack/react-router' {
       path: '/accept-invitation/$invitationId'
       fullPath: '/accept-invitation/$invitationId'
       preLoaderRoute: typeof authAcceptInvitationInvitationIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/(share)/share/$token': {
+      id: '/(share)/share/$token'
+      path: '/share/$token'
+      fullPath: '/share/$token'
+      preLoaderRoute: typeof shareShareTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/clients_/$clientId': {
@@ -590,6 +610,7 @@ const rootRouteChildren: RootRouteChildren = {
   errors500Route: errors500Route,
   errors503Route: errors503Route,
   authAcceptInvitationInvitationIdRoute: authAcceptInvitationInvitationIdRoute,
+  shareShareTokenRoute: shareShareTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

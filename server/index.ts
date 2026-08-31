@@ -16,11 +16,35 @@ import { clientRoutes } from './routes/clients.js'
 import { dealRoutes } from './routes/deals.js'
 import { invoiceRoutes } from './routes/invoices.js'
 import { portalRoutes } from './routes/portal.js'
+import { reviewRoutes } from './routes/review.js'
+import { shareRoutes } from './routes/shares.js'
 import { contentRoutes } from './routes/content.js'
 import { nextStepRoutes } from './routes/next-steps.js'
 import { mediaRoutes } from './routes/media.js'
 
 const app = new Hono()
+
+/**
+ * A share-link path carries a live approval credential. Redact it.
+ *
+ * Every request is logged with `c.req.path`, so without this a token would be
+ * written to journalctl in the clear — both as `/api/share/<token>` and, in
+ * production, as `/share/<token>`, because Hono serves the SPA and the browser
+ * asks for that path first. Anyone with read access to the logs could then
+ * approve her clients' posts.
+ *
+ * Exported and tested: this is a security property, and a security property
+ * without a test is a comment.
+ *
+ * Caddy keeps its own access log outside this repo. It has to be checked
+ * separately before the first real link is sent.
+ */
+export function redactPath(path: string): string {
+  return path.replace(
+    /^(\/api)?\/share\/[^/]+/,
+    (m) => `${m.startsWith('/api') ? '/api' : ''}/share/[token]`
+  )
+}
 
 // Request logging with a per-request id, so a client's "it broke" can be traced
 // to a single line in journalctl.
@@ -34,7 +58,7 @@ app.use('*', async (c, next) => {
     {
       id,
       method: c.req.method,
-      path: c.req.path,
+      path: redactPath(c.req.path),
       status: c.res.status,
       ms: Math.round(performance.now() - started),
     },
@@ -94,6 +118,14 @@ app.route('/api/invitations', invitationRoutes)
 app.route('/api/clients', clientRoutes)
 app.route('/api/deals', dealRoutes)
 app.route('/api/invoices', invoiceRoutes)
+
+// Share links. Two halves, mounted separately and sharing no middleware, so a
+// change to the guards on one cannot silently open or close the other:
+// `shareRoutes` requires staff; `reviewRoutes` requires nothing at all,
+// because its whole purpose is a recipient with no account. Its only authority
+// is a token that redeems — see withReviewToken.
+app.route('/api/shares', shareRoutes)
+app.route('/api/share', reviewRoutes)
 
 app.route('/api/portal', portalRoutes)
 app.route('/api/content', contentRoutes)

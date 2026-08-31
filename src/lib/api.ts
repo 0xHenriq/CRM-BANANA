@@ -137,6 +137,43 @@ export type InviteResult =
       restored?: boolean
     }
 
+/** A share link as the staff list sees it. The token is never among these. */
+export type ShareLink = {
+  id: string
+  scope: 'content_item' | 'feed'
+  contentItemId: string | null
+  expiresAt: string
+  revokedAt: string | null
+  lastUsedAt: string | null
+  useCount: number
+  createdAt: string
+}
+
+/**
+ * Can this link still be used?
+ *
+ * The browser's copy of the server's `isLinkUsable`, because the staff list
+ * has to label every link without asking. Bound to the server's in
+ * contract.test.ts over the same inputs — two copies of one rule drift, and
+ * this one decides whether she thinks a client can still reach a post.
+ */
+export function isLinkUsable(
+  link: { expiresAt: string | Date; revokedAt: string | Date | null },
+  now: Date
+): boolean {
+  if (link.revokedAt) return false
+  return new Date(link.expiresAt).getTime() > now.getTime()
+}
+
+/** Why a link is not usable, for the badge next to it. */
+export function linkState(
+  link: { expiresAt: string; revokedAt: string | null },
+  now: Date
+): 'live' | 'revoked' | 'expired' {
+  if (link.revokedAt) return 'revoked'
+  return isLinkUsable(link, now) ? 'live' : 'expired'
+}
+
 export type ClientSummary = {
   id: string
   name: string
@@ -513,6 +550,8 @@ export type ContentApproval = {
   note: string | null
   decidedAt: string
   actorName: string | null
+  /** True when a share link made the decision, which has no actor to name. */
+  viaShareLink: boolean
 }
 
 export type ContentDetailAsset = {

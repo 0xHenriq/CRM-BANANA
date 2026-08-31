@@ -22,6 +22,14 @@ import { INVOICE_STATUSES as SERVER_INVOICE_STATUSES } from '../routes/invoices.
 import { hhmm } from '../lib/audit.js'
 import { compareSteps } from '../routes/next-steps.js'
 import { canSeePortal } from '../routes/portal.js'
+import { readFileSync } from 'node:fs'
+import {
+  hashReviewToken,
+  isLinkUsable as serverIsLinkUsable,
+  mintReviewToken,
+  reviewLinkExpiry,
+} from '../lib/review-tokens.js'
+import { redactPath } from '../index.js'
 import {
   HASHTAG_LIMIT as SERVER_HASHTAG_LIMIT,
   normaliseHashtags as serverNormalise,
@@ -42,6 +50,8 @@ import {
   INVOICE_STATUSES as CLIENT_INVOICE_STATUSES,
   invoiceState,
   isApprovalOverdue,
+  isLinkUsable as clientIsLinkUsable,
+  linkState,
   localDayOf,
   outstandingPence,
   paymentState,
@@ -210,6 +220,134 @@ describe('localDayOf', () => {
     expect(localDayOf(null)).toBe('')
     expect(localDayOf(undefined)).toBe('')
     expect(localDayOf('not a date')).toBe('')
+  })
+})
+
+describe('share link tokens', () => {
+  it('mints a long, URL-safe token and stores only its hash', () => {
+    const { token, tokenHash } = mintReviewToken()
+    // base64url of 32 bytes: no +, / or = to escape, and 256 bits of entropy —
+    // which is the actual reason guessing is infeasible, not the rate limiter.
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(tokenHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(tokenHash).not.toContain(token)
+    expect(hashReviewToken(token)).toBe(tokenHash)
+  })
+
+  it('never mints the same token twice', () => {
+    const seen = new Set(
+      Array.from({ length: 200 }, () => mintReviewToken().token)
+    )
+    expect(seen.size).toBe(200)
+  })
+
+  it('expires a whole number of days out', () => {
+    const from = new Date(2026, 8, 1, 12, 0, 0)
+    const out = reviewLinkExpiry(from, 30)
+    expect(out.getMonth()).toBe(9)
+    expect(out.getDate()).toBe(1)
+    expect(out > from).toBe(true)
+  })
+})
+
+/**
+ * `isLinkUsable` exists on BOTH sides — the server decides, and the browser
+ * labels each link "Live"/"Expired"/"Revoked" without asking. Invariant 17:
+ * two copies of one rule drift, so they are bound over the same inputs,
+ * exactly as the two hashtag normalisers are.
+ */
+describe('isLinkUsable, on both sides', () => {
+  const now = new Date(2026, 8, 1, 12)
+  const cases = [
+    { name: 'live', expiresAt: new Date(2026, 8, 30).toISOString(), revokedAt: null },
+    { name: 'expired', expiresAt: new Date(2026, 7, 1).toISOString(), revokedAt: null },
+    { name: 'revoked but not yet expired', expiresAt: new Date(2026, 8, 30).toISOString(), revokedAt: new Date(2026, 8, 2).toISOString() },
+    { name: 'revoked AND expired', expiresAt: new Date(2026, 7, 1).toISOString(), revokedAt: new Date(2026, 7, 2).toISOString() },
+    { name: 'expiring this very instant', expiresAt: now.toISOString(), revokedAt: null },
+  ]
+
+  it.each(cases)('agrees for a link that is $name', (c) => {
+    expect(clientIsLinkUsable(c, now)).toBe(serverIsLinkUsable(c, now))
+  })
+
+  it('an expiry exactly now is NOT usable', () => {
+    expect(serverIsLinkUsable({ expiresAt: now.toISOString(), revokedAt: null }, now)).toBe(false)
+  })
+
+  it('revocation beats an expiry still in the future', () => {
+    // The order of the two checks matters: a revoked link must read "Revoked",
+    // not "Live", or she thinks a link she pulled is still out there.
+    expect(
+      linkState(
+        { expiresAt: new Date(2026, 8, 30).toISOString(), revokedAt: new Date(2026, 8, 2).toISOString() },
+        now
+      )
+    ).toBe('revoked')
+    expect(linkState({ expiresAt: new Date(2026, 8, 30).toISOString(), revokedAt: null }, now)).toBe('live')
+    expect(linkState({ expiresAt: new Date(2026, 7, 1).toISOString(), revokedAt: null }, now)).toBe('expired')
+  })
+})
+
+/**
+ * A share-link path IS a live approval credential, and every request is
+ * logged. Without redaction anyone with read access to journalctl could
+ * approve her clients' posts.
+ */
+describe('share tokens never reach the log', () => {
+  it('redacts the token from both the API and the SPA path', () => {
+    expect(redactPath('/api/share/AbC-123_xyz')).toBe('/api/share/[token]')
+    expect(redactPath('/share/AbC-123_xyz')).toBe('/share/[token]')
+    expect(redactPath('/api/share/AbC-123_xyz/assets/9f2')).toBe(
+      '/api/share/[token]/assets/9f2'
+    )
+    expect(redactPath('/api/share/AbC-123_xyz/decision')).toBe(
+      '/api/share/[token]/decision'
+    )
+  })
+
+  it('leaves every other path alone', () => {
+    for (const p of ['/api/clients', '/api/media/assets/abc', '/portal/feed', '/']) {
+      expect(redactPath(p), p).toBe(p)
+    }
+  })
+
+  it('redacts a real minted token, not just a tidy example', () => {
+    const { token } = mintReviewToken()
+    const redacted = redactPath(`/api/share/${token}`)
+    expect(redacted).not.toContain(token)
+    expect(redacted).toBe('/api/share/[token]')
+  })
+})
+
+/**
+ * An ugly test, and it catches the single worst regression on this boundary:
+ * somebody resolving a permissions error in review.ts by reaching for
+ * withTenant. There is no HTTP-level harness in this project, so this is the
+ * one mitigation available for the route wiring.
+ */
+describe('the public share routes claim no authority', () => {
+  const raw = readFileSync('server/routes/review.ts', 'utf8')
+
+  /*
+   * Comments stripped first, and not as a convenience: the file's own header
+   * explains that it must never reach for withTenant, so the prose contains
+   * every string the rule forbids. The rule is about code. A crude strip is
+   * the right tool — this is a tripwire, not a parser, and it only has to be
+   * wrong in the safe direction.
+   */
+  const source = raw
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+
+  it.each(['withTenant', "c.get('tenant')", 'isStaff: true', 'requireAuth', 'requireStaff'])(
+    'review.ts never calls %s',
+    (forbidden) => {
+      expect(source).not.toContain(forbidden)
+    }
+  )
+
+  it('obtains its authority only through withReviewToken', () => {
+    expect(source).toContain('withReviewToken')
   })
 })
 

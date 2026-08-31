@@ -6,6 +6,7 @@ import {
   STAFF_ONLY_TABLES,
   asActor,
   asActorRaw,
+  asReviewer,
   closePools,
   ownerPool,
   resetAndSeed,
@@ -237,16 +238,29 @@ describe('2 — class confusion (same tenant, wrong audience)', () => {
   })
 
   it('staff do see internal tasks and the full backlog', async () => {
+    // Scoped to client A, which is what the counts mean. Unscoped, this
+    // asserted "the fixture has exactly two content items in total" and broke
+    // the moment client B got one — a test measuring the fixture rather than
+    // the policy.
     const tasks = await asActor(
       { kind: 'staff', userId: f.staffUser },
-      'select id from tasks'
+      'select id from tasks where client_id = $1',
+      [f.clientA]
     )
     const content = await asActor(
       { kind: 'staff', userId: f.staffUser },
-      'select id from content_items'
+      'select id from content_items where client_id = $1',
+      [f.clientA]
     )
     expect(tasks).toHaveLength(2)
     expect(content).toHaveLength(2)
+
+    // And staff still see across clients, which is the other half of the claim.
+    const all = await asActor(
+      { kind: 'staff', userId: f.staffUser },
+      'select id from content_items'
+    )
+    expect(all.length).toBeGreaterThan(content.length)
   })
 })
 
@@ -804,5 +818,226 @@ describe('9 — removing a seat', () => {
         )
       }
     }
+  })
+})
+
+/**
+ * Share links (migration 0016).
+ *
+ * The security question is not "does the share page work" — it is "what ELSE
+ * can a token reach". So most of these assert zero rows. They set the session
+ * variables directly rather than going through withReviewToken, because what
+ * is under test is what Postgres does once a review context exists, including
+ * contexts the redeeming helper would never hand out.
+ */
+describe('10 — share links', () => {
+  const itemLink = () => ({
+    linkId: f.reviewLinkA,
+    contentItemId: f.contentAVisible,
+  })
+  const feedLink = () => ({
+    linkId: f.reviewLinkFeedA,
+    feedClientId: f.clientA,
+  })
+
+  it('an item token sees exactly the one post it is for', async () => {
+    const rows = await asReviewer<{ id: string }>(
+      itemLink(),
+      'select id from content_items'
+    )
+    expect(rows.map((r) => r.id)).toEqual([f.contentAVisible])
+  })
+
+  it('and that post’s creative', async () => {
+    const rows = await asReviewer<{ storage_key: string }>(
+      itemLink(),
+      'select storage_key from content_assets'
+    )
+    expect(rows.map((r) => r.storage_key)).toEqual(['september-grid-01.jpg'])
+  })
+
+  /**
+   * The load-bearing one. `AND visible_to_client` on the policy arm is what
+   * stops a token minted around the handler from opening a raw Ideas Bank row
+   * — a rejected pitch, an internal concept — at the database rather than only
+   * in the route.
+   */
+  it('a token aimed at an UNSHARED item opens nothing', async () => {
+    const rows = await asReviewer(
+      { linkId: f.reviewLinkHidden, contentItemId: f.contentAHidden },
+      'select id from content_items'
+    )
+    expect(rows).toHaveLength(0)
+  })
+
+  it('nor that unshared item’s creative', async () => {
+    const rows = await asReviewer(
+      { linkId: f.reviewLinkHidden, contentItemId: f.contentAHidden },
+      'select storage_key from content_assets'
+    )
+    expect(rows).toHaveLength(0)
+  })
+
+  it('a token for one client cannot read another client’s post', async () => {
+    const rows = await asReviewer(
+      itemLink(),
+      'select id from content_items where client_id = $1',
+      [f.clientB]
+    )
+    expect(rows).toHaveLength(0)
+  })
+
+  it('nor another client’s creative, by its exact id', async () => {
+    const rows = await asReviewer(
+      itemLink(),
+      'select storage_key from content_assets where client_id = $1',
+      [f.clientB]
+    )
+    expect(rows).toHaveLength(0)
+  })
+
+  /**
+   * 0002_rls.sql's instruction was to extend ONLY the content_* policies, "so
+   * a review token routed into the files or deals handler still returns zero
+   * rows". This is that sentence as a test.
+   */
+  it.each([
+    'files',
+    'links',
+    'tasks',
+    'deals',
+    'contacts',
+    'invoices',
+    'invoice_payments',
+    'moodboard_items',
+    'notice_posts',
+    'activities',
+    'clients',
+    'client_access',
+    'review_links',
+    'audit_log',
+  ])('a review context reads nothing at all from %s', async (table) => {
+    const rows = await asReviewer(itemLink(), `select 1 from ${table}`)
+    expect(rows).toHaveLength(0)
+  })
+
+  it('reads its own decision back, and no one else’s', async () => {
+    await ownerPool.query(
+      `insert into content_approvals(client_id, content_item_id, decision, actor_id, review_link_id)
+       values ($1,$2,'approved',null,$3)`,
+      [f.clientA, f.contentAVisible, f.reviewLinkA]
+    )
+    await ownerPool.query(
+      `insert into content_approvals(client_id, content_item_id, decision, actor_id, review_link_id)
+       values ($1,$2,'approved',$3,null)`,
+      [f.clientA, f.contentAVisible, f.staffUser]
+    )
+    try {
+      const rows = await asReviewer<{ review_link_id: string }>(
+        itemLink(),
+        'select review_link_id from content_approvals'
+      )
+      expect(rows).toHaveLength(1)
+      expect(rows[0].review_link_id).toBe(f.reviewLinkA)
+    } finally {
+      await ownerPool.query('delete from content_approvals where content_item_id = $1', [
+        f.contentAVisible,
+      ])
+    }
+  })
+
+  it('cannot read the internal comment thread', async () => {
+    // content_comments_* were deliberately left untouched by 0016. Narrower
+    // than 0002's note permits is fine; wider is not.
+    const rows = await asReviewer(itemLink(), 'select body from content_comments')
+    expect(rows).toHaveLength(0)
+  })
+
+  /**
+   * The positive property that exists BECAUSE the decision goes through a
+   * SECURITY DEFINER function instead of a policy arm.
+   */
+  it('cannot insert an approval directly', async () => {
+    const rows = await asReviewer(
+      itemLink(),
+      `insert into content_approvals(client_id, content_item_id, decision, actor_id, review_link_id)
+       values ($1,$2,'approved',null,$3) returning id`,
+      [f.clientA, f.contentAVisible, f.reviewLinkA]
+    ).catch(() => [] as unknown[])
+    expect(rows).toHaveLength(0)
+  })
+
+  it('cannot write into the post it is reviewing', async () => {
+    const rows = await asReviewer(
+      itemLink(),
+      `update content_items set title = 'injected' where id = $1 returning id`,
+      [f.contentAVisible]
+    ).catch(() => [] as unknown[])
+    expect(rows).toHaveLength(0)
+  })
+
+  it('can never become staff, whatever the flag says', async () => {
+    // app_is_staff() compares to the literal 'true' (migration 0007), so no
+    // cast can be talked into agreeing. A review context sets 'false'.
+    const rows = await asActorRaw<{ staff: boolean }>(
+      {
+        'app.user_id': '',
+        'app.is_staff': 'false',
+        'app.review_link_id': f.reviewLinkA,
+        'app.review_content_id': f.contentAVisible,
+      },
+      'select app_is_staff() as staff'
+    )
+    expect(rows[0].staff).toBe(false)
+  })
+
+  it('a feed token sees the client’s shared posts and only those', async () => {
+    const rows = await asReviewer<{ id: string; visible_to_client: boolean }>(
+      feedLink(),
+      'select id, visible_to_client from content_items'
+    )
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows.every((r) => r.visible_to_client)).toBe(true)
+    expect(rows.map((r) => r.id)).not.toContain(f.contentAHidden)
+    expect(rows.map((r) => r.id)).not.toContain(f.contentB)
+  })
+
+  it('a feed token reads no other client’s creative', async () => {
+    const rows = await asReviewer(
+      feedLink(),
+      'select storage_key from content_assets where client_id = $1',
+      [f.clientB]
+    )
+    expect(rows).toHaveLength(0)
+  })
+
+  it('a feed token still reads nothing from files or invoices', async () => {
+    for (const table of ['files', 'invoices', 'deals']) {
+      const rows = await asReviewer(feedLink(), `select 1 from ${table}`)
+      expect(rows, table).toHaveLength(0)
+    }
+  })
+
+  it('a malformed GUC returns NULL rather than raising 22P02', async () => {
+    // A policy that throws invites the next person to "fix" the policy.
+    const rows = await asActorRaw<{ a: string | null; b: string | null }>(
+      {
+        'app.user_id': '',
+        'app.is_staff': 'false',
+        'app.review_content_id': 'not-a-uuid',
+        'app.review_feed_client_id': '¯\\_(ツ)_/¯',
+      },
+      'select app_review_content_id() as a, app_review_feed_client_id() as b'
+    )
+    expect(rows[0].a).toBeNull()
+    expect(rows[0].b).toBeNull()
+  })
+
+  it('no review context at all reads nothing', async () => {
+    const rows = await asActorRaw(
+      { 'app.user_id': '', 'app.is_staff': 'false' },
+      'select id from content_items'
+    )
+    expect(rows).toHaveLength(0)
   })
 })

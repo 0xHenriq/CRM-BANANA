@@ -623,7 +623,15 @@ export function contentDisposition(filename: string): string {
   return `attachment; filename="${fallback}"; filename*=UTF-8''${rfc5987(filename)}`
 }
 
-async function streamKey(
+/**
+ * Exported so the public share route can serve the same bytes the same way.
+ *
+ * Range handling, mime, disposition and nosniff all live here; a second copy
+ * for share links would be a second place for a Content-Disposition rule to
+ * be got wrong. parseRange and contentDisposition are already exported for
+ * tests, so a third is in keeping.
+ */
+export async function streamKey(
   c: Context,
   key: string,
   mime: string | null,

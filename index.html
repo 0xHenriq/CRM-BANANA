@@ -2,6 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!-- The share page URL contains a live approval token, and this page loads
+         external fonts. The browser default would send only the origin, but
+         pinning it costs nothing and removes the question entirely. -->
+    <meta name="referrer" content="no-referrer" />
     <link
       rel="icon"
       type="image/svg+xml"

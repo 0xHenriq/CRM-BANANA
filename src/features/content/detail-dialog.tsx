@@ -21,6 +21,8 @@ import {
   type ContentItem,
   type ContentStatus,
   type ContentType,
+  formatShortDate,
+  localDayOf,
 } from '@/lib/api'
 import { uploadMedia } from '@/lib/upload'
 import { useCurrentUser } from '@/hooks/use-current-user'
@@ -46,6 +48,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { UploadButton } from '@/components/upload-button'
 import { HashtagEditor } from './hashtag-editor'
 import { ApprovalOverduePill, StatusPill, TypePill } from './pills'
+import { ShareLinks } from './share-links'
 import { STATUS_LABEL, TYPE_LABEL } from './vocabulary'
 
 /**
@@ -343,6 +346,17 @@ export function ContentDetailDialog({
                     record either way — there is no separate calendar entry to
                     keep in step.
                   </p>
+                  <div className='flex flex-wrap items-center gap-2'>
+                  {/*
+                    Only for a post already shared with the client. An
+                    internal Ideas Bank row has nothing to show a recipient —
+                    and the mint route refuses it, backed by the
+                    `AND visible_to_client` arm on content_items_select.
+                  */}
+                  <ShareLinks
+                    contentItemId={item.id}
+                    canShare={isStaff && item.visibleToClient}
+                  />
                   <Button
                     size='sm'
                     variant='outline'
@@ -356,6 +370,7 @@ export function ContentDetailDialog({
                     )}
                     Duplicate
                   </Button>
+                  </div>
                 </div>
               </div>
             )}
@@ -515,10 +530,23 @@ export function ContentDetailDialog({
                       </span>
                       <span className='text-muted-foreground'>
                         {' '}
-                        · {a.actorName ?? 'Someone'} ·{' '}
-                        {new Date(a.decidedAt).toLocaleString('en-GB', {
-                          dateStyle: 'medium',
-                          timeStyle: 'short',
+                        {/* A link decision genuinely has no actor — the
+                            CHECK on content_approvals allows one or the
+                            other — so it is named for what it was rather
+                            than falling through to "Someone". */}
+                        · {a.viaShareLink
+                          ? 'via share link'
+                          : (a.actorName ?? 'Someone')}{' '}
+                        ·{' '}
+                        {/* "1 Sep", not en-GB's "1 Sept". The same date is
+                            rendered three characters differently three lines
+                            from here on the share page, and a product should
+                            not spell a month two ways. */}
+                        {formatShortDate(localDayOf(a.decidedAt))}
+                        {', '}
+                        {new Date(a.decidedAt).toLocaleTimeString('en-GB', {
+                          hour: '2-digit',
+                          minute: '2-digit',
                         })}
                       </span>
                       {a.note && (

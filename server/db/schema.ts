@@ -120,6 +120,16 @@ export const invoiceStatus = pgEnum('invoice_status', [
   'void',
 ])
 
+/**
+ * What a share link opens.
+ *
+ * `content_item` is one post with its creative, caption and decision buttons;
+ * `feed` is a client's nine-cell grid, read-only. Two different payloads and
+ * two different RLS arms, so the scope is stored rather than inferred from
+ * whether content_item_id happens to be null.
+ */
+export const reviewScope = pgEnum('review_scope', ['content_item', 'feed'])
+
 export const approvalDecision = pgEnum('approval_decision', [
   'approved',
   'changes_requested',
@@ -525,9 +535,24 @@ export const reviewLinks = pgTable(
     clientId: uuid('client_id')
       .notNull()
       .references(() => clients.id, { onDelete: 'cascade' }),
-    contentItemId: uuid('content_item_id')
-      .notNull()
-      .references(() => contentItems.id, { onDelete: 'cascade' }),
+    /**
+     * Null for a feed link, which is scoped to the client instead.
+     *
+     * A CHECK ties this to `scope` so the two cannot disagree — see migration
+     * 0016 for why this table was widened rather than a second one added.
+     */
+    contentItemId: uuid('content_item_id').references(() => contentItems.id, {
+      onDelete: 'cascade',
+    }),
+    scope: reviewScope('scope').notNull().default('content_item'),
+    /**
+     * sha256 of the token, never the token.
+     *
+     * Looked up by this, which is a unique-index probe rather than a secret
+     * string comparison, so there is no timing to attack. It also means a
+     * backup dump cannot contain a live approval credential — and that the API
+     * physically cannot re-display a link, which is why the UI says so.
+     */
     tokenHash: text('token_hash').notNull().unique(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     createdBy: text('created_by').references(() => user.id, {
@@ -540,7 +565,15 @@ export const reviewLinks = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (t) => [index('review_links_content_idx').on(t.contentItemId)]
+  (t) => [
+    index('review_links_content_idx').on(t.contentItemId),
+    index('review_links_client_idx').on(t.clientId),
+    check(
+      'review_links_scope_target',
+      sql`(scope = 'content_item' AND content_item_id IS NOT NULL)
+          OR (scope = 'feed' AND content_item_id IS NULL)`
+    ),
+  ]
 )
 
 export const contentAssets = pgTable(

@@ -1,4 +1,4 @@
-import { asc, desc, eq } from 'drizzle-orm'
+import { asc, desc, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { withTenant } from '../db/index.js'
@@ -138,6 +138,16 @@ contentRoutes.get('/:id', async (c) => {
         note: contentApprovals.note,
         decidedAt: contentApprovals.decidedAt,
         actorName: user.name,
+        /*
+         * A link approval has no actor, by construction.
+         *
+         * `content_approvals_one_actor` allows exactly one of actor_id and
+         * review_link_id, so this join produces NULL for every decision made
+         * through a share link — and the dialog renders `actorName ?? 'Someone'`.
+         * Without this flag the feature would manufacture history rows reading
+         * "Someone approved this", which is worse than not having it.
+         */
+        viaShareLink: sql<boolean>`${contentApprovals.reviewLinkId} is not null`,
       })
       .from(contentApprovals)
       .leftJoin(user, eq(user.id, contentApprovals.actorId))

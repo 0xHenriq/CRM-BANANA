@@ -13,6 +13,7 @@ import {
   Trash2,
   MessageSquare,
   ArrowRightLeft,
+  Share2,
   X,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -23,8 +24,12 @@ import {
   BRAND_COLOR_SLOTS,
   brandPalette,
   formatMoney,
+  formatShortDate,
   type InviteResult,
+  linkState,
+  localDayOf,
   normaliseHex,
+  type ShareLink,
   type ClientDetail,
   CLIENT_STATUSES,
   type PortalWorkspace,
@@ -51,6 +56,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
@@ -258,6 +268,7 @@ export function ClientDetailPage({
                 </Link>
               </Button>
               <ClientStatusPill status={client.status} />
+              <ShareClientMenu clientId={clientId} />
               <ClientLogo
                 clientId={clientId}
                 name={client.name}
@@ -443,6 +454,128 @@ export function ClientDetailPage({
         />
       </Main>
     </>
+  )
+}
+
+/**
+ * R06: the top-right control, once share links exist.
+ *
+ * Two doors, both of which now go somewhere: give somebody a login (the seat
+ * invite from phase 3), or send a read-only feed preview.
+ *
+ * What she asked for was "almost like a web page they can just view all of it
+ * on" — a read-only version of THIS page — and that is deliberately not built.
+ * This page carries invoices, deal values and her private activity timeline.
+ * A feed preview is the part a client should see, and it is the part that was
+ * actually being asked about.
+ */
+function ShareClientMenu({ clientId }: { clientId: string }) {
+  const queryClient = useQueryClient()
+  const [fresh, setFresh] = useState<string | null>(null)
+  const now = new Date()
+
+  const { data } = useQuery({
+    queryKey: ['feed-shares', clientId],
+    queryFn: () =>
+      api.get<{ links: ShareLink[] }>(`/shares/client/${clientId}/feed`),
+  })
+
+  const mint = useMutation({
+    mutationFn: () =>
+      api.post<{ url: string }>(`/shares/client/${clientId}/feed`, {}),
+    onSuccess: async (result) => {
+      setFresh(result.url)
+      const ok = await copyText(result.url)
+      toast[ok ? 'success' : 'error'](
+        ok
+          ? 'Feed preview link copied. It cannot be shown again.'
+          : 'Link created — copy it from the box, it cannot be shown again.'
+      )
+      await queryClient.invalidateQueries({ queryKey: ['feed-shares', clientId] })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const revoke = useMutation({
+    mutationFn: (id: string) => api.post(`/shares/${id}/revoke`, {}),
+    onSuccess: async () => {
+      toast.success('Link revoked.')
+      await queryClient.invalidateQueries({ queryKey: ['feed-shares', clientId] })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const live = (data?.links ?? []).filter((l) => linkState(l, now) === 'live')
+
+  return (
+    <Popover onOpenChange={(open) => !open && setFresh(null)}>
+      <PopoverTrigger asChild>
+        <Button size='sm' variant='outline'>
+          <Share2 />
+          Share
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align='end' className='w-80 crate-card'>
+        <div className='space-y-3'>
+          <div>
+            <p className='display text-sm'>Share the feed preview</p>
+            <p className='text-xs text-muted-foreground'>
+              A read-only grid of what is coming up. No sign-in, and anyone
+              with the link can open it.
+            </p>
+          </div>
+
+          {fresh && (
+            <>
+              <Input readOnly value={fresh} className='font-mono text-xs' />
+              <p className='text-xs text-muted-foreground'>
+                Copy it now — it cannot be displayed again.
+              </p>
+            </>
+          )}
+
+          <Button
+            size='sm'
+            className='w-full'
+            onClick={() => mint.mutate()}
+            disabled={mint.isPending}
+          >
+            {mint.isPending && <Loader2 className='animate-spin' />}
+            {live.length ? 'Create another link' : 'Create a link'}
+          </Button>
+
+          {live.length > 0 && (
+            <ul className='space-y-1.5 text-xs'>
+              {live.map((l) => (
+                <li key={l.id} className='flex items-center gap-2'>
+                  <span className='min-w-0 flex-1 truncate'>
+                    {l.useCount === 0
+                      ? 'Not opened yet'
+                      : `Opened ${l.useCount} time${l.useCount === 1 ? '' : 's'}`}
+                    , expires {formatShortDate(localDayOf(l.expiresAt))}
+                  </span>
+                  <Button
+                    size='sm'
+                    variant='ghost'
+                    className='h-6 shrink-0 px-2 text-xs'
+                    onClick={() => revoke.mutate(l.id)}
+                    disabled={revoke.isPending}
+                  >
+                    Revoke
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className='crate-rule' />
+          <p className='text-xs text-muted-foreground'>
+            Need them to see invoices and files too? Give them a login from a
+            contact below, or on the Seats page.
+          </p>
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 
