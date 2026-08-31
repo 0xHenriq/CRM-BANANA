@@ -22,14 +22,16 @@ import { INVOICE_STATUSES as SERVER_INVOICE_STATUSES } from '../routes/invoices.
 import { hhmm } from '../lib/audit.js'
 import { compareSteps } from '../routes/next-steps.js'
 import { canSeePortal } from '../routes/portal.js'
-import { readFileSync } from 'node:fs'
+import { downloadFilename } from '../routes/media.js'
+import { DEFAULT_FILES } from '../lib/seed-workspace.js'
+import { readFileSync, readdirSync } from 'node:fs'
 import {
   hashReviewToken,
   isLinkUsable as serverIsLinkUsable,
   mintReviewToken,
   reviewLinkExpiry,
 } from '../lib/review-tokens.js'
-import { redactPath } from '../index.js'
+import { redactPath } from '../lib/redact.js'
 import {
   HASHTAG_LIMIT as SERVER_HASHTAG_LIMIT,
   normaliseHashtags as serverNormalise,
@@ -220,6 +222,87 @@ describe('localDayOf', () => {
     expect(localDayOf(null)).toBe('')
     expect(localDayOf(undefined)).toBe('')
     expect(localDayOf('not a date')).toBe('')
+  })
+})
+
+/**
+ * A named slot downloads with an extension.
+ *
+ * "Agreement" is the row's name and must stay so on screen, but a file saved
+ * as `Agreement` with no extension is one the operating system cannot open.
+ * The stored key is what carries the truth, because it was named from the
+ * sniffed type rather than from what the browser claimed the file was.
+ */
+/**
+ * A new file slot needs a backfill, or only new clients ever get it.
+ *
+ * `seedNewClientWorkspace` runs once, when a portal is first opened. Adding a
+ * name to DEFAULT_FILES therefore reaches new workspaces only, and every
+ * client she already has would never see it — which is exactly what would have
+ * happened to the Brief slot she asked for.
+ */
+describe('seeded file slots', () => {
+  const migrations = readdirSync('server/db/migrations')
+    .filter((f) => f.endsWith('.sql'))
+    .map((f) => readFileSync(`server/db/migrations/${f}`, 'utf8'))
+    .join('\n')
+
+  /** The five that existed before any client had a workspace to backfill. */
+  const ORIGINAL = [
+    'Agreement',
+    'Invoices',
+    'Reports',
+    'Social Strategy',
+    'Shoot Planning',
+  ]
+
+  it('every slot added since the original five has a backfill migration', () => {
+    const added = DEFAULT_FILES.filter((n) => !ORIGINAL.includes(n))
+    // If this list is empty the test proves nothing, so say so out loud.
+    expect(added.length).toBeGreaterThan(0)
+    for (const name of added) {
+      expect(migrations, `${name} has no backfill migration`).toContain(
+        `'${name}'`
+      )
+    }
+  })
+
+  it('still contains the original five, so none was quietly dropped', () => {
+    for (const name of ORIGINAL) {
+      expect(DEFAULT_FILES as readonly string[], name).toContain(name)
+    }
+  })
+})
+
+describe('downloadFilename', () => {
+  it('gives a named slot the extension of what is in it', () => {
+    expect(downloadFilename('Agreement', 'client/abc.pdf')).toBe('Agreement.pdf')
+    expect(downloadFilename('Shoot Planning', 'client/abc.xlsx')).toBe(
+      'Shoot Planning.xlsx'
+    )
+  })
+
+  it('does not double an extension that is already there', () => {
+    expect(downloadFilename('INV-2026-014.pdf', 'client/abc.pdf')).toBe(
+      'INV-2026-014.pdf'
+    )
+    // Case-insensitively, because she types the name by hand.
+    expect(downloadFilename('Report.PDF', 'client/abc.pdf')).toBe('Report.PDF')
+  })
+
+  it('leaves the name alone when the key has no extension', () => {
+    expect(downloadFilename('Agreement', 'client/abc')).toBe('Agreement')
+    expect(downloadFilename('Agreement', null)).toBe('Agreement')
+  })
+
+  it('does not mistake a dot in the path for an extension', () => {
+    // A key like `some.dir/abc` has a dot BEFORE the last slash. Treating it
+    // as the extension would append the whole directory name to the download.
+    expect(downloadFilename('Agreement', 'some.dir/abc')).toBe('Agreement')
+  })
+
+  it('never produces a name ending in a bare dot', () => {
+    expect(downloadFilename('Agreement', 'client/abc.')).toBe('Agreement')
   })
 })
 

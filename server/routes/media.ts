@@ -1,4 +1,4 @@
-import { asc, eq, sql } from 'drizzle-orm'
+import { asc, eq, sql, desc } from 'drizzle-orm'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
 import { withTenant, type Tx } from '../db/index.js'
@@ -491,6 +491,44 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
           return { file: row, replaced: before.storageKey }
         }
 
+        /*
+         * One document per invoice, so "Replace PDF" replaces.
+         *
+         * Without this it INSERTED, and attaching twice left two rows on one
+         * invoice: the invoice showed the newer, while the older stayed in the
+         * client's File Folder carrying superseded figures with nothing on the
+         * invoice to say it existed. The button said Replace and did not.
+         *
+         * Newest first, so if a workspace already carries duplicates from
+         * before this existed, the one being replaced is the one on screen.
+         */
+        if (invoiceId) {
+          const [existing] = await tx
+            .select({ id: files.id, storageKey: files.storageKey })
+            .from(files)
+            .where(eq(files.invoiceId, invoiceId))
+            .orderBy(desc(files.createdAt))
+            .limit(1)
+
+          if (existing) {
+            const [row] = await tx
+              .update(files)
+              .set({
+                // The NAME does move here, unlike a named slot: an invoice
+                // attachment is called after the document, not after a
+                // category, so replacing it should say what it now is.
+                name,
+                storageKey: processed.storageKey,
+                mime: processed.mime,
+                sizeBytes: processed.sizeBytes,
+                uploadedBy: actorId,
+              })
+              .where(eq(files.id, existing.id))
+              .returning()
+            return { file: row, replaced: existing.storageKey }
+          }
+        }
+
         const [row] = await tx
           .insert(files)
           .values({
@@ -699,6 +737,37 @@ export function parseRange(
  * emitted, the ASCII one scrubbed as a fallback for anything that cannot read
  * the encoded one.
  */
+/**
+ * What the browser should call this file when it saves it.
+ *
+ * A named File Folder slot is called "Agreement", not "agreement.pdf" — that
+ * is the whole point of R17, and it is also how the download ended up offering
+ * a file with NO EXTENSION, which macOS and Windows cannot open by
+ * double-clicking. Before slots could be filled, an upload created a row named
+ * after the file, so the problem arrived with the feature.
+ *
+ * The stored key carries the real extension (processUpload names it from the
+ * sniffed type, not from what the browser claimed), so it is the honest source
+ * — more so than the row's display name, which she can type anything into.
+ *
+ * Left alone when the name already ends in that extension, so
+ * "INV-2026-014.pdf" does not become "INV-2026-014.pdf.pdf".
+ */
+export function downloadFilename(
+  name: string,
+  storageKey: string | null
+): string {
+  if (!storageKey) return name
+  const dot = storageKey.lastIndexOf('.')
+  const slash = storageKey.lastIndexOf('/')
+  // A dot in the directory part is not an extension, a leading dot is not
+  // either, and a TRAILING dot would append a bare "." to her filename.
+  if (dot <= slash + 1 || dot === storageKey.length - 1) return name
+
+  const ext = storageKey.slice(dot).toLowerCase()
+  return name.toLowerCase().endsWith(ext) ? name : `${name}${ext}`
+}
+
 export function contentDisposition(filename: string): string {
   /**
    * encodeURIComponent is not quite RFC 5987.
@@ -906,7 +975,9 @@ mediaRoutes.get('/files/:id', async (c) => {
     tx.select().from(files).where(eq(files.id, c.req.param('id'))).limit(1)
   )
   if (!row?.storageKey) return c.json({ error: 'Not found' }, 404)
-  return streamKey(c, row.storageKey, row.mime, { filename: row.name })
+  return streamKey(c, row.storageKey, row.mime, {
+    filename: downloadFilename(row.name, row.storageKey),
+  })
 })
 
 /* --------------------------------------------------------------- moodboard */

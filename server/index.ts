@@ -6,6 +6,7 @@ import { existsSync } from 'node:fs'
 import { Server as HttpServer } from 'node:http'
 import { env } from './env.js'
 import { logger } from './logger.js'
+import { redactPath } from './lib/redact.js'
 import { db, closeDb } from './db/index.js'
 import { assertRlsIsBinding } from './db/guard.js'
 import { auth } from './auth/index.js'
@@ -23,28 +24,6 @@ import { nextStepRoutes } from './routes/next-steps.js'
 import { mediaRoutes } from './routes/media.js'
 
 const app = new Hono()
-
-/**
- * A share-link path carries a live approval credential. Redact it.
- *
- * Every request is logged with `c.req.path`, so without this a token would be
- * written to journalctl in the clear — both as `/api/share/<token>` and, in
- * production, as `/share/<token>`, because Hono serves the SPA and the browser
- * asks for that path first. Anyone with read access to the logs could then
- * approve her clients' posts.
- *
- * Exported and tested: this is a security property, and a security property
- * without a test is a comment.
- *
- * Caddy keeps its own access log outside this repo. It has to be checked
- * separately before the first real link is sent.
- */
-export function redactPath(path: string): string {
-  return path.replace(
-    /^(\/api)?\/share\/[^/]+/,
-    (m) => `${m.startsWith('/api') ? '/api' : ''}/share/[token]`
-  )
-}
 
 // Request logging with a per-request id, so a client's "it broke" can be traced
 // to a single line in journalctl.
@@ -225,6 +204,38 @@ if (server instanceof HttpServer) {
   server.requestTimeout = 0
   server.headersTimeout = 0
 }
+
+/**
+ * An abandoned response must not take the whole API down.
+ *
+ * Node makes an unhandled promise rejection fatal by default, and file
+ * downloads are streams handed to the HTTP layer — so when a client goes away
+ * mid-body, the machinery below Hono can reject asynchronously with
+ * `ERR_INVALID_STATE: ReadableStream is already closed`. Nothing is awaiting
+ * that promise, so the process exits. Observed while testing File Folder
+ * downloads: the API vanished and every subsequent request failed to connect,
+ * with the reason on stderr and nothing at all in the application log.
+ *
+ * systemd restarts it after three seconds (Restart=on-failure), so the visible
+ * damage is a short outage rather than a dead site. It is still the wrong
+ * trade: killing a healthy server because one recipient closed their laptop
+ * mid-download costs everyone else their in-flight request.
+ *
+ * So a rejection is LOGGED AND SURVIVED. An uncaught synchronous exception is
+ * different and still exits — the process state after one is genuinely
+ * unknown, and restarting is the honest response to not knowing.
+ */
+process.on('unhandledRejection', (reason) => {
+  logger.error(
+    { err: reason instanceof Error ? reason : new Error(String(reason)) },
+    'unhandled promise rejection — staying up'
+  )
+})
+
+process.on('uncaughtException', (err) => {
+  logger.fatal({ err }, 'uncaught exception — exiting for systemd to restart')
+  process.exit(1)
+})
 
 // systemd sends SIGTERM on restart; drain rather than drop in-flight requests.
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {

@@ -46,10 +46,12 @@ const DEFAULT_LINKS = [
 /**
  * The named slots the File Folder opens with. These ARE the categories.
  *
- * Exported so migration 0017's backfill and this list cannot disagree about
- * what a new workspace gets: seeding only runs when a portal is first opened,
- * so anything added here never reaches a client who already has a workspace
- * unless a migration puts it there too.
+ * Seeding runs ONCE, when a client's portal is first opened, so anything added
+ * to this list reaches new workspaces only — every client she already has
+ * would never see it unless a migration puts it there too. That is not a rule
+ * a comment can enforce, so contract.test.ts reads this list against the
+ * migrations directory and fails if a slot was added with no backfill behind
+ * it. Which is why it is exported.
  */
 export const DEFAULT_FILES = [
   'Agreement',
