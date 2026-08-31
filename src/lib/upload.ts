@@ -29,6 +29,8 @@ export async function uploadMedia(
     contentItemId?: string
     /** Fills an existing File Folder row instead of adding a new one. */
     fileId?: string
+    /** Attaches the document to an invoice. Still target 'file'. */
+    invoiceId?: string
     caption?: string
     /** 0..1, or null once the bytes are sent and the server is working. */
     onProgress?: (fraction: number | null) => void
@@ -39,6 +41,7 @@ export async function uploadMedia(
   form.append('target', opts.target)
   if (opts.contentItemId) form.append('contentItemId', opts.contentItemId)
   if (opts.fileId) form.append('fileId', opts.fileId)
+  if (opts.invoiceId) form.append('invoiceId', opts.invoiceId)
   if (opts.caption) form.append('caption', opts.caption)
 
   const qs = opts.clientId ? `?client=${opts.clientId}` : ''

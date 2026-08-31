@@ -294,6 +294,16 @@ export type Invoice = {
   dueOn: string | null
   notes: string | null
   createdAt: string
+  /**
+   * The attached document, if there is one.
+   *
+   * The same `files` row the File Folder lists — one set of bytes, read from
+   * two places, so deleting it in one cannot leave a ghost in the other. A
+   * document on a DRAFT invoice is invisible to the client, because the row
+   * inherits the invoice's own visibility (migration 0018).
+   */
+  attachmentId: string | null
+  attachmentName: string | null
 }
 
 /** A payment received. This row is the receipt. */

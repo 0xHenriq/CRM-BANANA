@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, Receipt, Send, Trash2, Ban } from 'lucide-react'
+import { Paperclip, Plus, Receipt, Send, Trash2, Ban } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   api,
@@ -10,6 +10,7 @@ import {
   type Invoice,
   type InvoicePayment,
   type InvoiceState,
+  fileUrl,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -25,6 +26,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { QueryError } from '@/components/layout/query-error'
+import { UploadButton } from '@/components/upload-button'
+import { uploadMedia } from '@/lib/upload'
 
 /**
  * How each state reads.
@@ -120,6 +123,37 @@ export function InvoicesPanel({
     onError: (err: Error) => toast.error(err.message),
   })
 
+  /**
+   * The invoice's own document.
+   *
+   * `target: 'file'` with an invoiceId, not a target of its own: an invoice
+   * attachment IS a file, so it gets the same document allowlist, the same row
+   * and the same File Folder listing — one set of bytes read from two places
+   * rather than two that can drift.
+   */
+  const attach = useMutation({
+    mutationFn: async ({
+      invoiceId,
+      file,
+    }: {
+      invoiceId: string
+      file: File
+    }) => {
+      await uploadMedia(file, {
+        clientId: null,
+        target: 'file',
+        invoiceId,
+      })
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['invoices'] })
+      // The document lands in the File Folder too, which reads ['portal'].
+      await queryClient.invalidateQueries({ queryKey: ['portal'] })
+      toast.success('Attached. It appears on the invoice and in the File Folder.')
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
   const remove = useMutation({
     mutationFn: (id: string) => api.del(`/invoices/${id}`),
     onSuccess: invalidate,
@@ -212,6 +246,12 @@ export function InvoicesPanel({
                     patch.mutate({ id: invoice.id, status: 'void' })
                   }
                   onDelete={() => remove.mutate(invoice.id)}
+                  onAttach={(chosen) =>
+                    attach.mutate({ invoiceId: invoice.id, file: chosen })
+                  }
+                  attaching={
+                    attach.isPending && attach.variables?.invoiceId === invoice.id
+                  }
                   onRecordPayment={() => setPayingFor(invoice)}
                 />
               ))}
@@ -245,6 +285,8 @@ function InvoiceRow({
   onIssue,
   onVoid,
   onDelete,
+  onAttach,
+  attaching,
   onRecordPayment,
 }: {
   invoice: Invoice
@@ -252,6 +294,8 @@ function InvoiceRow({
   onIssue: () => void
   onVoid: () => void
   onDelete: () => void
+  onAttach: (chosen: File) => void
+  attaching: boolean
   onRecordPayment: () => void
 }) {
   const state = invoiceState(invoice)
@@ -270,6 +314,26 @@ function InvoiceRow({
           {invoice.description ?? 'No description'}
           {invoice.dueOn && state !== 'overdue' && ` · due ${invoice.dueOn}`}
         </span>
+        {/*
+          The document itself, which the portal never held before — it tracked
+          the amount and left the actual invoice in her email.
+
+          The link is the same `files` row the File Folder lists, not a second
+          copy, so there is one set of bytes and one thing to delete. On a
+          DRAFT the client cannot see either the invoice or this: the row
+          inherits the invoice's visibility.
+        */}
+        {invoice.attachmentId && (
+          <a
+            href={fileUrl(invoice.attachmentId)}
+            className='mt-0.5 flex items-center gap-1 text-xs text-muted-foreground hover:underline'
+          >
+            <Paperclip className='size-3 shrink-0' />
+            <span className='truncate'>
+              {invoice.attachmentName ?? 'Attached document'}
+            </span>
+          </a>
+        )}
       </span>
 
       <span className='shrink-0 display text-base'>
@@ -278,6 +342,19 @@ function InvoiceRow({
 
       {canEdit && (
         <span className='flex shrink-0 gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100'>
+          <UploadButton
+            size='sm'
+            variant='ghost'
+            className='h-7 px-2 text-xs'
+            label={invoice.attachmentId ? 'Replace PDF' : 'Attach PDF'}
+            icon={<Paperclip className='size-3' />}
+            multiple={false}
+            pending={attaching}
+            onFiles={(list) => {
+              const chosen = list[0]
+              if (chosen) onAttach(chosen)
+            }}
+          />
           {state === 'draft' && (
             <Button
               size='sm'

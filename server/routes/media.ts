@@ -8,6 +8,7 @@ import {
   contentItems,
   files,
   moodboardItems,
+  invoices,
 } from '../db/schema.js'
 import { audit } from '../lib/audit.js'
 import {
@@ -177,6 +178,15 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
    * filled.
    */
   const fileId = form['fileId'] ? String(form['fileId']) : null
+  /**
+   * Attach this document to an invoice.
+   *
+   * Still `target=file`, deliberately. An invoice attachment IS a file: it
+   * gets the same document allowlist, the same row shape, and the same File
+   * Folder listing — which is what makes the folder show invoice PDFs without
+   * a second copy of the bytes that could drift from the first.
+   */
+  const invoiceId = form['invoiceId'] ? String(form['invoiceId']) : null
   const name = file.name || 'Untitled'
 
   /**
@@ -289,6 +299,30 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
     )
     if (!item) return c.json({ error: 'That content item does not exist' }, 404)
     clientId = item.clientId
+  } else if (target === 'file' && invoiceId) {
+    // The invoice decides the workspace, for the same reason the content item
+    // does: a child row's client_id must equal its parent's.
+    if (!isUuid(invoiceId)) {
+      return c.json({ error: 'That invoice does not exist' }, 404)
+    }
+    if (fileId) {
+      return c.json(
+        {
+          error:
+            'Send either a file slot or an invoice, not both — an attachment belongs to one or the other.',
+        },
+        400
+      )
+    }
+    const [inv] = await withTenant(c.get('tenant'), (tx) =>
+      tx
+        .select({ clientId: invoices.clientId })
+        .from(invoices)
+        .where(eq(invoices.id, invoiceId))
+        .limit(1)
+    )
+    if (!inv) return c.json({ error: 'That invoice does not exist' }, 404)
+    clientId = inv.clientId
   } else if (target === 'file' && fileId) {
     /*
      * Same rule, same reason: the ROW decides, not `?client=`.
@@ -466,6 +500,11 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
             mime: processed.mime,
             sizeBytes: processed.sizeBytes,
             uploadedBy: actorId,
+            // Set only for an invoice attachment. It is what makes the row
+            // inherit the invoice's visibility — a document on a DRAFT stays
+            // hidden from the client, though `files` is otherwise
+            // client-visible. See migration 0018.
+            invoiceId,
             sortOrder: 999,
           })
           .returning()

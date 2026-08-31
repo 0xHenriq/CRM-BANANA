@@ -381,6 +381,23 @@ export const files = pgTable(
     mime: text('mime'),
     sizeBytes: integer('size_bytes'),
     externalUrl: text('external_url'),
+    /**
+     * Set when this file IS an invoice's document.
+     *
+     * One row, not two: the File Folder reads invoice attachments rather than
+     * holding a copy of them, so deleting one cannot leave the other behind.
+     *
+     * It also changes who may read the row — `files` is client-visible while
+     * `invoices` is gated on `issued_on`, so an attachment on a DRAFT invoice
+     * must stay hidden even though ordinary files are not. Migration 0018
+     * composes that gate into files_select.
+     */
+    invoiceId: uuid('invoice_id').references(() => invoices.id, {
+      // CASCADE deliberately: only an unissued invoice can be deleted, and
+      // under SET NULL the surviving row became an ordinary — client-visible —
+      // file, so deleting a draft published its figures. See migration 0018.
+      onDelete: 'cascade',
+    }),
     uploadedBy: text('uploaded_by').references(() => user.id, {
       onDelete: 'set null',
     }),
@@ -391,6 +408,7 @@ export const files = pgTable(
   },
   (t) => [
     index('files_client_sort_idx').on(t.clientId, t.sortOrder),
+    index('files_invoice_idx').on(t.invoiceId),
     // A file row is meaningless unless it points at something.
     check(
       'files_has_target',

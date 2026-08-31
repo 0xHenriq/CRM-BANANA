@@ -1041,3 +1041,152 @@ describe('10 — share links', () => {
     expect(rows).toHaveLength(0)
   })
 })
+
+/**
+ * Invoice attachments (migration 0018).
+ *
+ * The one place two visibility classes meet: `files` is client-visible, and
+ * `invoices` is gated on `issued_on` because a draft is her working copy. An
+ * attachment inherits the stricter of the two, or her unissued figures leave
+ * by the File Folder while the invoice stays correctly hidden.
+ */
+describe('11 — invoice attachments', () => {
+  it('the client sees the ISSUED invoice’s document', async () => {
+    const rows = await asActor<{ id: string }>(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from files where invoice_id is not null'
+    )
+    expect(rows.map((r) => r.id)).toEqual([f.fileOnIssuedInvoice])
+  })
+
+  it('and NOT the draft invoice’s, even by its exact id', async () => {
+    const rows = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'select id, name, storage_key from files where id = $1',
+      [f.fileOnDraftInvoice]
+    )
+    expect(rows).toHaveLength(0)
+  })
+
+  it('the draft invoice itself is still hidden, so the two agree', async () => {
+    // If this ever passes rows, the attachment test above is measuring the
+    // wrong thing — the gate it composes with would have gone.
+    const rows = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from invoices where id = $1',
+      [f.invoiceADraft]
+    )
+    expect(rows).toHaveLength(0)
+  })
+
+  it('ordinary files are exactly as visible as before', async () => {
+    // The `invoice_id IS NULL` arm. A regression here would hide her whole
+    // File Folder from every client, which is the failure mode to fear from a
+    // policy that grew an AND.
+    const rows = await asActor<{ id: string }>(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from files where invoice_id is null'
+    )
+    expect(rows.map((r) => r.id)).toContain(f.fileA)
+  })
+
+  it('staff see both attachments', async () => {
+    const rows = await asActor<{ id: string }>(
+      { kind: 'staff', userId: f.staffUser },
+      'select id from files where invoice_id is not null order by name'
+    )
+    expect(rows.map((r) => r.id)).toEqual([
+      f.fileOnIssuedInvoice,
+      f.fileOnDraftInvoice,
+    ])
+  })
+
+  it('issuing the draft makes its document appear, and only then', async () => {
+    // The composition is what makes this work with no second rule to update:
+    // the attachment follows the invoice because it reads through it.
+    const before = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from files where id = $1',
+      [f.fileOnDraftInvoice]
+    )
+    expect(before).toHaveLength(0)
+
+    await ownerPool.query(
+      'update invoices set issued_on = current_date where id = $1',
+      [f.invoiceADraft]
+    )
+    try {
+      const after = await asActor(
+        { kind: 'client', userId: f.clientUserA },
+        'select id from files where id = $1',
+        [f.fileOnDraftInvoice]
+      )
+      expect(after).toHaveLength(1)
+    } finally {
+      await ownerPool.query(
+        'update invoices set issued_on = null where id = $1',
+        [f.invoiceADraft]
+      )
+    }
+  })
+
+  /**
+   * The leak the FK direction decides.
+   *
+   * Only an unissued invoice can be deleted, so every deletion is a draft
+   * being thrown away. Under ON DELETE SET NULL the attachment survived with
+   * invoice_id NULL — an ordinary file, and ordinary files are client-visible
+   * — so deleting a draft handed the client the figures the gate exists to
+   * hide. CASCADE takes the document with the invoice.
+   */
+  it('deleting a draft invoice takes its document, rather than publishing it', async () => {
+    const [{ id: doomedInvoice }] = (
+      await ownerPool.query<{ id: string }>(
+        `insert into invoices(client_id, number, status, amount_pence)
+         values ($1,'INV-DOOMED','draft',999900) returning id`,
+        [f.clientA]
+      )
+    ).rows
+    const [{ id: doomedFile }] = (
+      await ownerPool.query<{ id: string }>(
+        `insert into files(client_id, name, storage_key, invoice_id)
+         values ($1,'DRAFT-FIGURES.pdf','a/doomed.pdf',$2) returning id`,
+        [f.clientA, doomedInvoice]
+      )
+    ).rows
+
+    // Hidden while the draft exists, which is 0018 working.
+    const before = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from files where id = $1',
+      [doomedFile]
+    )
+    expect(before).toHaveLength(0)
+
+    await ownerPool.query('delete from invoices where id = $1', [doomedInvoice])
+
+    // And gone entirely afterwards — NOT surviving as a visible orphan.
+    const survivors = await ownerPool.query(
+      'select id, invoice_id from files where id = $1',
+      [doomedFile]
+    )
+    expect(survivors.rowCount).toBe(0)
+
+    const after = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from files where id = $1',
+      [doomedFile]
+    )
+    expect(after).toHaveLength(0)
+  })
+
+  it('a review token still reads no files at all', async () => {
+    // Phase 4's rule, re-asserted now that files has a new column and a new
+    // policy: extending files_select must not have opened it to share links.
+    const rows = await asReviewer(
+      { linkId: f.reviewLinkA, contentItemId: f.contentAVisible },
+      'select id from files'
+    )
+    expect(rows).toHaveLength(0)
+  })
+})

@@ -92,6 +92,16 @@ export type Fixture = {
   /** Draft: her working copy. Neither it nor its payment may be visible. */
   invoiceADraft: string
   invoiceB: string
+  /**
+   * Two attachments in the SAME File Folder, on invoices in different states.
+   *
+   * `files` is client-visible and `invoices` is gated on issued_on, so an
+   * attachment on a draft is the one row where the two classes collide. With
+   * only the issued one seeded, the test asserting the gate would pass by
+   * having nothing to catch.
+   */
+  fileOnIssuedInvoice: string
+  fileOnDraftInvoice: string
   /** Client B's own post, so a token for one client cannot reach the other. */
   contentB: string
   /**
@@ -189,6 +199,8 @@ export async function resetAndSeed(): Promise<Fixture> {
       noticeA: randomUUID(),
       noticeB: randomUUID(),
       contentB: randomUUID(),
+      fileOnIssuedInvoice: randomUUID(),
+      fileOnDraftInvoice: randomUUID(),
       reviewLinkA: randomUUID(),
       reviewLinkFeedA: randomUUID(),
       reviewLinkB: randomUUID(),
@@ -362,6 +374,21 @@ export async function resetAndSeed(): Promise<Fixture> {
               ($3,$2,'INV-TEST-0002','draft',120000, null, null),
               ($4,$5,'INV-TEST-0003','sent',80000, current_date - 10, current_date + 5)`,
       [invoiceAIssued, clientA, invoiceADraft, invoiceB, clientB]
+    )
+
+    /*
+     * A PDF on each invoice. The draft's is the interesting one: `files` is
+     * client-visible, so before migration 0018 this row was downloadable by
+     * the client while the invoice it belongs to was correctly hidden.
+     */
+    await c.query(
+      `insert into files(id, client_id, name, storage_key, invoice_id, sort_order)
+       values ($1,$2,'INV-TEST-0001.pdf','a/inv-issued.pdf',$3,10),
+              ($4,$2,'INV-TEST-0002-DRAFT.pdf','a/inv-draft.pdf',$5,11)`,
+      [
+        ids.fileOnIssuedInvoice, clientA, invoiceAIssued,
+        ids.fileOnDraftInvoice, invoiceADraft,
+      ]
     )
 
     await c.query(

@@ -89,6 +89,29 @@ invoiceRoutes.get('/', async (c) => {
         dueOn: invoices.dueOn,
         notes: invoices.notes,
         createdAt: invoices.createdAt,
+        /*
+         * The attached document, if there is one.
+         *
+         * A correlated subquery rather than a join, so an invoice with no
+         * attachment still comes back exactly once — a left join would be
+         * correct today and would silently double the row the moment two
+         * documents are attached to one invoice.
+         *
+         * Aliased explicitly. Interpolating Drizzle columns inside sql`` here
+         * renders them unqualified, so `invoice_id` would bind to `files`'
+         * own column rather than the outer invoice — the same trap the client
+         * list's count subqueries carry a comment about.
+         */
+        attachmentId: sql<string | null>`(
+          select f.id from files f
+           where f.invoice_id = invoices.id
+           order by f.created_at desc limit 1
+        )`,
+        attachmentName: sql<string | null>`(
+          select f.name from files f
+           where f.invoice_id = invoices.id
+           order by f.created_at desc limit 1
+        )`,
       })
       .from(invoices)
       .innerJoin(clients, eq(clients.id, invoices.clientId))

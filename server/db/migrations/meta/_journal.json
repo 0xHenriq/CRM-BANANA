@@ -127,6 +127,13 @@
       "when": 1787699871196,
       "tag": "0017_brief_file_slot",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1787699872196,
+      "tag": "0018_invoice_attachments",
+      "breakpoints": true
     }
   ]
 }
