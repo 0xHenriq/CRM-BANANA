@@ -8,8 +8,9 @@ import {
   clients,
   contacts,
   deals,
+  invitationGrants,
 } from '../db/schema.js'
-import { user } from '../db/auth-schema.js'
+import { invitation, user } from '../db/auth-schema.js'
 import { audit, recordActivity, slugify } from '../lib/audit.js'
 import { requireStaff } from '../middleware/session.js'
 import { seedNewClientWorkspace } from '../lib/seed-workspace.js'
@@ -188,7 +189,42 @@ clientRoutes.get('/:id', async (c) => {
       .innerJoin(user, eq(user.id, clientAccess.userId))
       .where(eq(clientAccess.clientId, id))
 
-    return { client, contacts: clientContacts, deals: clientDeals, timeline, seats }
+    /**
+     * Invitations sent for this workspace that nobody has accepted yet.
+     *
+     * Without this the contacts card can only tell "has a login" from "has
+     * not", and an invited contact looks identical to an uninvited one — so
+     * she clicks Invite again and mints a SECOND invitation, which holds a
+     * SECOND seat out of ten, for one person. The state exists in the data;
+     * it just was not being returned.
+     *
+     * Read through the staging table, because the grant is what ties an
+     * invitation to a workspace and it is written at invite time — the user
+     * row does not exist until acceptance.
+     */
+    const pendingInvites = await tx
+      .select({
+        id: invitation.id,
+        email: invitation.email,
+        expiresAt: invitation.expiresAt,
+      })
+      .from(invitationGrants)
+      .innerJoin(invitation, eq(invitation.id, invitationGrants.invitationId))
+      .where(
+        and(
+          eq(invitationGrants.clientId, id),
+          eq(invitation.status, 'pending')
+        )
+      )
+
+    return {
+      client,
+      contacts: clientContacts,
+      deals: clientDeals,
+      timeline,
+      seats,
+      pendingInvites,
+    }
   })
 
   if (!result) return c.json({ error: 'Not found' }, 404)

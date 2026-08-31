@@ -327,6 +327,8 @@ export type ClientDetail = {
   deals: Deal[]
   timeline: Activity[]
   seats: { userId: string; email: string; name: string }[]
+  /** Invitations for this workspace that nobody has accepted yet. */
+  pendingInvites: { id: string; email: string; expiresAt: string }[]
 }
 
 /**
@@ -678,6 +680,25 @@ export function normaliseHex(input: string): string | null {
  */
 export function brandPalette(colors: string[] | null | undefined): string[] {
   return Array.from({ length: BRAND_COLOR_SLOTS }, (_, i) => colors?.[i] ?? '')
+}
+
+/**
+ * A timestamp down to the calendar day it falls on where the reader is.
+ *
+ * `iso.slice(0, 10)` is the tempting one-liner and it is wrong: an ISO
+ * timestamp is UTC, so 2026-09-14T23:30:00Z is the 15th in London and the
+ * slice says the 14th. Built from local parts, like every other date in this
+ * product.
+ *
+ * Returns 'YYYY-MM-DD', which is what `formatShortDate` and `isPastDate` both
+ * take — so a timestamp column and a date column render identically rather
+ * than one of them growing its own spelling of September.
+ */
+export function localDayOf(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 /**

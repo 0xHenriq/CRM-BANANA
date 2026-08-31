@@ -28,6 +28,7 @@ import {
   CLIENT_STATUSES,
   type PortalWorkspace,
 } from '@/lib/api'
+import { copyText } from '@/lib/copy-text'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -216,7 +217,7 @@ export function ClientDetailPage({
     )
   }
 
-  const { client, contacts, deals, timeline, seats } = data
+  const { client, contacts, deals, timeline, seats, pendingInvites } = data
 
   return (
     <>
@@ -308,7 +309,12 @@ export function ClientDetailPage({
                   restore={restore}
                   onArchive={() => setConfirmArchive(true)}
                 />
-                <ContactsCard clientId={clientId} contacts={contacts} />
+                <ContactsCard
+                  clientId={clientId}
+                  contacts={contacts}
+                  seats={seats}
+                  pendingInvites={pendingInvites}
+                />
               </div>
 
               <TimelineCard clientId={clientId} timeline={timeline} />
@@ -793,12 +799,29 @@ function NoWorkspace({ name }: { name: string }) {
   )
 }
 
+/**
+ * Who she talks to, and whether they can actually get in.
+ *
+ * Sofia asked for a green tag on contacts who have portal access and a way to
+ * invite the ones who do not. The tag is a join she nearly had: this page
+ * already loads `seats` — the users with access to THIS workspace — so a
+ * contact is "Active" when their email matches one.
+ *
+ * Three states, not two. "Invited" is the one that is easy to miss and
+ * expensive to get wrong: an invitation holds one of ten seats from the moment
+ * it is sent, so a contact who looks uninvited gets invited twice and holds
+ * two.
+ */
 function ContactsCard({
   clientId,
   contacts,
+  seats,
+  pendingInvites,
 }: {
   clientId: string
   contacts: ClientDetail['contacts']
+  seats: ClientDetail['seats']
+  pendingInvites: ClientDetail['pendingInvites']
 }) {
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
@@ -836,6 +859,44 @@ function ContactsCard({
     mutationFn: (contactId: string) =>
       api.del(`/clients/${clientId}/contacts/${contactId}`),
     onSuccess: invalidate,
+    // Was missing: a failed delete left the row on screen with no explanation,
+    // which reads as the button not working.
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  /**
+   * Emails are compared case-insensitively and trimmed.
+   *
+   * She types contacts by hand and invitations are typed by hand too, so
+   * "Jane@Acme.com " and "jane@acme.com" are one person to everyone except a
+   * strict string compare — which would show an active client as invitable and
+   * offer to burn a seat re-inviting them.
+   */
+  const key = (email: string | null | undefined) =>
+    email?.trim().toLowerCase() ?? ''
+  const active = new Set(seats.map((s) => key(s.email)))
+  const invited = new Set(pendingInvites.map((p) => key(p.email)))
+
+  const invite = useMutation({
+    mutationFn: (email: string) =>
+      api.post<{ inviteUrl: string }>('/seats/invite', {
+        email,
+        role: 'client',
+        clientIds: [clientId],
+      }),
+    onSuccess: async (result) => {
+      const ok = await copyText(result.inviteUrl)
+      // Says what it did, and does not pretend to have emailed anyone.
+      toast[ok ? 'success' : 'error'](
+        ok
+          ? 'Invite link copied. Send it to them yourself — there is no email delivery yet.'
+          : `Invitation created, but the copy failed. The link is ${result.inviteUrl}`,
+        { duration: ok ? 6000 : 30000 }
+      )
+      await invalidate()
+      await queryClient.invalidateQueries({ queryKey: ['seats'] })
+    },
+    onError: (err: Error) => toast.error(err.message),
   })
 
   return (
@@ -939,21 +1000,100 @@ function ContactsCard({
                     )}
                   </p>
                 </div>
-                <Button
-                  size='icon'
-                  variant='ghost'
-                  className='shrink-0 opacity-0 group-hover:opacity-100'
-                  onClick={() => remove.mutate(contact.id)}
-                  aria-label={`Remove ${contact.name}`}
-                >
-                  <Trash2 className='size-4 text-destructive' />
-                </Button>
+                <div className='flex shrink-0 items-center gap-2'>
+                  <ContactAccess
+                    contact={contact}
+                    isActive={active.has(key(contact.email))}
+                    isInvited={invited.has(key(contact.email))}
+                    onInvite={() => invite.mutate(contact.email!.trim())}
+                    isInviting={
+                      invite.isPending &&
+                      invite.variables === contact.email?.trim()
+                    }
+                  />
+                  <Button
+                    size='icon'
+                    variant='ghost'
+                    className='opacity-0 group-hover:opacity-100'
+                    onClick={() => remove.mutate(contact.id)}
+                    aria-label={`Remove ${contact.name}`}
+                  >
+                    <Trash2 className='size-4 text-destructive' />
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>
         )}
       </CardContent>
     </Card>
+  )
+}
+
+/**
+ * Portal access for one contact: a state, and the one action that changes it.
+ *
+ * Deliberately NOT a "See it from their view" button, which is what she asked
+ * for alongside this. That is impersonation, and the whole security model is
+ * Postgres RLS keyed on `app.user_id` — anything that fakes a client context
+ * is touching the single thing keeping tenants apart. A read-only preview that
+ * renders the portal under the client's own visibility rules is the safe
+ * shape, and it deserves its own review rather than being smuggled in here.
+ */
+function ContactAccess({
+  contact,
+  isActive,
+  isInvited,
+  onInvite,
+  isInviting,
+}: {
+  contact: ClientDetail['contacts'][number]
+  isActive: boolean
+  isInvited: boolean
+  onInvite: () => void
+  isInviting: boolean
+}) {
+  // No email, no invitation — there is nowhere to send it. Say so rather than
+  // offering a button that cannot work.
+  if (!contact.email?.trim()) {
+    return (
+      <span className='text-[0.6875rem] text-muted-foreground'>No email</span>
+    )
+  }
+
+  if (isActive) {
+    return (
+      <span
+        className='rounded-full border-[1.5px] border-bd-ink bg-tag-video px-2 py-0.5 text-[0.6875rem] font-bold whitespace-nowrap text-bd-ink'
+        title='They have a login and can see this workspace'
+      >
+        Active
+      </span>
+    )
+  }
+
+  if (isInvited) {
+    return (
+      <span
+        className='rounded-full border-[1.5px] border-bd-rule bg-bd-sand px-2 py-0.5 text-[0.6875rem] font-bold whitespace-nowrap text-bd-ink'
+        title='Invited — the link has been created and is holding a seat until they accept it'
+      >
+        Invited
+      </span>
+    )
+  }
+
+  return (
+    <Button
+      size='sm'
+      variant='outline'
+      className='h-7 px-2 text-xs'
+      onClick={onInvite}
+      disabled={isInviting}
+    >
+      {isInviting ? <Loader2 className='animate-spin' /> : <Mail />}
+      Copy invite link
+    </Button>
   )
 }
 

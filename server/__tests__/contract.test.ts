@@ -42,6 +42,7 @@ import {
   INVOICE_STATUSES as CLIENT_INVOICE_STATUSES,
   invoiceState,
   isApprovalOverdue,
+  localDayOf,
   outstandingPence,
   paymentState,
   formatPence,
@@ -150,6 +151,68 @@ describe('client statuses', () => {
  * the tests that stop it drifting. The rule is narrow on purpose and the tests
  * say why for each excluded status.
  */
+/**
+ * A timestamp rendered as the day it falls on where the reader is.
+ *
+ * The bug this exists to stop shipped once already, in a different shape: a
+ * date rendered through `toLocaleDateString('en-GB')` spelled September
+ * "Sept" while the rest of the product spelled it "Sep". Feeding timestamps
+ * through the same pair of helpers as date columns is what keeps that from
+ * happening again, so the pair is bound here.
+ */
+describe('localDayOf', () => {
+  it('produces the YYYY-MM-DD shape formatShortDate and isPastDate take', () => {
+    const day = localDayOf('2026-09-14T12:00:00.000Z')
+    expect(day).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(formatShortDate(day)).toBe('14 Sep')
+  })
+
+  it('uses local calendar parts, never the UTC slice', () => {
+    /*
+     * Deliberately picks a local time that lands on a DIFFERENT UTC day.
+     *
+     * A fixed 23:30 would only expose `iso.slice(0, 10)` west of Greenwich —
+     * mutation-verified: with the slice in place this test passed on a machine
+     * running UTC+1, which is a test protecting nothing. So the side is chosen
+     * from the runner's actual offset. In UTC itself the two are genuinely
+     * identical and there is nothing to catch, which the branch says out loud
+     * rather than pretending otherwise.
+     */
+    const offsetMinutes = new Date(2026, 8, 14).getTimezoneOffset()
+    if (offsetMinutes === 0) {
+      expect(localDayOf(new Date(2026, 8, 14, 12).toISOString())).toBe(
+        '2026-09-14'
+      )
+      return
+    }
+    // getTimezoneOffset is positive WEST of UTC. Late evening there is already
+    // tomorrow in UTC; early morning east of UTC is still yesterday.
+    const local =
+      offsetMinutes > 0
+        ? new Date(2026, 8, 14, 23, 30)
+        : new Date(2026, 8, 14, 0, 30)
+
+    expect(localDayOf(local.toISOString())).toBe('2026-09-14')
+    // And prove the naive version really would have differed here, so this
+    // test cannot quietly stop testing anything.
+    expect(local.toISOString().slice(0, 10)).not.toBe('2026-09-14')
+  })
+
+  it('never spells a month the way en-GB does', () => {
+    // en-GB renders September as "Sept". Four characters where the feed grid
+    // and the deadline badge both use three.
+    expect(formatShortDate(localDayOf('2026-09-01T12:00:00.000Z'))).toBe(
+      '1 Sep'
+    )
+  })
+
+  it('returns empty for nothing and for nonsense, rather than "Invalid Date"', () => {
+    expect(localDayOf(null)).toBe('')
+    expect(localDayOf(undefined)).toBe('')
+    expect(localDayOf('not a date')).toBe('')
+  })
+})
+
 describe('overdue approval', () => {
   const iso = (offsetDays: number) => {
     const d = new Date()

@@ -736,3 +736,73 @@ describe('a closed portal closes the workspace', () => {
     }
   })
 })
+
+/**
+ * Removing a seat has to remove the access, not just the membership.
+ *
+ * These assert the property DELETE /seats/members/:id depends on, at the layer
+ * that actually decides it. That handler deletes the member row AND the
+ * client_access rows, and the first test is why the second half exists:
+ * membership is not what gates a client's portal, so removing only the seat
+ * frees a licence and revokes nothing.
+ */
+describe('9 — removing a seat', () => {
+  it('membership is not what grants access — client_access is', async () => {
+    // This fixture never creates a `member` row for the client user; it grants
+    // client_access and nothing else. So the strongest form of the claim is
+    // already true here: no membership whatsoever, and full sight of their
+    // workspace. A "remove the member and stop" handler would therefore take
+    // away a seat and leave every door open.
+    const memberships = await ownerPool.query(
+      'select id from member where user_id = $1',
+      [f.clientUserA]
+    )
+    expect(memberships.rowCount).toBe(0)
+
+    const clients = await asActor<{ id: string }>(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from clients'
+    )
+    expect(clients.map((r) => r.id)).toEqual([f.clientA])
+
+    const items = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from content_items'
+    )
+    expect(items.length).toBeGreaterThan(0)
+  })
+
+  it('dropping client_access is what actually closes the door', async () => {
+    const before = await ownerPool.query(
+      'select user_id, client_id from client_access where user_id = $1',
+      [f.clientUserA]
+    )
+    expect(before.rowCount).toBeGreaterThan(0)
+
+    await ownerPool.query('delete from client_access where user_id = $1', [
+      f.clientUserA,
+    ])
+    try {
+      const clients = await asActor(
+        { kind: 'client', userId: f.clientUserA },
+        'select id from clients'
+      )
+      expect(clients).toHaveLength(0)
+
+      for (const table of ['content_items', 'files', 'links', 'tasks']) {
+        const rows = await asActor(
+          { kind: 'client', userId: f.clientUserA },
+          `select 1 from ${table}`
+        )
+        expect(rows, table).toHaveLength(0)
+      }
+    } finally {
+      for (const row of before.rows) {
+        await ownerPool.query(
+          'insert into client_access(user_id, client_id) values ($1,$2) on conflict do nothing',
+          [row.user_id, row.client_id]
+        )
+      }
+    }
+  })
+})

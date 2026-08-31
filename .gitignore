@@ -38,3 +38,6 @@ dist-ssr
 
 # Build output of the API
 server-dist
+
+# TanStack Router writes transient route-generation scratch files here.
+.tanstack/

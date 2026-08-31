@@ -192,6 +192,161 @@ seatsRoutes.post('/invite', async (c) => {
   })
 })
 
+/**
+ * Take back an invitation that has not been accepted.
+ *
+ * The 409 above tells her to "revoke a pending invitation or remove a member
+ * first" and until now there was no way to do either — the copy described a
+ * door that did not exist. Cancelling frees the seat immediately, because the
+ * seat count above reserves against `status = 'pending'` and this leaves
+ * 'canceled'.
+ *
+ * The staged workspace grants go with it: invitation_grants is
+ * ON DELETE CASCADE against the invitation, but cancelling does not DELETE the
+ * invitation row, so they are cleared explicitly. Left behind, re-inviting the
+ * same person to a different workspace would hand them the old one as well.
+ */
+seatsRoutes.post('/invitations/:id/cancel', async (c) => {
+  const invitationId = c.req.param('id')
+  const organizationId = await getOrganizationId()
+
+  // Confirm it is ours and still pending before asking Better Auth, so a bad
+  // id gets a plain 404 rather than a plugin error surfaced as a 500.
+  const [existing] = await db
+    .select({ id: invitation.id, status: invitation.status })
+    .from(invitation)
+    .where(
+      and(
+        eq(invitation.id, invitationId),
+        eq(invitation.organizationId, organizationId)
+      )
+    )
+    .limit(1)
+
+  if (!existing) return c.json({ error: 'Not found' }, 404)
+  if (existing.status !== 'pending') {
+    return c.json(
+      { error: `That invitation is already ${existing.status}.` },
+      409
+    )
+  }
+
+  try {
+    await auth.api.cancelInvitation({
+      body: { invitationId },
+      headers: c.req.raw.headers,
+    })
+  } catch (err) {
+    logger.warn({ err, invitationId }, 'invitation cancel rejected')
+    return c.json({ error: 'Could not cancel that invitation.' }, 400)
+  }
+
+  await withTenant(c.get('tenant'), (tx) =>
+    tx
+      .delete(invitationGrants)
+      .where(eq(invitationGrants.invitationId, invitationId))
+  )
+
+  logger.info({ invitationId }, 'invitation cancelled')
+  return c.json({ ok: true })
+})
+
+/**
+ * Remove someone's seat — and, for a client, their access with it.
+ *
+ * THE MEMBER ROW IS NOT WHAT GATES A CLIENT'S PORTAL. Access comes from
+ * `client_access`, which is what `app_client_ids()` reads, so removing only
+ * the membership frees the seat and revokes nothing: the client keeps their
+ * session, keeps their workspaces, and keeps reading everything in them. The
+ * role lookup in withSession would return '' and quietly reclassify them as a
+ * client — which they already were. Verified at the database level in
+ * isolation.test.ts, both halves.
+ *
+ * So both go, in that order, and the grants are deleted through withTenant
+ * because client_access carries RLS and a bare db.delete runs with no session
+ * variables at all.
+ *
+ * Their existing browser session is NOT revoked here and that is a known gap,
+ * not an oversight: Better Auth owns session storage and there is no seam for
+ * it in this codebase yet. With client_access gone the policies return zero
+ * rows, so the worst case is a signed-in stranger looking at an empty portal
+ * until their session expires — not at data.
+ */
+seatsRoutes.delete('/members/:memberId', async (c) => {
+  const memberId = c.req.param('memberId')
+  const organizationId = await getOrganizationId()
+  const currentUserId = c.get('user')!.id
+
+  const [target] = await db
+    .select({
+      id: member.id,
+      userId: member.userId,
+      role: member.role,
+      email: user.email,
+    })
+    .from(member)
+    .innerJoin(user, eq(user.id, member.userId))
+    .where(and(eq(member.id, memberId), eq(member.organizationId, organizationId)))
+    .limit(1)
+
+  if (!target) return c.json({ error: 'Not found' }, 404)
+
+  // She cannot remove herself. There is one agency and one owner in it, and a
+  // "are you sure?" is not a substitute for the account being irrecoverable.
+  if (target.userId === currentUserId) {
+    return c.json(
+      {
+        error:
+          'You cannot remove your own seat. Ask another owner to do it if you are handing the agency over.',
+      },
+      409
+    )
+  }
+
+  // Nor the last owner, however it is reached.
+  if (target.role.split(',').some((r) => r.trim() === 'owner')) {
+    const [{ owners }] = await db
+      .select({ owners: sql<number>`count(*)::int` })
+      .from(member)
+      .where(
+        and(
+          eq(member.organizationId, organizationId),
+          sql`${member.role} like '%owner%'`
+        )
+      )
+    if (owners <= 1) {
+      return c.json(
+        { error: 'That is the only owner. Make someone else an owner first.' },
+        409
+      )
+    }
+  }
+
+  try {
+    await auth.api.removeMember({
+      body: { memberIdOrEmail: memberId, organizationId },
+      headers: c.req.raw.headers,
+    })
+  } catch (err) {
+    logger.warn({ err, memberId }, 'member removal rejected')
+    return c.json({ error: 'Could not remove that seat.' }, 400)
+  }
+
+  // The half that actually revokes anything.
+  const removed = await withTenant(c.get('tenant'), (tx) =>
+    tx
+      .delete(clientAccess)
+      .where(eq(clientAccess.userId, target.userId))
+      .returning({ clientId: clientAccess.clientId })
+  )
+
+  logger.info(
+    { memberId, email: target.email, workspacesRevoked: removed.length },
+    'seat removed'
+  )
+  return c.json({ ok: true, workspacesRevoked: removed.length })
+})
+
 const grantSchema = z.object({ clientId: z.uuid() })
 
 /**
