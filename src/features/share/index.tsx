@@ -49,13 +49,15 @@ type SharePayload =
   | {
       scope: 'feed'
       client: { name: string } | null
+      /** Shaped by selectFeedCells, the same rows the Feed Preview renders. */
       cells: {
-        id: string
+        itemId: string
         title: string
         type: ContentType
         scheduledAt: string | null
         scheduledTime: string | null
-        assetId: string | null
+        feedOrder: number | null
+        assetId: string
       }[]
     }
 
@@ -148,7 +150,7 @@ export function SharePage() {
                 <ul className='grid grid-cols-3 gap-1.5'>
                   {data.cells.slice(0, 9).map((cell) => (
                     <li
-                      key={cell.id}
+                      key={cell.itemId}
                       className='relative aspect-square overflow-hidden rounded border-2 border-bd-ink bg-bd-sand'
                     >
                       {cell.assetId ? (

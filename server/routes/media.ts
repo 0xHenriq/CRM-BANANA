@@ -1,7 +1,7 @@
 import { asc, eq, sql } from 'drizzle-orm'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
-import { withTenant } from '../db/index.js'
+import { withTenant, type Tx } from '../db/index.js'
 import {
   clients,
   contentAssets,
@@ -863,20 +863,38 @@ mediaRoutes.delete('/moodboard/:id', requireStaff, async (c) => {
  * she has arranged them and by schedule otherwise. In the prototype this was
  * nine independent text boxes holding image URLs, unconnected to anything.
  */
-mediaRoutes.get('/feed', async (c) => {
-  const clientId = await resolveClientId(c)
-  if (!clientId) return c.json({ error: 'No workspace available' }, 404)
+/**
+ * One cell per content item, using its first asset.
+ *
+ * DISTINCT ON rather than a join on sortOrder = 0: assets are appended, so an
+ * item whose first asset was deleted would otherwise vanish from the grid
+ * entirely, and before sortOrder was assigned properly every item appeared
+ * once per asset.
+ *
+ * Exported because the public share page renders the same grid, and a second
+ * query for it diverged immediately: it left out the join, so items with no
+ * creative appeared as blank tiles the client saw and she did not, and it
+ * dropped `scheduled_time` from the ordering, so two posts on one day could
+ * come out in a different order. A shared preview that shows something other
+ * than the thing she looked at before sending it is worse than no preview.
+ *
+ * Takes a `tx` rather than a context, so it runs unchanged under a review
+ * context — RLS narrows the rows, the SQL does not need to know.
+ */
+export type FeedCellRow = {
+  itemId: string
+  title: string
+  type: string
+  status: string
+  scheduledAt: string | null
+  scheduledTime: string | null
+  feedOrder: number | null
+  assetId: string
+  assetKind: 'image' | 'video'
+}
 
-  /**
-   * One cell per content item, using its first asset.
-   *
-   * DISTINCT ON rather than a join on sortOrder = 0: assets are appended, so
-   * an item whose first asset was deleted would otherwise vanish from the
-   * grid entirely, and before sortOrder was assigned properly every item
-   * appeared once per asset.
-   */
-  const result = await withTenant(c.get('tenant'), (tx) =>
-    tx.execute(sql`
+export function selectFeedCells(tx: Tx, clientId: string) {
+  return tx.execute<FeedCellRow>(sql`
       select
         item_id       as "itemId",
         title,
@@ -906,12 +924,18 @@ mediaRoutes.get('/feed', async (c) => {
       order by feed_order asc nulls last,
                scheduled_at asc nulls last,
                scheduled_time asc nulls last
-    `)
+  `)
+}
+
+mediaRoutes.get('/feed', async (c) => {
+  const clientId = await resolveClientId(c)
+  if (!clientId) return c.json({ error: 'No workspace available' }, 404)
+
+  const result = await withTenant(c.get('tenant'), (tx) =>
+    selectFeedCells(tx, clientId)
   )
 
-  const rows = result.rows
-
-  return c.json({ clientId, cells: rows })
+  return c.json({ clientId, cells: result.rows })
 })
 
 const feedOrderSchema = z.object({ ids: z.array(z.uuid()).max(100) })

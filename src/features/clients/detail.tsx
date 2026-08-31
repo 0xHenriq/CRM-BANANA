@@ -471,13 +471,18 @@ export function ClientDetailPage({
  */
 function ShareClientMenu({ clientId }: { clientId: string }) {
   const queryClient = useQueryClient()
+  const [open, setOpen] = useState(false)
   const [fresh, setFresh] = useState<string | null>(null)
   const now = new Date()
 
+  // Only while the menu is open. Nothing outside it reads this, and without
+  // the gate every client page load fetched share links nobody had asked to
+  // see.
   const { data } = useQuery({
     queryKey: ['feed-shares', clientId],
     queryFn: () =>
       api.get<{ links: ShareLink[] }>(`/shares/client/${clientId}/feed`),
+    enabled: open,
   })
 
   const mint = useMutation({
@@ -508,7 +513,13 @@ function ShareClientMenu({ clientId }: { clientId: string }) {
   const live = (data?.links ?? []).filter((l) => linkState(l, now) === 'live')
 
   return (
-    <Popover onOpenChange={(open) => !open && setFresh(null)}>
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        if (!next) setFresh(null)
+      }}
+    >
       <PopoverTrigger asChild>
         <Button size='sm' variant='outline'>
           <Share2 />
@@ -522,6 +533,17 @@ function ShareClientMenu({ clientId }: { clientId: string }) {
             <p className='text-xs text-muted-foreground'>
               A read-only grid of what is coming up. No sign-in, and anyone
               with the link can open it.
+            </p>
+            {/*
+              Said out loud, because the grid she is looking at and the grid
+              they get are not the same one. Feed Preview shows her everything
+              including internal concepts; a share link shows only what is
+              already shared with the client. Without this she sends nine cells
+              and they open seven, and the first she hears of it is them asking.
+            */}
+            <p className='mt-1 text-xs text-muted-foreground'>
+              Only posts already shared with the client appear — internal ones
+              are left out.
             </p>
           </div>
 

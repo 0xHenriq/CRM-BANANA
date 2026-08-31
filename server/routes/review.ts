@@ -6,7 +6,7 @@ import { contentApprovals, contentAssets, contentItems } from '../db/schema.js'
 import { hashReviewToken } from '../lib/review-tokens.js'
 import { logger } from '../logger.js'
 import { rateLimit } from '../middleware/rate-limit.js'
-import { streamKey } from './media.js'
+import { selectFeedCells, streamKey } from './media.js'
 
 /**
  * The share-link surface. Deliberately unauthenticated.
@@ -44,6 +44,11 @@ reviewRoutes.use('/:token/decision', rateLimit({ windowMs: 15 * 60_000, max: 10,
 const gone = { error: 'This link is no longer available.' } as const
 
 async function loadItemPayload(tx: Tx, review: ReviewContext) {
+  // The CHECK on review_links guarantees an item-scoped link has one, but an
+  // empty string reaching a uuid comparison raises 22P02 — a 500 where a 404
+  // belongs. Cheaper to answer here than to explain later.
+  if (!review.contentItemId) return null
+
   const [item] = await tx
     .select({
       id: contentItems.id,
@@ -56,6 +61,11 @@ async function loadItemPayload(tx: Tx, review: ReviewContext) {
       scheduledTime: contentItems.scheduledTime,
     })
     .from(contentItems)
+    // Explicit, though RLS already narrows this to the one row a link opens.
+    // A bare `limit(1)` leaned entirely on the policy being right: correct
+    // today, and silently the WRONG POST the day anything widens it. Two
+    // gates on the thing a share link is for.
+    .where(eq(contentItems.id, review.contentItemId))
     .limit(1)
   if (!item) return null
 
@@ -87,25 +97,20 @@ async function loadItemPayload(tx: Tx, review: ReviewContext) {
 }
 
 async function loadFeedPayload(tx: Tx, review: ReviewContext) {
-  const rows = await tx
-    .select({
-      id: contentItems.id,
-      title: contentItems.title,
-      type: contentItems.type,
-      scheduledAt: contentItems.scheduledAt,
-      scheduledTime: contentItems.scheduledTime,
-      feedOrder: contentItems.feedOrder,
-      assetId: sql<string | null>`(
-        select ca.id from content_assets ca
-         where ca.content_item_id = content_items.id
-         order by ca.sort_order asc limit 1
-      )`,
-    })
-    .from(contentItems)
-    .where(eq(contentItems.clientId, review.clientId))
-    .orderBy(asc(contentItems.feedOrder), asc(contentItems.scheduledAt))
-
-  return { cells: rows }
+  /*
+   * The SAME query the Feed Preview screen uses, not a second one.
+   *
+   * The second one diverged the moment it was written: no join to
+   * content_assets, so items with no creative showed as blank tiles the client
+   * saw and she did not, and no `scheduled_time` in the ordering, so two posts
+   * on one day could come out in a different order. She looks at the grid and
+   * then sends a link to it; the two have to be the same grid.
+   *
+   * RLS does the narrowing — under a feed token this returns only the client's
+   * posts that are shared with them.
+   */
+  const result = await selectFeedCells(tx, review.clientId)
+  return { cells: result.rows }
 }
 
 /** The payload for whichever scope the link carries. */

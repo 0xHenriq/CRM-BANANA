@@ -311,6 +311,17 @@ describe('share tokens never reach the log', () => {
     }
   })
 
+  it('does NOT redact the staff routes, which carry ids and not tokens', () => {
+    // /api/shares/... is the staff surface: a link id is not a credential, and
+    // blanking it would cost the one thing the log is for. `\/share\/` must
+    // not match `\/shares\/`.
+    expect(redactPath('/api/shares/content/abc')).toBe('/api/shares/content/abc')
+    expect(redactPath('/api/shares/9f2/revoke')).toBe('/api/shares/9f2/revoke')
+    expect(redactPath('/api/shares/client/9f2/feed')).toBe(
+      '/api/shares/client/9f2/feed'
+    )
+  })
+
   it('redacts a real minted token, not just a tidy example', () => {
     const { token } = mintReviewToken()
     const redacted = redactPath(`/api/share/${token}`)
