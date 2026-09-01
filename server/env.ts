@@ -25,6 +25,20 @@ const schema = z.object({
   /** Signing key for sessions. Rotating it invalidates every login. */
   BETTER_AUTH_SECRET: z.string().min(32).optional(),
   UPLOAD_DIR: z.string().default('./.uploads'),
+  /**
+   * Stripe. Optional, so the app still boots without them — every payment
+   * route answers 503 with a sentence saying what is missing rather than
+   * throwing, because a portal that will not start is worse than one that
+   * cannot take a card yet.
+   */
+  STRIPE_SECRET_KEY: z.string().optional(),
+  /**
+   * From the webhook endpoint, not the API keys page. Without it a webhook
+   * cannot be verified, and an UNVERIFIED webhook is an open endpoint that
+   * writes payment rows — so the handler refuses to run at all rather than
+   * trusting the body.
+   */
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
 })
 
 const parsed = schema.safeParse(process.env)

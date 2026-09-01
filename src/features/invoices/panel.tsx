@@ -1,6 +1,15 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Paperclip, Plus, Receipt, Send, Trash2, Ban } from 'lucide-react'
+import {
+  CreditCard,
+  Loader2,
+  Paperclip,
+  Plus,
+  Receipt,
+  Send,
+  Trash2,
+  Ban,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import {
   api,
@@ -28,6 +37,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { QueryError } from '@/components/layout/query-error'
 import { UploadButton } from '@/components/upload-button'
 import { uploadMedia } from '@/lib/upload'
+import { copyText } from '@/lib/copy-text'
 
 /**
  * How each state reads.
@@ -154,6 +164,40 @@ export function InvoicesPanel({
     onError: (err: Error) => toast.error(err.message),
   })
 
+  /**
+   * A Stripe payment page for what is still owed.
+   *
+   * One endpoint, two buttons. For her it produces a link to send; for the
+   * client it is the page they pay on. Which one you get is decided by who is
+   * signed in, not by a flag — RLS will not show a client an unissued draft,
+   * so there is nothing to guard here.
+   */
+  const checkout = useMutation({
+    mutationFn: (invoiceId: string) =>
+      api.post<{ url: string; amountPence: number; number: string }>(
+        `/invoices/${invoiceId}/checkout`,
+        {}
+      ),
+    onSuccess: async (result) => {
+      if (canEdit) {
+        // Hers: a link to send. Copied rather than opened — she is not the one
+        // paying, and opening Stripe in her own browser is never what she
+        // wanted.
+        const ok = await copyText(result.url)
+        toast[ok ? 'success' : 'error'](
+          ok
+            ? `Payment link for ${result.number} copied — ${formatPence(result.amountPence, 'GBP')}. Send it to them.`
+            : `Link created but the copy failed. It is ${result.url}`,
+          { duration: ok ? 6000 : 30000 }
+        )
+      } else {
+        // Theirs: go and pay. Same tab, because Stripe comes back here.
+        window.location.href = result.url
+      }
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
   const remove = useMutation({
     mutationFn: (id: string) => api.del(`/invoices/${id}`),
     onSuccess: invalidate,
@@ -249,6 +293,10 @@ export function InvoicesPanel({
                   onAttach={(chosen) =>
                     attach.mutate({ invoiceId: invoice.id, file: chosen })
                   }
+                  onPay={() => checkout.mutate(invoice.id)}
+                  paying={
+                    checkout.isPending && checkout.variables === invoice.id
+                  }
                   attaching={
                     attach.isPending && attach.variables?.invoiceId === invoice.id
                   }
@@ -287,6 +335,8 @@ function InvoiceRow({
   onDelete,
   onAttach,
   attaching,
+  onPay,
+  paying,
   onRecordPayment,
 }: {
   invoice: Invoice
@@ -296,6 +346,8 @@ function InvoiceRow({
   onDelete: () => void
   onAttach: (chosen: File) => void
   attaching: boolean
+  onPay: () => void
+  paying: boolean
   onRecordPayment: () => void
 }) {
   const state = invoiceState(invoice)
@@ -340,8 +392,52 @@ function InvoiceRow({
         {formatPence(invoice.amountPence, invoice.currency)}
       </span>
 
+      {/*
+        The client's half. Everything above this is read-only for them; this is
+        the one thing they can DO with an invoice, so it is a solid button
+        rather than one of the hover-revealed staff actions.
+      */}
+      {!canEdit && state !== 'void' && state !== 'paid' && invoice.issuedOn && (
+        <Button size='sm' onClick={onPay} disabled={paying} className='shrink-0'>
+          {paying ? (
+            <Loader2 className='size-3.5 animate-spin' />
+          ) : (
+            <CreditCard className='size-3.5' />
+          )}
+          Pay now
+        </Button>
+      )}
+
       {canEdit && (
         <span className='flex shrink-0 gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100'>
+          {/*
+            Hers: a payment link to send. The client sees the same control read
+            "Pay now" and it takes them straight to Stripe — one endpoint, two
+            audiences, because what differs is who is asking rather than what
+            is being asked for.
+
+            Only on an issued invoice with something still owed: a draft has no
+            client-visible existence to pay against, a settled one has nothing
+            to collect, and a voided one should not be collectable at all. The
+            server refuses each of those independently — this just declines to
+            offer a button that would be told no.
+          */}
+          {state !== 'void' && state !== 'paid' && invoice.issuedOn && (
+            <Button
+              size='sm'
+              variant='ghost'
+              className='h-7 px-2 text-xs'
+              onClick={onPay}
+              disabled={paying}
+            >
+              {paying ? (
+                <Loader2 className='size-3 animate-spin' />
+              ) : (
+                <CreditCard className='size-3' />
+              )}
+              Send payment request
+            </Button>
+          )}
           <UploadButton
             size='sm'
             variant='ghost'

@@ -19,6 +19,7 @@ import { invoiceRoutes } from './routes/invoices.js'
 import { portalRoutes } from './routes/portal.js'
 import { reviewRoutes } from './routes/review.js'
 import { shareRoutes } from './routes/shares.js'
+import { stripeRoutes } from './routes/stripe.js'
 import { contentRoutes } from './routes/content.js'
 import { nextStepRoutes } from './routes/next-steps.js'
 import { mediaRoutes } from './routes/media.js'
@@ -105,6 +106,11 @@ app.route('/api/invoices', invoiceRoutes)
 // is a token that redeems — see withReviewToken.
 app.route('/api/shares', shareRoutes)
 app.route('/api/share', reviewRoutes)
+
+// Stripe's webhook. Unauthenticated by necessity — Stripe's servers call it,
+// not a browser — and authenticated instead by the signature over the raw
+// body. Mounted before nothing in particular; it shares no middleware.
+app.route('/api/stripe', stripeRoutes)
 
 app.route('/api/portal', portalRoutes)
 app.route('/api/content', contentRoutes)

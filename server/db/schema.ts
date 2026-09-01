@@ -810,6 +810,15 @@ export const invoicePayments = pgTable(
     method: text('method'),
     /** Their reference, so a bank statement can be matched to this row. */
     reference: text('reference'),
+    /**
+     * The Stripe Checkout Session id for a card payment; NULL for anything
+     * recorded by hand.
+     *
+     * A partial unique index on this is what stops a retried webhook writing
+     * the same payment twice — see migration 0019. Stripe retries until it
+     * gets a 2xx, so duplicates are ordinary rather than exceptional.
+     */
+    externalId: text('external_id'),
     recordedBy: text('recorded_by').references(() => user.id, {
       onDelete: 'set null',
     }),

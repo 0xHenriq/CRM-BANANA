@@ -134,6 +134,13 @@
       "when": 1787699872196,
       "tag": "0018_invoice_attachments",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1787699873196,
+      "tag": "0019_stripe_payments",
+      "breakpoints": true
     }
   ]
 }

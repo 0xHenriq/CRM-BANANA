@@ -2,6 +2,9 @@ import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { withTenant, type Tx } from '../db/index.js'
+import { env } from '../env.js'
+import { logger } from '../logger.js'
+import { stripe, stripeEnabled, toStripeAmount } from '../lib/stripe.js'
 import { clients, invoicePayments, invoices } from '../db/schema.js'
 import { audit, recordActivity } from '../lib/audit.js'
 import { requireAuth, requireStaff } from '../middleware/session.js'
@@ -372,6 +375,207 @@ const paymentSchema = z.object({
 })
 
 /**
+ * A Stripe Checkout Session for what is still owed on this invoice.
+ *
+ * `requireAuth`, not `requireStaff`, and that is deliberate: the same endpoint
+ * serves her "send a payment request" button and the client's "Pay now"
+ * button. RLS is what separates them — a client can only see an invoice once
+ * `issued_on` is set, so an unissued draft simply is not found here, and no
+ * check in this handler is what enforces that.
+ *
+ * Hosted Checkout rather than card fields of our own: no card number ever
+ * touches this server, which keeps the whole application out of PCI scope. The
+ * price is built inline rather than as a Stripe Product, because the invoice is
+ * already the source of truth for what is owed and a second catalogue would be
+ * a second thing to keep in step.
+ */
+invoiceRoutes.post('/:id/checkout', async (c) => {
+  if (!stripeEnabled() || !stripe) {
+    return c.json(
+      { error: 'Card payments are not configured yet — STRIPE_SECRET_KEY is missing.' },
+      503
+    )
+  }
+
+  const id = c.req.param('id')
+
+  const invoice = await withTenant(c.get('tenant'), async (tx) => {
+    const [row] = await tx
+      .select({
+        id: invoices.id,
+        clientId: invoices.clientId,
+        number: invoices.number,
+        description: invoices.description,
+        currency: invoices.currency,
+        amountPence: invoices.amountPence,
+        status: invoices.status,
+        issuedOn: invoices.issuedOn,
+        paid: paidPence,
+      })
+      .from(invoices)
+      .where(eq(invoices.id, id))
+      .limit(1)
+    return row ?? null
+  })
+
+  if (!invoice) return c.json({ error: 'Not found' }, 404)
+  if (invoice.status === 'void') {
+    return c.json({ error: 'That invoice has been voided.' }, 409)
+  }
+  if (!invoice.issuedOn) {
+    return c.json(
+      { error: 'Issue the invoice first — a draft is your working copy and the client cannot see it.' },
+      409
+    )
+  }
+
+  const outstanding = invoice.amountPence - invoice.paid
+  if (outstanding <= 0) {
+    return c.json({ error: `${invoice.number} is already paid in full.` }, 409)
+  }
+
+  const session = await stripe.checkout.sessions.create({
+    mode: 'payment',
+    line_items: [
+      {
+        quantity: 1,
+        price_data: {
+          currency: invoice.currency.toLowerCase(),
+          unit_amount: toStripeAmount(outstanding),
+          product_data: {
+            name: invoice.number,
+            ...(invoice.description ? { description: invoice.description } : {}),
+          },
+        },
+      },
+    ],
+    // The webhook reads these back. Stripe returns metadata verbatim, and it
+    // is the only thing tying a session to a row in this database — the
+    // amount alone would be ambiguous across two invoices for the same figure.
+    metadata: { invoiceId: invoice.id, invoiceNumber: invoice.number },
+    success_url: `${env.APP_URL}/portal?paid=${encodeURIComponent(invoice.number)}`,
+    cancel_url: `${env.APP_URL}/portal`,
+  })
+
+  if (!session.url) {
+    return c.json({ error: 'Stripe did not return a payment page. Try again.' }, 502)
+  }
+
+  logger.info(
+    { invoiceId: invoice.id, number: invoice.number, outstanding, sessionId: session.id },
+    'stripe checkout session created'
+  )
+  return c.json({ url: session.url, amountPence: outstanding, number: invoice.number })
+})
+
+/**
+ * Write a payment against an invoice. The one place that does.
+ *
+ * Extracted so a card payment arriving by webhook takes EXACTLY the path she
+ * takes by hand — the same overpayment refusal, the same receipt numbering,
+ * the same audit and activity rows. A second implementation for Stripe would
+ * be a second set of money rules, and the two would drift the first time one
+ * of them was corrected.
+ *
+ * Returns a discriminated result rather than throwing, because "that is more
+ * than is outstanding" is an answer for the caller to render, not a fault.
+ * `null` means the invoice is not visible to whoever is asking — RLS decides
+ * that, not this function.
+ */
+export async function recordPayment(
+  tx: Tx,
+  input: {
+    invoiceId: string
+    amountPence: number
+    paidOn: string
+    method: string | null
+    reference: string | null
+    actorId: string | null
+    /** Stripe Checkout Session id. Null for anything entered by hand. */
+    externalId?: string | null
+  }
+): Promise<{ payment: typeof invoicePayments.$inferSelect } | { error: string } | null> {
+  const [invoice] = await tx
+    .select({
+      id: invoices.id,
+      clientId: invoices.clientId,
+      number: invoices.number,
+      amountPence: invoices.amountPence,
+      status: invoices.status,
+      paid: paidPence,
+    })
+    .from(invoices)
+    .where(eq(invoices.id, input.invoiceId))
+    .limit(1)
+  if (!invoice) return null
+
+  if (invoice.status === 'void') {
+    return { error: 'That invoice has been voided.' }
+  }
+
+  /**
+   * Refuse a payment that would exceed the invoice.
+   *
+   * Overpayment in a one-person agency is almost always a typo — 500000
+   * pence typed where 50000 was meant — and silently accepting it makes the
+   * books wrong in a way nobody notices until a reconciliation. The message
+   * names both figures so the mistake is obvious; a genuine overpayment is
+   * handled by correcting the invoice, which is the honest record anyway.
+   *
+   * This applies to card payments too. A Checkout Session is created for the
+   * outstanding amount, but she can record a bank transfer while the client
+   * has the payment page open — so the invoice can be settled between the
+   * session being made and the card clearing.
+   */
+  const remaining = invoice.amountPence - invoice.paid
+  if (input.amountPence > remaining) {
+    return {
+      error:
+        `That is more than is outstanding. ${invoice.number} has £${(remaining / 100).toFixed(2)} left to pay ` +
+        `of £${(invoice.amountPence / 100).toFixed(2)}.`,
+    }
+  }
+
+  const receiptNumber = await nextNumber(tx, 'receipt')
+  const [row] = await tx
+    .insert(invoicePayments)
+    .values({
+      clientId: invoice.clientId,
+      invoiceId: input.invoiceId,
+      receiptNumber,
+      amountPence: input.amountPence,
+      paidOn: input.paidOn,
+      method: input.method,
+      reference: input.reference,
+      externalId: input.externalId ?? null,
+      recordedBy: input.actorId,
+    })
+    .returning()
+
+  const nowPaid = invoice.paid + input.amountPence
+  await audit(tx, {
+    actorId: input.actorId,
+    action: 'invoice.payment',
+    entity: 'invoice',
+    entityId: input.invoiceId,
+    meta: { receiptNumber, amountPence: input.amountPence, externalId: input.externalId ?? null },
+  })
+  await recordActivity(tx, {
+    clientId: invoice.clientId,
+    entityType: 'invoice',
+    entityId: input.invoiceId,
+    actorId: input.actorId,
+    kind: 'note',
+    body:
+      nowPaid >= invoice.amountPence
+        ? `Invoice ${invoice.number} paid in full (receipt ${receiptNumber})`
+        : `Payment received on ${invoice.number} (receipt ${receiptNumber})`,
+  })
+
+  return { payment: row }
+}
+
+/**
  * Record money received. The row IS the receipt.
  *
  * Partial payments are ordinary — a deposit and a balance are two rows against
@@ -389,80 +593,16 @@ invoiceRoutes.post('/:id/payments', requireStaff, async (c) => {
   const data = parsed.data
   const actorId = c.get('user')?.id ?? null
 
-  const result = await withTenant(c.get('tenant'), async (tx) => {
-    const [invoice] = await tx
-      .select({
-        id: invoices.id,
-        clientId: invoices.clientId,
-        number: invoices.number,
-        amountPence: invoices.amountPence,
-        status: invoices.status,
-        paid: paidPence,
-      })
-      .from(invoices)
-      .where(eq(invoices.id, id))
-      .limit(1)
-    if (!invoice) return null
-
-    if (invoice.status === 'void') {
-      return { error: 'That invoice has been voided.' }
-    }
-
-    /**
-     * Refuse a payment that would exceed the invoice.
-     *
-     * Overpayment in a one-person agency is almost always a typo — 500000
-     * pence typed where 50000 was meant — and silently accepting it makes the
-     * books wrong in a way nobody notices until a reconciliation. The message
-     * names both figures so the mistake is obvious; a genuine overpayment is
-     * handled by correcting the invoice, which is the honest record anyway.
-     */
-    const remaining = invoice.amountPence - invoice.paid
-    if (data.amountPence > remaining) {
-      return {
-        error:
-          `That is more than is outstanding. ${invoice.number} has £${(remaining / 100).toFixed(2)} left to pay ` +
-          `of £${(invoice.amountPence / 100).toFixed(2)}.`,
-      }
-    }
-
-    const receiptNumber = await nextNumber(tx, 'receipt')
-    const [row] = await tx
-      .insert(invoicePayments)
-      .values({
-        clientId: invoice.clientId,
-        invoiceId: id,
-        receiptNumber,
-        amountPence: data.amountPence,
-        paidOn: data.paidOn,
-        method: data.method ?? null,
-        reference: data.reference ?? null,
-        recordedBy: actorId,
-      })
-      .returning()
-
-    const nowPaid = invoice.paid + data.amountPence
-    await audit(tx, {
+  const result = await withTenant(c.get('tenant'), (tx) =>
+    recordPayment(tx, {
+      invoiceId: id,
+      amountPence: data.amountPence,
+      paidOn: data.paidOn,
+      method: data.method ?? null,
+      reference: data.reference ?? null,
       actorId,
-      action: 'invoice.payment',
-      entity: 'invoice',
-      entityId: id,
-      meta: { receiptNumber, amountPence: data.amountPence },
     })
-    await recordActivity(tx, {
-      clientId: invoice.clientId,
-      entityType: 'invoice',
-      entityId: id,
-      actorId,
-      kind: 'note',
-      body:
-        nowPaid >= invoice.amountPence
-          ? `Invoice ${invoice.number} paid in full (receipt ${receiptNumber})`
-          : `Payment received on ${invoice.number} (receipt ${receiptNumber})`,
-    })
-
-    return { payment: row }
-  })
+  )
 
   if (!result) return c.json({ error: 'Not found' }, 404)
   if ('error' in result) return c.json({ error: result.error }, 409)
