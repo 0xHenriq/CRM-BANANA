@@ -4,7 +4,6 @@ Client portal and CRM for Banana Digital London. Replaces a single-file HTML
 prototype whose state lived in `window.storage` — per-browser, so the agency and
 the client never saw the same data.
 
-Plan of record: `~/.claude/plans/lets-build-it-properly-cheeky-swing.md`
 
 ## Stack
 
@@ -58,17 +57,30 @@ loudly — it silently removes a guarantee.
 that. If a permissions error tempts you to point `DATABASE_URL` at `bd_owner`,
 the fix is a `GRANT`, never a role swap.
 
-**Tenant data is only queried inside `withTenant()`.** It opens a transaction
-and applies the RLS session variables with `SET LOCAL`, which is what makes this
-safe under connection pooling. A query outside a transaction has no session
-variables and — by design — returns nothing rather than everything.
+**Tenant data is only queried inside `withTenant()` or `withReviewToken()`.**
+Both open a transaction and apply the RLS session variables with `SET LOCAL`,
+which is what makes this safe under connection pooling. A query outside a
+transaction has no session variables and — by design — returns nothing rather
+than everything.
+
+`withReviewToken()` is the share-link path and it is deliberately harder to
+reach: `withTenant()` takes a context object it trusts, while this one takes a
+token hash and refuses to set any session variable until that hash redeems
+against a live, unrevoked, unexpired link. It can never produce a staff
+context — it writes the literal `'false'`, and `app_is_staff()` compares against
+`'true'`. `server/routes/review.ts` is the only caller, and a test asserts that
+file never mentions `withTenant`.
 
 **`drizzle-kit push` is banned outside local scratch work.** It reconciles by
 dropping columns. Use `db:generate` → review the emitted SQL → `db:migrate`.
 
 **Every tenant table carries `client_id` directly**, child tables included. A
 policy that has to join upward to find its tenant is slower and easier to get
-subtly wrong.
+subtly wrong. Exactly two RLS tables do not, and both are deliberate: `clients`,
+whose tenant key *is* its `id`, and `audit_log`, which records actions across
+every client and is therefore staff-only (`app_is_staff()`, no tenant arm at
+all). Anything else appearing in that list is a mistake — the query that finds
+them is in this file's history.
 
 **`app_is_staff()` compares against the literal string `'true'`, not a cast.**
 Postgres accepts `yes`, `y`, `on`, `t` and `1` as booleans, so the original
@@ -138,7 +150,7 @@ asset; do not "improve" the values.
 - [x] Phase 4 — Client portal: links, files, notice board, tasks
 - [x] Phase 5 — Content engine: unified Ideas Bank + Calendar
 - [x] Phase 6 — Media: uploads, thumbnails, feed preview, moodboard
-- [ ] Phase 7 — Deploy to VPS4
+- [x] Phase 7 — Deployed and serving a real agency
 
 Auth is real as of Phase 2: Better Auth with httpOnly cookie sessions, a single
 Banana Digital organization, 10 seats, and invite-only access. Phases 3–6 build
