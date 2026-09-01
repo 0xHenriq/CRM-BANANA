@@ -1,7 +1,9 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { ArrowRight, ListChecks, SquareCheckBig } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ArrowRight, Check, ListChecks, Loader2, SquareCheckBig } from 'lucide-react'
+import { toast } from 'sonner'
 import { api, type ContentType } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import { Card, CardContent } from '@/components/ui/card'
 import { DueDate } from '@/features/portal/panels'
 import { ContentDetailDialog } from './detail-dialog'
@@ -32,6 +34,29 @@ export function NextSteps({
   clientId?: string
 }) {
   const [openId, setOpenId] = useState<string | null>(null)
+  const queryClient = useQueryClient()
+
+  /**
+   * Tick a to-do off from here.
+   *
+   * Sofia: "Next steps - cant edit actions". A review step opened its post; a
+   * to-do was a plain row with a deadline and no way to act on it, so the one
+   * panel headed "what happens next" was the one place she could not do the
+   * next thing. She had to find the same to-do again in the client's workspace.
+   *
+   * The same endpoint the To-do list uses, so the two cannot disagree about
+   * what ticking means. Every key that counts open steps is refreshed: this
+   * panel, the workspace panels, and the client list's open-task metric.
+   */
+  const tick = useMutation({
+    mutationFn: (id: string) => api.patch(`/portal/tasks/${id}`, { done: true }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['next-steps'] })
+      await queryClient.invalidateQueries({ queryKey: ['portal'] })
+      await queryClient.invalidateQueries({ queryKey: ['clients'] })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
 
   const { data, isPending } = useQuery({
     queryKey: ['next-steps', clientId ?? 'all'],
@@ -79,16 +104,22 @@ export function NextSteps({
                       ? () => setOpenId(step.id)
                       : undefined
                   }
+                  onDone={
+                    step.kind === 'task'
+                      ? () => tick.mutate(step.id)
+                      : undefined
+                  }
+                  ticking={tick.isPending && tick.variables === step.id}
                 />
               </li>
             ))}
           </ul>
 
-          {isClient && (
-            <p className='mt-3 text-xs text-muted-foreground'>
-              Open a post to approve it or ask for changes.
-            </p>
-          )}
+          <p className='mt-3 text-xs text-muted-foreground'>
+            {isClient
+              ? 'Open a post to approve it or ask for changes.'
+              : 'Open a post to decide on it, or tick a to-do off here.'}
+          </p>
         </CardContent>
       </Card>
 
@@ -121,11 +152,16 @@ function StepRow({
   isClient,
   showClient,
   onOpen,
+  onDone,
+  ticking,
 }: {
   step: NextStep
   isClient: boolean
   showClient: boolean
   onOpen?: () => void
+  /** Only on a to-do, and only for staff — clients do not own these. */
+  onDone?: () => void
+  ticking?: boolean
 }) {
   const body = (
     <>
@@ -176,6 +212,41 @@ function StepRow({
     </>
   )
 
+  /*
+   * The deadline badge and the Done button carry the same vocabulary in
+   * opposite directions, which is the point of having both: red says this one
+   * has slipped, green says this one is settled. Without a green anywhere, red
+   * is just how the panel looks rather than a signal that means something.
+   */
+  const doneButton = onDone ? (
+    <button
+      type='button'
+      onClick={(e) => {
+        // The row itself may be a button. Ticking must not also open anything.
+        e.stopPropagation()
+        onDone()
+      }}
+      disabled={ticking}
+      aria-label={`Mark "${step.title}" done`}
+      className={cn(
+        'flex shrink-0 items-center gap-1 rounded-full border-[1.5px] border-bd-ink px-2 py-0.5',
+        'text-[0.625rem] font-bold whitespace-nowrap transition-colors',
+        // Green at rest, not only on hover: the point is that red and green
+        // are visible on the same row at the same time, so "3d overdue" reads
+        // as a signal rather than as how this panel happens to look.
+        'bg-tag-video text-bd-ink hover:brightness-95',
+        ticking && 'pointer-events-none opacity-70'
+      )}
+    >
+      {ticking ? (
+        <Loader2 className='size-3 animate-spin' />
+      ) : (
+        <Check className='size-3' />
+      )}
+      Done
+    </button>
+  ) : null
+
   return onOpen ? (
     <button
       type='button'
@@ -185,6 +256,9 @@ function StepRow({
       {body}
     </button>
   ) : (
-    <div className='flex w-full items-center gap-3 py-2 text-start'>{body}</div>
+    <div className='flex w-full items-center gap-3 py-2 text-start'>
+      {body}
+      {doneButton}
+    </div>
   )
 }

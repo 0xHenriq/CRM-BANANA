@@ -1,4 +1,4 @@
-import { asc, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { withReviewToken, type ReviewContext, type Tx } from '../db/index.js'
@@ -96,6 +96,37 @@ async function loadItemPayload(tx: Tx, review: ReviewContext) {
   return { item, assets, approvals }
 }
 
+/**
+ * The shared ideas that have no date yet.
+ *
+ * She asked for the Ideas Bank to travel with a feed link. What the recipient
+ * gets is the SHARED half of it: `content_items_select`'s feed arm carries
+ * `AND visible_to_client`, so a raw concept or a rejected pitch cannot appear
+ * here however this query is written. That term is load-bearing and the
+ * isolation suite pins it.
+ *
+ * Undated only, so this and the grid do not print the same post twice — the
+ * grid is what is booked, this is what is still being considered.
+ */
+async function loadSharedIdeas(tx: Tx, review: ReviewContext) {
+  return tx
+    .select({
+      id: contentItems.id,
+      title: contentItems.title,
+      type: contentItems.type,
+      status: contentItems.status,
+      caption: contentItems.caption,
+    })
+    .from(contentItems)
+    .where(
+      and(
+        eq(contentItems.clientId, review.clientId),
+        isNull(contentItems.scheduledAt)
+      )
+    )
+    .orderBy(asc(contentItems.createdAt))
+}
+
 async function loadFeedPayload(tx: Tx, review: ReviewContext) {
   /*
    * The SAME query the Feed Preview screen uses, not a second one.
@@ -131,6 +162,7 @@ reviewRoutes.get('/:token', async (c) => {
         scope: 'feed' as const,
         client,
         ...(await loadFeedPayload(tx, review)),
+        ideas: await loadSharedIdeas(tx, review),
       }
     }
     const item = await loadItemPayload(tx, review)

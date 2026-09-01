@@ -59,6 +59,14 @@ type SharePayload =
         feedOrder: number | null
         assetId: string
       }[]
+      /** Shared ideas with no date yet. Internal ones cannot reach here. */
+      ideas: {
+        id: string
+        title: string
+        type: ContentType
+        status: string
+        caption: string | null
+      }[]
     }
 
 /**
@@ -180,6 +188,46 @@ export function SharePage() {
               </p>
             </CardContent>
           </Card>
+
+          {/*
+            What is still being considered, under what is already booked.
+
+            Only the ideas shared with them: the policy arm behind this link
+            carries `AND visible_to_client`, so a raw concept or a rejected
+            pitch cannot appear however this is rendered. Hidden entirely when
+            there are none, rather than an empty heading implying something is
+            missing.
+          */}
+          {data.ideas.length > 0 && (
+            <Card className='mt-4 crate-card'>
+              <CardContent className='py-5'>
+                <p className='mb-1 display text-lg'>Ideas we are considering</p>
+                <p className='mb-3 text-xs text-muted-foreground'>
+                  Not scheduled yet — early thinking, shared so you can react to
+                  it.
+                </p>
+                <ul className='divide-y divide-bd-rule-soft'>
+                  {data.ideas.map((idea) => (
+                    <li key={idea.id} className='flex items-start gap-3 py-2.5'>
+                      <span className='mt-0.5 shrink-0'>
+                        <TypePill type={idea.type} />
+                      </span>
+                      <span className='min-w-0 flex-1'>
+                        <span className='block text-sm font-semibold'>
+                          {idea.title}
+                        </span>
+                        {idea.caption && (
+                          <span className='block text-xs text-muted-foreground'>
+                            {idea.caption}
+                          </span>
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </AuthLayout>
     )
