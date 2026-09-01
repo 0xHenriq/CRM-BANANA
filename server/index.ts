@@ -237,13 +237,47 @@ process.on('uncaughtException', (err) => {
   process.exit(1)
 })
 
-// systemd sends SIGTERM on restart; drain rather than drop in-flight requests.
+/**
+ * systemd sends SIGTERM on restart; drain rather than drop in-flight requests.
+ *
+ * Two things make sure draining cannot become hanging, and the first only
+ * became necessary once the unhandledRejection handler above existed. This
+ * used to be `server.close(async () => { await closeDb(); process.exit(0) })`,
+ * where a rejecting `pool.end()` took the process down — untidy, but it did
+ * end the shutdown. With rejections now survived, that same failure would skip
+ * `process.exit` and leave the process alive, and systemd would wait its full
+ * TimeoutStopSec — ninety seconds — before SIGKILL. Every deploy, silently
+ * slower.
+ *
+ * So closing the pool cannot prevent the exit, and a backstop timer runs
+ * regardless: `server.close()` waits for every connection to end, and a
+ * browser holding a keep-alive socket can delay its callback indefinitely.
+ * Ten seconds is far longer than draining ever needs and far inside the ninety
+ * systemd allows.
+ */
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
     logger.info({ signal }, 'shutting down')
-    server.close(async () => {
-      await closeDb()
-      process.exit(0)
+
+    const done = (code: number) => process.exit(code)
+
+    const backstop = setTimeout(() => {
+      logger.warn('shutdown took too long; exiting anyway')
+      done(0)
+    }, 10_000)
+    // Do not let the timer itself hold the process open once draining is done.
+    backstop.unref()
+
+    server.close(() => {
+      void closeDb()
+        .catch((err) => {
+          // Worth knowing about, never worth hanging a deploy over.
+          logger.error({ err }, 'failed to close the database pool')
+        })
+        .finally(() => {
+          clearTimeout(backstop)
+          done(0)
+        })
     })
   })
 }
