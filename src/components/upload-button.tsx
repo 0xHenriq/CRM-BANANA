@@ -36,7 +36,23 @@ export function UploadButton({
   variant,
   className,
 }: {
-  onFiles: (files: FileList) => void
+  /**
+   * A stable array, NOT the input's live FileList.
+   *
+   * This used to hand over `e.target.files` and then reset the input so the
+   * same file could be chosen twice — and that reset EMPTIES the very list the
+   * caller is holding, because a FileList is a live view of the input. Any
+   * consumer that read it synchronously was fine; any consumer that read it
+   * asynchronously — a TanStack mutation, which is every upload in this
+   * application — received nothing.
+   *
+   * The failure was silent in the worst way: the mutation ran, iterated an
+   * empty list, sent no request, and reported SUCCESS, so the moodboard
+   * refetched and still said "Nothing pinned yet". No error, no log line,
+   * nothing on the server at all, because nothing was ever sent. Reproduced in
+   * a browser: the upload fired and the only request was the refetch.
+   */
+  onFiles: (files: File[]) => void
   label: string
   icon: React.ReactNode
   accept?: string
@@ -73,9 +89,13 @@ export function UploadButton({
         className='sr-only'
         aria-label={label}
         onChange={(e) => {
-          if (e.target.files?.length) onFiles(e.target.files)
+          // Copied out FIRST. `Array.from` snapshots the entries into an array
+          // that survives the reset below; passing the FileList itself hands
+          // over something the next line empties.
+          const chosen = Array.from(e.target.files ?? [])
           // Reset so choosing the same file twice still fires a change event.
           e.target.value = ''
+          if (chosen.length) onFiles(chosen)
         }}
       />
       {/*

@@ -45,7 +45,7 @@ export function MoodboardPreview({
   })
 
   const upload = useMutation({
-    mutationFn: async (files: FileList) => {
+    mutationFn: async (files: File[]) => {
       for (const file of Array.from(files)) {
         setProgress(0)
         await uploadMedia(file, {

@@ -83,7 +83,7 @@ export function FileFolder({
    * server, and a dozen at once would contend for the same cores for no gain.
    */
   const upload = useMutation({
-    mutationFn: async (chosen: FileList | File[]) => {
+    mutationFn: async (chosen: File[]) => {
       for (const file of Array.from(chosen)) {
         setProgress(0)
         await uploadMedia(file, {
@@ -170,9 +170,12 @@ export function FileFolder({
           ? (e) => {
               e.preventDefault()
               setDragging(false)
-              if (e.dataTransfer.files?.length) {
-                upload.mutate(e.dataTransfer.files)
-              }
+              // Copied out of the DataTransfer, for the same reason the file
+              // input's list is: it is a live view that the browser is free to
+              // empty once this handler returns, and the mutation reads it
+              // afterwards.
+              const dropped = Array.from(e.dataTransfer.files ?? [])
+              if (dropped.length) upload.mutate(dropped)
             }
           : undefined
       }

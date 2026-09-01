@@ -51,7 +51,7 @@ export function Moodboard() {
     queryClient.invalidateQueries({ queryKey: ['moodboard'] })
 
   const upload = useMutation({
-    mutationFn: async (files: FileList) => {
+    mutationFn: async (files: File[]) => {
       // Sequential, not parallel: each upload does image work on the server,
       // and a dozen at once would fight for the same cores for no gain.
       for (const file of Array.from(files)) {
