@@ -493,6 +493,7 @@ export type PortalWorkspace = {
     brandColor: string | null
     logoKey: string | null
     toneOfVoice: string | null
+    brief: string | null
     portalEnabled: boolean
   }
   links: PortalLink[]
@@ -637,6 +638,17 @@ export function assetUrl(
 
 export function moodboardUrl(itemId: string): string {
   return `/api/media/moodboard/${itemId}`
+}
+
+/**
+ * The full-size image behind a moodboard tile, for the viewer.
+ *
+ * The grid renders the 400px tile; this is what clicking one opens. Rows
+ * uploaded before migration 0020 have no original, and the server falls back
+ * to the tile rather than 404ing — so this is always safe to ask for.
+ */
+export function moodboardFullUrl(itemId: string): string {
+  return `/api/media/moodboard/${itemId}?full=1`
 }
 
 /**

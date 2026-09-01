@@ -101,7 +101,23 @@ export function keysReferencedBy(result: object | null | undefined): string[] {
     // the logo this upload superseded, not to the row just written.
     if (!value || typeof value !== 'object') continue
     const row = value as Record<string, unknown>
-    for (const field of ['storageKey', 'thumbKey', 'posterKey', 'logoKey']) {
+    /*
+     * Every column in this codebase that holds a storage key.
+     *
+     * This list is the one thing standing between a committed row and its
+     * bytes being deleted as unreferenced. Adding a key column WITHOUT adding
+     * it here means the cleanup below cannot see the reference and removes the
+     * object the row points at — verified the moment `fullKey` was added for
+     * moodboard originals: the upload succeeded, the row pointed at a file,
+     * and the file was gone before the response was sent.
+     */
+    for (const field of [
+      'storageKey',
+      'thumbKey',
+      'posterKey',
+      'logoKey',
+      'fullKey',
+    ]) {
       const key = row[field]
       if (typeof key === 'string' && key) keys.push(key)
     }
@@ -590,7 +606,12 @@ mediaRoutes.post('/upload', requireStaff, async (c) => {
         .insert(moodboardItems)
         .values({
           clientId,
+          // The 400px tile the grid renders...
           storageKey: processed.thumbKey ?? processed.storageKey,
+          // ...and the original, which is what clicking a tile opens. Kept
+          // only when a thumbnail was actually produced — otherwise the two
+          // would be the same object and deleting would try to remove it twice.
+          fullKey: processed.thumbKey ? processed.storageKey : null,
           caption,
           sortOrder: next,
         })
@@ -914,7 +935,18 @@ mediaRoutes.get('/moodboard/:id', async (c) => {
       .limit(1)
   )
   if (!row?.storageKey) return c.json({ error: 'Not found' }, 404)
-  return streamKey(c, row.storageKey, 'image/webp')
+
+  /*
+   * `?full=1` serves the original; anything else serves the tile.
+   *
+   * One route rather than two, because both answer the same question — "the
+   * image for this tile" — and RLS has already decided whether the caller may
+   * have it. Falling back to the tile means a row uploaded before 0020 still
+   * opens, showing what it always showed rather than a 404.
+   */
+  const wantsFull = c.req.query('full') === '1'
+  const key = wantsFull ? (row.fullKey ?? row.storageKey) : row.storageKey
+  return streamKey(c, key, 'image/webp')
 })
 
 /**
@@ -1021,10 +1053,16 @@ mediaRoutes.delete('/moodboard/:id', requireStaff, async (c) => {
     tx
       .delete(moodboardItems)
       .where(eq(moodboardItems.id, c.req.param('id')))
-      .returning({ storageKey: moodboardItems.storageKey })
+      .returning({
+        storageKey: moodboardItems.storageKey,
+        fullKey: moodboardItems.fullKey,
+      })
   )
   if (!removed.length) return c.json({ error: 'Not found' }, 404)
+  // BOTH keys. A tile holds the thumbnail and the original since 0020, and
+  // removing only one is exactly the orphan this codebase already paid for.
   if (removed[0].storageKey) await storage.remove(removed[0].storageKey)
+  if (removed[0].fullKey) await storage.remove(removed[0].fullKey)
   return c.json({ ok: true })
 })
 

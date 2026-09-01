@@ -30,11 +30,16 @@ portalRoutes.get('/', async (c) => {
         name: clients.name,
         brandColor: clients.brandColor,
         logoKey: clients.logoKey,
-        // Client-visible on purpose — it is what they told her, shown back so
-        // they can check she got it right. `brief` is deliberately NOT here:
-        // this select is an explicit column list precisely so adding a column
-        // to `clients` never quietly widens what a client can read.
+        // Both client-visible on purpose. Tone of voice is what they told
+        // her, shown back so they can check she got it right; the brief is
+        // what the work is FOR, and Sofia asked for them to see it — "I want
+        // client to see project brief too".
+        //
+        // This select stays an explicit column list. That is what makes the
+        // decision deliberate: adding a column to `clients` still shows a
+        // client nothing until someone names it here.
         toneOfVoice: clients.toneOfVoice,
+        brief: clients.brief,
         portalEnabled: clients.portalEnabled,
       })
       .from(clients)

@@ -148,6 +148,31 @@ export function PortalHome() {
         <MoodboardPreview clientId={workspaceId} canEdit={isStaff} />
 
         {/*
+          What the work is for.
+
+          She was keeping the brief to herself and asked for that to change —
+          "I want client to see project brief too". It sits above tone of
+          voice because it is the bigger thing: the brief is what they agreed
+          to, the tone is how it should sound.
+
+          Absent rather than empty when she has not written one.
+        */}
+        {client.brief && (
+          <Card className='mb-5 crate-card'>
+            <CardHeader>
+              <CardTitle className='flex items-center gap-2 display text-lg'>
+                <span className='size-2.5 rounded-full border-[1.5px] border-bd-ink bg-bd-yellow' />
+                Project brief
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className='mb-3 crate-rule' />
+              <p className='text-sm whitespace-pre-wrap'>{client.brief}</p>
+            </CardContent>
+          </Card>
+        )}
+
+        {/*
           How they want to sound, shown back to them.
 
           She writes it on the client page; this is the half that makes it

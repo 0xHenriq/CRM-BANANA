@@ -9,6 +9,7 @@ import {
 } from '@/lib/api'
 import { uploadMedia } from '@/lib/upload'
 import { UploadButton } from '@/components/upload-button'
+import { MoodboardLightbox } from './moodboard-lightbox'
 import { useWorkspace, withClient } from '@/features/portal/use-workspace'
 import { WorkspaceSwitcher } from '@/features/portal/workspace-switcher'
 import { safeHref } from '@/lib/safe-href'
@@ -36,6 +37,7 @@ export function Moodboard() {
   const { isStaff, clientId, setClientId, workspaces, isReady } = useWorkspace()
   const queryClient = useQueryClient()
   const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [openIndex, setOpenIndex] = useState<number | null>(null)
   const [progress, setProgress] = useState<number | null>(null)
 
   const { data, isLoading, isError, error, refetch } = useQuery({
@@ -163,12 +165,27 @@ export function Moodboard() {
                     dragIndex === index && 'opacity-40'
                   )}
                 >
-                  <img
-                    src={src}
-                    alt={item.caption ?? 'Moodboard reference'}
-                    loading='lazy'
-                    className='block w-full'
-                  />
+                  {/*
+                    Click to view it properly. A button, so it is focusable and
+                    announced as an action — and `type='button'` because a bare
+                    <button> inside a form submits.
+
+                    Dragging still works: a drag begins on the figure, and a
+                    click only fires when the pointer did not move.
+                  */}
+                  <button
+                    type='button'
+                    onClick={() => setOpenIndex(index)}
+                    aria-label={`Open ${item.caption ?? 'moodboard image'}`}
+                    className='block w-full cursor-zoom-in'
+                  >
+                    <img
+                      src={src}
+                      alt={item.caption ?? 'Moodboard reference'}
+                      loading='lazy'
+                      className='block w-full'
+                    />
+                  </button>
                   {item.caption && (
                     <figcaption className='bg-bd-paper px-2 py-1 text-[0.6875rem]'>
                       {item.caption}
@@ -195,6 +212,13 @@ export function Moodboard() {
           </div>
         )}
       </Main>
+
+      <MoodboardLightbox
+        items={items}
+        openIndex={openIndex}
+        onClose={() => setOpenIndex(null)}
+        onMove={setOpenIndex}
+      />
     </>
   )
 }

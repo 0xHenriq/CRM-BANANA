@@ -826,7 +826,7 @@ function BrandCard({
             }}
           />
           <p className='text-xs text-muted-foreground'>
-            Yours. Not shown in their portal.
+            Shown in their portal, so they can see what the work is for.
           </p>
         </div>
 

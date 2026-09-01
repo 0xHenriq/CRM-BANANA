@@ -173,12 +173,16 @@ export const clients = pgTable(
      *
      * She was pasting these into the activity log, which is append-only and
      * scrolls away — so the brief for a live campaign sat under three months
-     * of "called, no answer". Not shown in the portal — /api/portal selects
-     * its columns explicitly and this is not among them. That is a product
-     * choice rather than a security boundary: `clients_select` lets a client
-     * read their own row whole, as it always has, so anything that returns
-     * this column to them returns it. If it ever needs to be secret, it needs
-     * a column gate like `invoices` has, not a convention.
+     * of "called, no answer".
+     *
+     * SHOWN IN THE PORTAL, as of Sofia asking for it — the client sees what
+     * the work is for. It was staff-only before, and the note explaining that
+     * is worth keeping for its second half: whether a `clients` column is
+     * visible has always been a product choice rather than a security
+     * boundary. `clients_select` lets a client read their own row whole, so
+     * anything that returns a column to them returns it. If a field on this
+     * table ever needs to be genuinely secret it needs a column gate like
+     * `invoices` has, not a convention about which selects mention it.
      */
     brief: text('brief'),
     /**
@@ -706,6 +710,14 @@ export const moodboardItems = pgTable(
       .notNull()
       .references(() => clients.id, { onDelete: 'cascade' }),
     storageKey: text('storage_key'),
+    /**
+     * The original, for the viewer. Null on anything uploaded before 0020.
+     *
+     * `storage_key` above is the 400px tile the grid renders; this is what a
+     * click opens. Both are removed together on delete — a second key without
+     * that is how the orphan this codebase already fixed came back.
+     */
+    fullKey: text('full_key'),
     url: text('url'),
     caption: text('caption'),
     sortOrder: integer('sort_order').notNull().default(0),

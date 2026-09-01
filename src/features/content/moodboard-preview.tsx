@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { QueryError } from '@/components/layout/query-error'
 import { UploadButton } from '@/components/upload-button'
+import { MoodboardLightbox } from './moodboard-lightbox'
 
 /**
  * The moodboard, small, for the top of a workspace.
@@ -35,6 +36,7 @@ export function MoodboardPreview({
 }) {
   const queryClient = useQueryClient()
   const [progress, setProgress] = useState<number | null>(null)
+  const [openIndex, setOpenIndex] = useState<number | null>(null)
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['moodboard', clientId],
@@ -111,7 +113,7 @@ export function MoodboardPreview({
           </p>
         ) : (
           <ul className='flex flex-wrap gap-2'>
-            {shown.map((item) => {
+            {shown.map((item, index) => {
               // Rows from the prototype era hold a URL instead of stored bytes.
               const src = item.storageKey
                 ? moodboardUrl(item.id)
@@ -119,12 +121,23 @@ export function MoodboardPreview({
               if (!src) return null
               return (
                 <li key={item.id}>
-                  <img
-                    src={src}
-                    alt={item.caption ?? 'Moodboard reference'}
-                    loading='lazy'
-                    className='size-24 rounded border-2 border-bd-ink object-cover'
-                  />
+                  {/* A button, not an image with a click handler: this IS an
+                      action, so it should be focusable and announced as one.
+                      The index is the position in `shown`, which is what the
+                      viewer pages through. */}
+                  <button
+                    type='button'
+                    onClick={() => setOpenIndex(index)}
+                    aria-label={`Open ${item.caption ?? 'moodboard image'}`}
+                    className='block cursor-zoom-in transition-opacity hover:opacity-85'
+                  >
+                    <img
+                      src={src}
+                      alt={item.caption ?? 'Moodboard reference'}
+                      loading='lazy'
+                      className='size-24 rounded border-2 border-bd-ink object-cover'
+                    />
+                  </button>
                 </li>
               )
             })}
@@ -136,6 +149,16 @@ export function MoodboardPreview({
           </ul>
         )}
       </CardContent>
+
+      {/* Pages through the tiles ACTUALLY SHOWN, not every tile the client
+          has — the strip is capped at `limit`, and arrowing into pictures that
+          are not on screen would be disorienting. */}
+      <MoodboardLightbox
+        items={shown}
+        openIndex={openIndex}
+        onClose={() => setOpenIndex(null)}
+        onMove={setOpenIndex}
+      />
     </Card>
   )
 }
