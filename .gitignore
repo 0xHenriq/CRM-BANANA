@@ -41,3 +41,9 @@ server-dist
 
 # TanStack Router writes transient route-generation scratch files here.
 .tanstack/
+
+# Throwaway harness scripts used to drive the test database during a session.
+# They carry the test-account password and are rewritten constantly, so they
+# are deliberately not part of the project — least of all a public one.
+.e2e-*.mts
+.repro.mts

@@ -13,7 +13,7 @@ Plan of record: `~/.claude/plans/lets-build-it-properly-cheeky-swing.md`
 | Frontend | Vite + React 19 + TanStack Router/Query + Zustand + shadcn/ui + Tailwind v4 |
 | Backend | Hono on Node 20, Drizzle ORM |
 | Database | Postgres 18 with Row Level Security |
-| Host | VPS4 (`ssh vps4` → `yota@161.97.76.197:2222`) |
+| Host | VPS4 — see `~/.ssh/config` for the alias. Key-only; password auth is disabled. |
 
 ## Local setup
 
