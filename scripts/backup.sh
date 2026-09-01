@@ -7,19 +7,28 @@
 #
 # IMPORTANT: this writes to the SAME DISK as the data it protects, so it
 # survives an application mistake but not a disk failure. Copying
-# /home/yota/data/bd-portal/backups somewhere else is the missing half; see
+# the backup directory somewhere else is the missing half; see
 # the deploy notes in README.md.
 set -uo pipefail
 
-BACKUP_DIR="${BACKUP_DIR:-/home/yota/data/bd-portal/backups}"
-UPLOAD_DIR="${UPLOAD_DIR:-/home/yota/data/bd-portal/uploads}"
+# Where production lives. Kept out of this repository — see
+# deploy.config.example.sh. Sourced relative to this script so it works the
+# same from a laptop, from cron on the server, and from a systemd timer.
+CONFIG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/deploy.config.sh"
+if [ ! -f "$CONFIG" ]; then
+  echo "Missing $CONFIG — copy deploy.config.example.sh and fill it in." >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+. "$CONFIG"
+
 KEEP_DAYS="${KEEP_DAYS:-30}"
 STAMP="$(date +%Y-%m-%d-%H%M)"
 
 mkdir -p "$BACKUP_DIR"
 
 # shellcheck source=/dev/null
-set -a; . /home/yota/apps/bd-portal/.env; set +a
+set -a; . "$APP_DIR/.env"; set +a
 
 if [ -z "${DATABASE_URL_OWNER:-}" ]; then
   echo "DATABASE_URL_OWNER is not set; refusing to run" >&2

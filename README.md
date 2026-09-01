@@ -20,7 +20,7 @@ Postgres is not exposed publicly on VPS4, so development reaches it through an
 SSH tunnel. Three terminals:
 
 ```bash
-npm run db:tunnel   # localhost:55432 -> vps4:5432   (leave running)
+npm run db:tunnel   # localhost:55432 -> $HOST:5432   (leave running)
 npm run dev:api     # Hono on :4300
 npm run dev         # Vite on :5173, proxies /api -> :4300
 ```

@@ -5,14 +5,24 @@
 # touches bd_portal.
 set -uo pipefail
 
-BACKUP_DIR="${BACKUP_DIR:-/home/yota/data/bd-portal/backups}"
+# Where production lives. Kept out of this repository — see
+# deploy.config.example.sh. Sourced relative to this script so it works the
+# same from a laptop, from cron on the server, and from a systemd timer.
+CONFIG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/deploy.config.sh"
+if [ ! -f "$CONFIG" ]; then
+  echo "Missing $CONFIG — copy deploy.config.example.sh and fill it in." >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+. "$CONFIG"
 SCRATCH="bd_portal_restorecheck"
 
 newest="$(find "$BACKUP_DIR" -name '*.dump' -type f | sort | tail -1)"
 [ -n "$newest" ] || { echo "no dump found in $BACKUP_DIR" >&2; exit 1; }
 echo "restoring $newest"
 
-# The postgres user cannot read anything under /home/yota, which is 0750 — the
+# The postgres user cannot read anything under the home directory, which is
+# 0750 — the
 # same reason Caddy could not serve dist from there. Stage the dump somewhere
 # it can actually open. This failure previously surfaced as "the dump restored
 # but is empty", because pg_restore's stderr was being discarded.

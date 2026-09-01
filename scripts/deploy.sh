@@ -7,10 +7,17 @@
 #   ./scripts/deploy.sh
 set -euo pipefail
 
-HOST="${HOST:-vps4}"
-APP_DIR="/home/yota/apps/bd-portal"
-WEB_DIR="/srv/http/bd-portal"
-NODE="/home/yota/.nvm/versions/node/v20.20.2/bin/node"
+# Where production lives. Kept out of this repository — see
+# deploy.config.example.sh. Sourced relative to this script so it works the
+# same from a laptop, from cron on the server, and from a systemd timer.
+CONFIG="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/deploy.config.sh"
+if [ ! -f "$CONFIG" ]; then
+  echo "Missing $CONFIG — copy deploy.config.example.sh and fill it in." >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+. "$CONFIG"
+NODE="$NODE_BIN"
 
 echo "==> syncing source"
 # .env is excluded: production secrets live only on the server, and the local
@@ -23,13 +30,14 @@ rsync -az --delete \
 echo "==> installing and building on the host"
 # Native modules (sharp) must be built here; a node_modules copied from macOS
 # will not load on Linux.
-ssh "$HOST" "export NVM_DIR=/home/yota/.nvm; . \$NVM_DIR/nvm.sh; nvm use 20.20.2 >/dev/null
+ssh "$HOST" "export NVM_DIR=$NVM_DIR; . \$NVM_DIR/nvm.sh; nvm use $NODE_VERSION >/dev/null
   cd $APP_DIR
   npm ci --no-audit --no-fund --silent
   npm run build"
 
 echo "==> publishing the built frontend"
-# Caddy runs as its own user and cannot traverse /home/yota (0750), so the
+# Caddy runs as its own user and cannot traverse the home directory (0750),
+# so the
 # static bundle is published outside her home rather than opening it up.
 ssh "$HOST" "rsync -a --delete $APP_DIR/dist/ $WEB_DIR/"
 
@@ -41,10 +49,10 @@ ssh "$HOST" "systemctl --user restart bd-portal.service"
 
 echo "==> waiting for health"
 for i in $(seq 1 15); do
-  code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' http://161.97.76.197:8100/healthz || true)
+  code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' $HEALTH_URL || true)
   if [ "$code" = "200" ]; then
     echo "healthy after ${i}s"
-    curl -s -m 10 http://161.97.76.197:8100/healthz
+    curl -s -m 10 "$HEALTH_URL"
     echo
     exit 0
   fi

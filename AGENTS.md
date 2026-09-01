@@ -38,8 +38,8 @@ mv <file> /tmp/           # deletion wearing a disguise
 | `.uploads/` | Client-uploaded images and video. Gitignored. Referenced by `storage_key` rows that will dangle forever. |
 | `server/db/migrations/*.sql` | Already applied to production. Deleting one does not un-apply it; it makes the journal lie. |
 | `server/db/migrations/meta/_journal.json` | The record of what has been applied. Corrupt it and migrations re-run against live data. |
-| `/home/yota/data/bd-portal/` (VPS4) | Production uploads and backups. |
-| `/srv/http/bd-portal/` (VPS4) | The served frontend. |
+| `$DATA_DIR/` (VPS4) | Production uploads and backups. |
+| `$WEB_DIR/` (VPS4) | The served frontend. |
 
 If you believe a file must go, **say so and stop**. The human deletes it.
 
@@ -135,7 +135,7 @@ The database is shared with production. **There is no separate development datab
 | Postgres | **18.3** | VPS4, and `bd_portal_test` for the isolation suite |
 | React | 19 | — |
 
-**Node 18 will not work.** Vite 8 requires ≥20. The system Node on VPS4 is 18.20.8, which is why the systemd unit hardcodes `/home/yota/.nvm/versions/node/v20.20.2/bin/node` — **systemd does not source `~/.nvm`**.
+**Node 18 will not work.** Vite 8 requires ≥20. The system Node on VPS4 is 18.20.8, which is why the systemd unit hardcodes `$NVM_DIR/versions/node/v20.20.2/bin/node` — **systemd does not source `~/.nvm`**.
 
 ### Key Dependencies
 
@@ -337,7 +337,7 @@ It replaces a single-file HTML prototype whose state lived in `window.storage`, 
   +----------------------------------------------------+
         |
         v
-  Local disk: /home/yota/data/bd-portal/uploads
+  Local disk: $DATA_DIR/uploads
   Streamed back through /api/media/* (never a static path)
 ```
 
@@ -411,7 +411,7 @@ scripts/
   migrate.ts             Applies migrations as bd_owner
   bootstrap.ts           Creates the org + first owner (sign-up is disabled)
   set-password.ts        Rotates a password; revokes that user's sessions
-  db-tunnel.sh           localhost:55432 -> vps4:5432, auto-reconnecting
+  db-tunnel.sh           localhost:55432 -> $HOST:5432, auto-reconnecting
   deploy.sh              rsync + build + publish + restart
   backup.sh              Nightly pg_dump + uploads snapshot
   restore-check.sh       Restores the newest dump and asserts it has rows
@@ -547,24 +547,24 @@ chrome-devtools-axi console --type error
 
 ### Deploy (`npm run deploy`)
 
-**What it does.** rsyncs source to VPS4, installs and builds **on the host**, publishes `dist/` to `/srv/http/bd-portal`, applies migrations, restarts the service, and waits for health.
+**What it does.** rsyncs source to VPS4, installs and builds **on the host**, publishes `dist/` to `$WEB_DIR`, applies migrations, restarts the service, and waits for health.
 
 **When to use.** Any change the human wants live.
 
 **Common pitfalls.**
 - **Native modules must build on the host.** `sharp` from macOS will not load on Linux. Never rsync `node_modules`.
 - `.env` is excluded on purpose. Production secrets live only on the server.
-- Caddy cannot traverse `/home/yota` (mode 0750) — that is why `dist/` is published to `/srv/http/bd-portal`. Serving from the home directory returns **403**.
-- **The URL must not change.** `http://161.97.76.197:8100` is shared with a real person.
+- Caddy cannot traverse `the deploy user’s home` (mode 0750) — that is why `dist/` is published to `$WEB_DIR`. Serving from the home directory returns **403**.
+- **The URL must not change.** `$PORTAL_URL` is shared with a real person.
 
 ### Backups
 
 ```bash
-ssh vps4 /home/yota/apps/bd-portal/scripts/backup.sh          # nightly via systemd timer
-ssh vps4 sudo /home/yota/apps/bd-portal/scripts/restore-check.sh   # monthly
+ssh "$HOST" $APP_DIR/scripts/backup.sh          # nightly via systemd timer
+ssh "$HOST" sudo $APP_DIR/scripts/restore-check.sh   # monthly
 ```
 
-**Pitfall that already bit:** `postgres` cannot read dumps inside `/home/yota` (0750). The restore check stages the dump in `/tmp` first. It once reported "restored but empty" because `pg_restore`'s stderr was discarded — **never swallow errors in a verification script**.
+**Pitfall that already bit:** `postgres` cannot read dumps inside `the deploy user’s home` (0750). The restore check stages the dump in `/tmp` first. It once reported "restored but empty" because `pg_restore`'s stderr was discarded — **never swallow errors in a verification script**.
 
 **The backups live on the same disk as the data.** They survive a mistake, not
 a disk failure. Copy the newest pair off the box after any session that
@@ -572,10 +572,10 @@ mattered:
 
 ```bash
 mkdir -p ~/Documents/bd-portal-backups
-scp vps4:/home/yota/data/bd-portal/backups/bd_portal-<stamp>.dump      ~/Documents/bd-portal-backups/
-scp vps4:/home/yota/data/bd-portal/backups/uploads-<stamp>.tar.zst     ~/Documents/bd-portal-backups/
+scp "$HOST":$DATA_DIR/backups/bd_portal-<stamp>.dump      ~/Documents/bd-portal-backups/
+scp "$HOST":$DATA_DIR/backups/uploads-<stamp>.tar.zst     ~/Documents/bd-portal-backups/
 # and confirm the copy is not truncated
-ssh vps4 md5sum /home/yota/data/bd-portal/backups/bd_portal-<stamp>.dump
+ssh "$HOST" md5sum $DATA_DIR/backups/bd_portal-<stamp>.dump
 md5 -q ~/Documents/bd-portal-backups/bd_portal-<stamp>.dump
 ```
 
@@ -589,7 +589,7 @@ are not there, or files nothing references.
 |---|---|
 | Bad code shipped | `git revert <sha>` then `npm run deploy`. Never `reset --hard` on a pushed commit. |
 | Bad data written | Restore from the newest dump *taken before it* — procedure below. |
-| Uploaded files lost | `tar --zstd -xf uploads-<stamp>.tar.zst` into `/home/yota/data/bd-portal/`. |
+| Uploaded files lost | `tar --zstd -xf uploads-<stamp>.tar.zst` into `$DATA_DIR/`. |
 
 Restoring the database is **destructive and manual on purpose** — there is no
 script for it, because a script that can overwrite production is a loaded gun
@@ -597,8 +597,8 @@ sitting in the repository. Take a fresh dump first, so the state you are
 abandoning is itself recoverable:
 
 ```bash
-ssh vps4 /home/yota/apps/bd-portal/scripts/backup.sh   # 1. snapshot NOW, before anything
-ssh vps4 sudo /home/yota/apps/bd-portal/scripts/restore-check.sh  # 2. prove the target dump is good
+ssh "$HOST" $APP_DIR/scripts/backup.sh   # 1. snapshot NOW, before anything
+ssh "$HOST" sudo $APP_DIR/scripts/restore-check.sh  # 2. prove the target dump is good
 # 3. only then, with the row counts from step 2 in front of you, restore for real
 ```
 
@@ -609,7 +609,7 @@ row counts, which is how you find out the dump you were about to trust is empty
 ### The Ingress (Caddy on VPS4)
 
 **What it does.** Caddy listens on `:8100`, serves the built SPA from
-`/srv/http/bd-portal`, and proxies `/api` and `/healthz` to the Node process on
+`$WEB_DIR`, and proxies `/api` and `/healthz` to the Node process on
 `127.0.0.1:4300`. **It is part of the application** and it has caused a full
 day of debugging that looked like an application bug and was not.
 
@@ -618,14 +618,14 @@ day of debugging that looked like an application bug and was not.
 application never saw it — suspect the browser or the ingress, not the code.
 
 ```bash
-ssh vps4 'sudo cat /etc/caddy/Caddyfile'          # read it
-ssh vps4 'sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile'
-ssh vps4 'sudo systemctl reload caddy'            # apply; never restart blindly
-curl -s -D - -o /dev/null http://161.97.76.197:8100/portal | grep -i cache-control
+ssh "$HOST" 'sudo cat /etc/caddy/Caddyfile'          # read it
+ssh "$HOST" 'sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile'
+ssh "$HOST" 'sudo systemctl reload caddy'            # apply; never restart blindly
+curl -s -D - -o /dev/null $PORTAL_URL/portal | grep -i cache-control
 ```
 
 **Common pitfalls.**
-- **`:80` on that box is a different site.** `http://161.97.76.197` with no port
+- **`:80` on that box is a different site.** the same box on `:80` with no port
   serves an unrelated application. Every URL given to a human MUST include
   `:8100`, or they land somewhere else and no password will ever work.
 - **A path matcher matches the REQUEST path, not what `try_files` rewrote to.**
@@ -751,7 +751,7 @@ This has already bitten once. Renaming the review-queue key from `['awaiting']` 
 
 **The bad behavior:** `pg_restore ... 2>/dev/null`.
 
-**What happened:** The restore check reported "the dump restored but is empty". The real message was `Permission denied` — `postgres` cannot read `/home/yota`. Debugging took far longer than it should have.
+**What happened:** The restore check reported "the dump restored but is empty". The real message was `Permission denied` — `postgres` cannot read `the deploy user’s home`. Debugging took far longer than it should have.
 
 **The correct behavior:** Never discard stderr in a verification script.
 
@@ -973,7 +973,7 @@ database.
 | `LOG_LEVEL` | pino level | `info` in production |
 | `COOKIE_SECURE` | `Secure` flag on session cookies | **`false` today — the site is HTTP.** Flip to `true` the moment it is HTTPS, or every login silently fails. |
 | `MAX_SEATS` | Seat cap | 10 |
-| `UPLOAD_DIR` | Where bytes land | `./.uploads` locally, `/home/yota/data/bd-portal/uploads` on VPS4 |
+| `UPLOAD_DIR` | Where bytes land | `./.uploads` locally, `$DATA_DIR/uploads` on VPS4 |
 | `APP_URL` | Public origin | Better Auth derives callbacks and trusted origins from it |
 | `BETTER_AUTH_SECRET` | Session signing key | **Required in production.** Rotating it logs everyone out. |
 
@@ -995,11 +995,11 @@ database.
 | Open a file picker | `<UploadButton>`, or a native `<label htmlFor>`. NEVER a scripted `.click()` |
 | Retire a client | Archive it. There is no delete, and there must not be one |
 | Drive the API without touching production | boot a second instance on `:4399` against `bd_portal_test` |
-| Find out why a request "did nothing" | `ssh vps4 journalctl --user -u bd-portal -n 50` — no line means it never arrived |
+| Find out why a request "did nothing" | `ssh "$HOST" journalctl --user -u bd-portal -n 50` — no line means it never arrived |
 | Deploy | `npm run deploy` |
-| Read production logs | `ssh vps4 journalctl --user -u bd-portal -n 50` |
-| Restart production | `ssh vps4 systemctl --user restart bd-portal.service` |
-| Check production health | `curl http://161.97.76.197:8100/healthz` |
+| Read production logs | `ssh "$HOST" journalctl --user -u bd-portal -n 50` |
+| Restart production | `ssh "$HOST" systemctl --user restart bd-portal.service` |
+| Check production health | `curl "$HEALTH_URL"` |
 
 ## Appendix C: Current Known Limitations
 
