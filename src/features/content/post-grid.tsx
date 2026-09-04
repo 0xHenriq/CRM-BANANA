@@ -11,6 +11,7 @@ import {
   type ContentItem,
   type FeedCell,
 } from '@/lib/api'
+import { withClient } from '@/features/portal/use-workspace'
 import { cn } from '@/lib/utils'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -63,7 +64,22 @@ export function PostGrid({
   limit = 12,
   className,
 }: {
-  clientId: string
+  /**
+   * NULL for a client, and that is not an oversight.
+   *
+   * `useWorkspace()` returns null for a client-role session — they have
+   * exactly one workspace and no say in it, and the server resolves it from
+   * their grant. Passing a real id here instead would still work (the API
+   * ignores `?client=` for a client) but it would key the cache on a value
+   * every other content screen spells `'default'`, so the Ideas Bank and this
+   * grid would hold two copies of the same rows and refetch each other's.
+   *
+   * The first version typed this `string` and the Ideas Bank guarded on
+   * `{clientId && …}` — which meant the grid Sofia asked for ("in Ideas bank
+   * i want a page feed of ones pending") rendered for everybody EXCEPT the
+   * client it was for.
+   */
+  clientId: string | null
   mode: PostGridMode
   limit?: number
   className?: string
@@ -79,22 +95,22 @@ export function PostGrid({
    * stale when a post is approved somewhere else.
    */
   const items = useQuery({
-    queryKey: ['content', clientId],
+    queryKey: ['content', clientId ?? 'default'],
     queryFn: () =>
       api.get<{ clientId: string; items: ContentItem[] }>(
-        `/content?client=${clientId}`
+        withClient('/content', clientId)
       ),
   })
 
   const feed = useQuery({
-    queryKey: ['feed', clientId],
+    queryKey: ['feed', clientId ?? 'default'],
     queryFn: () =>
       api.get<{ clientId: string; cells: FeedCell[] }>(
-        `/media/feed?client=${clientId}`
+        withClient('/media/feed', clientId)
       ),
   })
 
-  const rows = useMemo(() => {
+  const { rows, hidden } = useMemo(() => {
     const assets = new Map(
       (feed.data?.cells ?? []).map((c) => [
         c.itemId,
@@ -102,16 +118,33 @@ export function PostGrid({
       ])
     )
 
-    const wanted =
-      mode === 'decisions'
-        ? (s: ApprovalState) => s === 'pending' || s === 'declined'
-        : (s: ApprovalState) => s === 'approved'
+    /*
+     * `published` is deliberately excluded from "Coming up".
+     *
+     * `approvalState` groups approved, scheduled and published as one green,
+     * which is right for a traffic light — nobody is waiting on any of them.
+     * It is wrong for a panel headed "Coming up": a post that has already gone
+     * out is not coming up, and because nothing ever leaves this filter they
+     * would pile up in the client's grid for the life of the account until the
+     * twelve slots held nothing but old work.
+     */
+    const wanted = (item: ContentItem): boolean => {
+      const state: ApprovalState = approvalState(item)
+      return mode === 'decisions'
+        ? state === 'pending' || state === 'declined'
+        : state === 'approved' && item.status !== 'published'
+    }
 
-    return (items.data?.items ?? [])
-      .filter((item) => wanted(approvalState(item)))
-      .sort(byWhenItMatters)
-      .slice(0, limit)
-      .map((item) => ({ item, asset: assets.get(item.id) ?? null }))
+    const matched = (items.data?.items ?? []).filter(wanted).sort(byWhenItMatters)
+
+    return {
+      rows: matched
+        .slice(0, limit)
+        .map((item) => ({ item, asset: assets.get(item.id) ?? null })),
+      // Said out loud rather than silently truncated. A grid capped at twelve
+      // that shows twelve is indistinguishable from a grid showing everything.
+      hidden: Math.max(0, matched.length - limit),
+    }
   }, [items.data, feed.data, mode, limit])
 
   const copy = MODE_COPY[mode]
@@ -173,6 +206,7 @@ export function PostGrid({
             </ul>
             <p className='mt-3 text-xs text-muted-foreground italic'>
               {copy.hint}
+              {hidden > 0 && ` ${hidden} more not shown.`}
             </p>
           </>
         )}

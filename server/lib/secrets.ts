@@ -101,15 +101,3 @@ export function decryptSecret(
     return null
   }
 }
-
-/**
- * What the list shows instead of the password.
- *
- * The LENGTH is deliberately not revealed — 'set' or 'not set' and nothing
- * else. A row of dots that matches the real length tells anyone glancing at
- * the screen how long the password is, which is the one property worth
- * knowing about a password you cannot see.
- */
-export function secretIsSet(stored: string | null): boolean {
-  return Boolean(stored)
-}

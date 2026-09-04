@@ -117,6 +117,35 @@ export function PortalHome() {
     )
   }
 
+  /*
+   * Wait for the money answer before painting anything.
+   *
+   * `owesMoney` decides WHERE the invoice panel goes, and it arrives one round
+   * trip after the workspace does — so without this the page rendered with
+   * money below the fold and then yanked it to the top under the reader's
+   * scroll position. Everything derived from a query belongs inside the
+   * loading branch, which is Failure Mode 12's second form; a layout that
+   * settles into a different shape is the same mistake as a number that does.
+   *
+   * Safe to gate on here and nowhere earlier: `query.data` exists by this
+   * line, so the invoices query is enabled and will resolve. Above the two
+   * guards it is disabled, and a disabled query is pending forever.
+   */
+  if (!invoices.isFetched && !invoices.isError) {
+    return (
+      <>
+        {chrome}
+        <Main>
+          <Skeleton className='mb-6 h-20' />
+          <div className='grid gap-5 lg:grid-cols-2'>
+            <Skeleton className='h-64' />
+            <Skeleton className='h-64' />
+          </div>
+        </Main>
+      </>
+    )
+  }
+
   const { client, links, files, tasks, notices } = query.data
   // The workspace the server actually resolved — for a client this is their
   // own, and for staff it matches the switcher.
@@ -136,9 +165,9 @@ export function PortalHome() {
    * goes above everything, and if they do not it sits below the work where it
    * is still one scroll away. Nothing is hidden in either case.
    *
-   * `undefined` while the query is in flight is treated as "does not lead",
-   * which is the quiet answer — the panel arriving and then jumping to the top
-   * would be worse than it appearing where it ends up.
+   * Nothing renders until this is known — see the gate above. Treating an
+   * in-flight query as "does not lead" was the first version, and it meant the
+   * panel appeared below the work and then jumped to the top a moment later.
    */
   const owesMoney = (invoices.data?.invoices ?? []).some(
     (invoice) => outstandingPence(invoice) > 0
@@ -195,7 +224,14 @@ export function PortalHome() {
           it. This is that feed: the approved and scheduled posts as pictures,
           soonest first, in the same square tiles as the Feed Preview.
         */}
-        <PostGrid clientId={workspaceId} mode='upcoming' className='mb-5' />
+        {/*
+          `clientId`, not `workspaceId`. They are the same value for staff, and
+          for a client they are not: `clientId` is null and every other content
+          screen keys its cache on 'default' for them. Passing their real id
+          here worked but held a second copy of the same rows under a different
+          key, so approving a post on the calendar left this grid stale.
+        */}
+        <PostGrid clientId={clientId} mode='upcoming' className='mb-5' />
 
         {/*
           Then the visual direction: the thing a social client actually opens

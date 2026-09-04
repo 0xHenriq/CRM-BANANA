@@ -7,9 +7,9 @@ import {
   type ContentType,
 } from '@/lib/api'
 import {
+  APPROVAL_STATE_LABEL,
   APPROVAL_TONE,
   approvalLabel,
-  DECLINED_LABEL,
   TYPE_LABEL,
   TYPE_TONE,
 } from './vocabulary'
@@ -70,14 +70,6 @@ export function ApprovalDot({
   state: ApprovalState
   className?: string
 }) {
-  const label =
-    state === 'declined'
-      ? DECLINED_LABEL
-      : state === 'pending'
-        ? 'Waiting for approval'
-        : state === 'approved'
-          ? 'Approved'
-          : 'Not sent yet'
   return (
     <span
       className={cn(
@@ -86,7 +78,7 @@ export function ApprovalDot({
         className
       )}
     >
-      <span className='sr-only'>{label}</span>
+      <span className='sr-only'>{APPROVAL_STATE_LABEL[state]}</span>
     </span>
   )
 }

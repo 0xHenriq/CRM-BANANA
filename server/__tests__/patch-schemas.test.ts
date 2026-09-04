@@ -3,6 +3,7 @@ import {
   credentialPatchSchema,
   filePatchSchema,
   linkPatchSchema,
+  taskCommentSchema,
   taskPatchSchema,
 } from '../routes/portal.js'
 import {
@@ -90,6 +91,35 @@ describe('patch schemas do not invent fields', () => {
  * the client unreviewed work — the same shape of bug as the PATCH defaults
  * above, arrived at from the other direction.
  */
+/**
+ * Whitespace is not content.
+ *
+ * `z.string().min(1)` accepts "   ", and both of these columns are `NOT NULL`
+ * text, which is perfectly happy with ''. The handlers trimmed AFTER
+ * validating, so a spacebar produced a blank reply with a timestamp on it —
+ * and bumped the reply count, so the to-do advertised something to read that
+ * was not there. `.trim()` goes before `.min(1)`, and these pin it.
+ */
+describe('whitespace-only input is refused, not stored empty', () => {
+  it('a reply of spaces is not a reply', () => {
+    expect(taskCommentSchema.safeParse({ body: '   ' }).success).toBe(false)
+    expect(taskCommentSchema.safeParse({ body: '' }).success).toBe(false)
+  })
+
+  it('a reply is stored already trimmed', () => {
+    expect(taskCommentSchema.parse({ body: '  send it  ' })).toEqual({
+      body: 'send it',
+    })
+  })
+
+  it('a stored login cannot be renamed to nothing', () => {
+    expect(credentialPatchSchema.safeParse({ label: '  ' }).success).toBe(false)
+    expect(credentialPatchSchema.parse({ label: ' Instagram ' })).toEqual({
+      label: 'Instagram',
+    })
+  })
+})
+
 describe('duplicating a post resets what it must', () => {
   const approvedAndShared = {
     title: 'Autumn range hero',

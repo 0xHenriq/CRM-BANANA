@@ -277,7 +277,7 @@ npm run test:coverage
 
 The contract suite also binds the two copies of hashtag normalisation and the `canSeePortal` predicate. See invariant 17.
 
-Current counts: **108 component tests, 338 server tests.** If a change drops either number, you deleted a test — or a suite stopped running. Both have happened; see Failure Mode 25.
+Current counts: **108 component tests, 340 server tests.** If a change drops either number, you deleted a test — or a suite stopped running. Both have happened; see Failure Mode 25.
 
 ### The Isolation Suite Covers Three Distinct Failure Modes
 
@@ -514,7 +514,7 @@ scripts/
 | 17 | Logic duplicated across the client/server boundary is bound by a test in `contract.test.ts` | The server cannot import from `src` and the browser should not import from `server`, so some logic exists twice. Two copies that drift produce a UI that disagrees with what was saved. Both hashtag normalisers run over the same inputs there |
 | 18 | A query key rename is finished only when the OLD key has no references left | Keys are strings; the compiler cannot see them. Renaming one already left two mutations invalidating a key nothing read |
 | 19 | A client-role user may reach **nothing** belonging to a workspace whose `portal_enabled` is false, or whose client is archived | Enforced in `app_client_ids()` (migration 0014), which every client-visible policy goes through, and again in `resolveClientId`. It lived only in `canSeePortal` before, so the toggle closed the homepage and left the calendar, ideas bank, feed and moodboard fully readable. `invoices` and `invoice_payments` are the stated exception — money owed must not vanish |
-| 20 | A stored password is encrypted **before it reaches Postgres**, and is never in a list response | The nightly dump is copied to a laptop by this repo's own runbook, `bd_owner` can read every row, and the class of bug this schema is arranged around is a SELECT that leaks. All three then leak ciphertext. Revealing one is its own request and writes an audit row; there is deliberately no mode that stores plaintext "for now" |
+| 20 | A stored password is encrypted **before it reaches Postgres**, and is never in a list response | The nightly dump is copied to a laptop by this repo's own runbook, `bd_owner` can read every row, and the class of bug this schema is arranged around is a SELECT that leaks. All three then leak ciphertext. Revealing one is its own request and writes an audit row; there is deliberately no mode that stores plaintext "for now". `hasSecret` is computed by Postgres (`secret_cipher IS NOT NULL`) so the ciphertext is never selected — the first version selected it and dropped it with a `.map()`, which is the same rule enforced one layer too late |
 | 21 | An invoice has exactly ONE line item, because `invoices.amount_pence` is one integer | The printable document renders it as row 1 and puts the itemisation in the description, line breaks preserved. Splitting the money across rows needs a line-items table AND a second answer to "what is owed" — the one number both sides have to agree on |
 
 ### Share Links (`review_links`)
@@ -851,6 +851,14 @@ These are **observed** on this codebase, not hypothetical. Each one shipped a re
 **What happened:** `PATCH /portal/tasks/:id` with body `{"done":true}` parsed to `{done:true, visibleToClient:true}`. Ticking off "INTERNAL: chase unpaid invoice" **published it to the client**.
 
 **The correct behavior:** Write update schemas separately, with **no defaults**. `server/__tests__/patch-schemas.test.ts` enforces this. Defaults belong to creates.
+
+**The same file, the same trap one method along:** `z.string().min(1)` accepts
+`"   "`. Every `text NOT NULL` column in this schema takes `''` quite happily,
+so a handler that trims AFTER validating writes an empty row — a blank reply
+with a timestamp on it, which also increments the reply count, so the panel
+advertises something to read that is not there. `.trim()` goes **before**
+`.min(1)`, and the handler then stops trimming, because two places deciding
+what a value is is how they come to disagree.
 
 ### Failure Mode 2: Interpolating Drizzle columns into correlated subqueries
 
@@ -1231,6 +1239,28 @@ it inherits the page box (`src/styles/index.css`). Scope the whole block to
 matches on every other page in the app and prints a blank sheet of paper.
 Verify by actually printing: `page.emulateMedia({media:'print'})` and a
 screenshot, plus `page.pdf()`. Reading print CSS tells you nothing.
+
+
+### Failure Mode 29: A mutation's `onSuccess` as a shared side effect
+
+**The bad behavior:** one `useMutation` that fetches a password, with
+`onSuccess: (r) => setShown(r.secret)` on it, called from two buttons — an eye
+that should display it and a Copy that should not.
+
+**What happened:** pressing **Copy put the password on the screen**, directly
+contradicting the comment sitting on that button explaining that it fetches
+rather than reads off the screen precisely so copying does not reveal. It read
+as correct in review because the two call sites are forty lines apart and the
+side effect is declared next to neither of them.
+
+**The correct behavior:** a mutation describes the REQUEST. When two callers
+want the same request and different outcomes, the outcome belongs to the
+caller — `mutateAsync()` and let each one decide. Keep `onError` on the
+mutation, since "the request failed" genuinely is the same for both.
+
+The general shape: any time a second caller is added to an existing mutation,
+re-read its `onSuccess`. It was written for the first caller and nothing warns
+you that it now runs for the second.
 
 
 ## Appendix A: Environment Variables

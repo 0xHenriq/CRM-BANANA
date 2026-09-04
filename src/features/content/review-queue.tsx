@@ -31,11 +31,14 @@ import { TypePill } from './pills'
  * they are supposed to do.
  *
  * It now shows two kinds of step — a post that needs a decision, and an open
- * to-do that has a due date — soonest first, each with its deadline. The file
- * keeps its old name so no import path disappears; the export is what changed.
+ * to-do that has a due date — soonest first, each with its deadline, and a
+ * reply thread on each to-do. The file keeps its old name so no import path
+ * disappears; the export is what changed.
  *
- * Rendered only when there is something to act on. An empty prompt is noise,
- * and noise is how people learn to ignore a panel.
+ * Empty means ABSENT everywhere except one screen: a client's own page, to
+ * staff, where it renders empty with an Add button. See `canAdd` below for
+ * why — a lead or a proposal has nothing outstanding by definition, and that
+ * was the one place with nowhere to write down what happens next.
  */
 export function NextSteps({
   variant = 'client',

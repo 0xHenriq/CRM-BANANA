@@ -594,7 +594,11 @@ function AccountCard({
               Same endpoint as the contact rows, so there is one seat count,
               one invitation and one way in.
             */}
-            <PortalAccessButton clientId={client.id} seats={seats} />
+            <PortalAccessButton
+              clientId={client.id}
+              seats={seats}
+              portalEnabled={client.portalEnabled}
+            />
           </div>
         </div>
 
@@ -706,9 +710,12 @@ function AccountCard({
 function PortalAccessButton({
   clientId,
   seats,
+  portalEnabled,
 }: {
   clientId: string
   seats: ClientDetail['seats']
+  /** A login into a CLOSED portal resolves to nothing — see below. */
+  portalEnabled: boolean
 }) {
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
@@ -773,27 +780,44 @@ function PortalAccessButton({
             </p>
           </div>
 
-          <form
-            className='flex gap-2'
-            onSubmit={(e) => {
-              e.preventDefault()
-              const address = email.trim()
-              if (address) invite.mutate(address)
-            }}
-          >
-            <Input
-              type='email'
-              placeholder='them@theircompany.com'
-              aria-label='Their email address'
-              className='h-8'
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-            <Button size='sm' disabled={!email.trim() || invite.isPending}>
-              {invite.isPending && <Loader2 className='animate-spin' />}
-              Create
-            </Button>
-          </form>
+          {/*
+            Refused while the portal is closed, and it says why.
+
+            An invitation into a closed workspace succeeds all the way through:
+            the seat is consumed, the link works, they set a password — and
+            then `resolveClientId` finds no open workspace and their portal
+            answers "not available". She would have handed over a login to
+            nothing and spent one of ten seats doing it. The toggle is two
+            inches to the left, so the fix is one click and worth naming.
+          */}
+          {!portalEnabled ? (
+            <p className='rounded-md border-[1.5px] border-dashed border-pay-overdue px-3 py-2 text-xs'>
+              Their portal is <strong>closed</strong>. Turn it on first — a
+              login created now would use a seat and sign in to nothing.
+            </p>
+          ) : (
+            <form
+              className='flex gap-2'
+              onSubmit={(e) => {
+                e.preventDefault()
+                const address = email.trim()
+                if (address) invite.mutate(address)
+              }}
+            >
+              <Input
+                type='email'
+                placeholder='them@theircompany.com'
+                aria-label='Their email address'
+                className='h-8'
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <Button size='sm' disabled={!email.trim() || invite.isPending}>
+                {invite.isPending && <Loader2 className='animate-spin' />}
+                Create
+              </Button>
+            </form>
+          )}
 
           {fresh && (
             <>

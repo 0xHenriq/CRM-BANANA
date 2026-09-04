@@ -74,6 +74,25 @@ export const APPROVAL_TONE: Record<ApprovalState, string> = {
 export const DECLINED_LABEL = 'Changes requested'
 
 /**
+ * What each COLOUR means, in her words.
+ *
+ * Distinct from STATUS_LABEL on purpose. That one names where a post is —
+ * "Ready for review", "Scheduled" — and is what the pill on a row says. This
+ * one names what the colour is telling you, and is what the calendar's legend
+ * and a grid tile's screen-reader label say. Written once because the legend
+ * and the tiles had a copy each, and a legend that explains a colour
+ * differently from the thing it is explaining is worse than no legend.
+ */
+export const APPROVAL_STATE_LABEL: Record<ApprovalState, string> = {
+  approved: 'Approved or scheduled',
+  pending: 'Waiting for approval',
+  // Reads through DECLINED_LABEL rather than repeating it: the pill and
+  // the legend have to agree about the red one word for word.
+  declined: DECLINED_LABEL,
+  draft: 'Not sent yet',
+}
+
+/**
  * One sentence for where a post is, wherever it appears.
  *
  * The pill, the calendar chip's tooltip and the grid tile's screen-reader

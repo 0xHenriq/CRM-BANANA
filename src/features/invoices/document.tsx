@@ -9,10 +9,12 @@ import {
   formatPence,
   formatShortDate,
   invoiceState,
+  localDayOf,
   outstandingPence,
   type InvoiceDetail,
 } from '@/lib/api'
 import { copyText } from '@/lib/copy-text'
+import { cn } from '@/lib/utils'
 import { useCurrentUser } from '@/hooks/use-current-user'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -140,15 +142,28 @@ export function InvoiceDocument() {
       <Main>
         {/* Everything here is an action, so none of it prints. */}
         <div className='print-hide mb-4 flex flex-wrap items-center gap-2'>
+          {/*
+            Back to where the reader came from, which is not the same place
+            for the two audiences. `/clients/:id` is staff-only and a client
+            following it is bounced to their portal — a link that visibly does
+            something other than what it says.
+          */}
           <Button variant='outline' size='sm' asChild>
-            <Link
-              to='/clients/$clientId'
-              params={{ clientId: invoice.clientId }}
-              search={{ tab: 'money' }}
-            >
-              <ArrowLeft />
-              {invoice.clientName}
-            </Link>
+            {isStaff ? (
+              <Link
+                to='/clients/$clientId'
+                params={{ clientId: invoice.clientId }}
+                search={{ tab: 'money' }}
+              >
+                <ArrowLeft />
+                {invoice.clientName}
+              </Link>
+            ) : (
+              <Link to='/portal'>
+                <ArrowLeft />
+                Your workspace
+              </Link>
+            )}
           </Button>
           <InvoiceStatePill invoice={invoice} />
           <div className='ms-auto flex flex-wrap items-center gap-2'>
@@ -192,6 +207,29 @@ export function InvoiceDocument() {
             <p className='display text-4xl leading-none'>INVOICE</p>
           </header>
 
+          {/*
+            A draft or a voided invoice has to say so ON THE PAPER.
+
+            The status pill sits in the toolbar above, which is `print-hide` —
+            so a voided invoice printed as an ordinary one, and she could send
+            a demand for money she had already withdrawn. A draft is worse
+            still: it carries figures she has not agreed to charge yet and no
+            issue date, and the document would present them as final.
+          */}
+          {(state === 'draft' || state === 'void') && (
+            <p
+              className={cn(
+                'mt-4 border-[1.5px] border-bd-ink px-3 py-2 text-center',
+                'display text-lg',
+                state === 'void' ? 'bg-pay-overdue text-white' : 'bg-bd-sand'
+              )}
+            >
+              {state === 'void'
+                ? 'VOID — this invoice has been withdrawn and is not owed'
+                : 'DRAFT — not issued, and not visible to the client'}
+            </p>
+          )}
+
           <div className='my-6 crate-rule' />
 
           <div className='grid gap-6 sm:grid-cols-2'>
@@ -213,7 +251,11 @@ export function InvoiceDocument() {
               <p className='mt-1 font-mono text-sm'>{invoice.number}</p>
               <p className='mt-2 text-sm'>
                 <span className='text-muted-foreground'>Date: </span>
-                {formatShortDate(invoice.issuedOn ?? invoice.createdAt.slice(0, 10))}
+                {/* localDayOf on the fallback: `createdAt` is a timestamp and
+                    slicing it takes the UTC day, which dates a document raised
+                    late one evening in London to the day before. `issuedOn` is
+                    already a plain date and needs no conversion. */}
+                {formatShortDate(invoice.issuedOn ?? localDayOf(invoice.createdAt))}
               </p>
               {invoice.dueOn && (
                 <p className='text-sm'>
@@ -314,13 +356,21 @@ export function InvoiceDocument() {
                   value={`− ${formatPence(paid, invoice.currency)}`}
                 />
               )}
+              {/*
+                "Still owed" only when something is. Keyed on `outstanding`
+                rather than on `paid > 0`, which read "Still owed £0.00" on a
+                settled invoice — a bottom line of zero on the one line the
+                reader looks at first, under a heading that says money is due.
+              */}
               <div className='mt-1 flex items-baseline justify-between border-t-2 border-bd-ink pt-1.5'>
                 <dt className='display text-lg'>
-                  {paid > 0 ? 'Still owed' : 'Total'}
+                  {outstanding > 0 && paid > 0 ? 'Still owed' : 'Total'}
                 </dt>
                 <dd className='display text-lg tabular-nums'>
                   {formatPence(
-                    paid > 0 ? outstanding : invoice.amountPence,
+                    outstanding > 0 && paid > 0
+                      ? outstanding
+                      : invoice.amountPence,
                     invoice.currency
                   )}
                 </dd>

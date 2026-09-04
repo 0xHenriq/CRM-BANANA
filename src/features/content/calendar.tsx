@@ -46,6 +46,7 @@ import { WorkspaceSwitcher } from '@/features/portal/workspace-switcher'
 import { ContentDetailDialog } from './detail-dialog'
 import { HashtagEditor } from './hashtag-editor'
 import {
+  APPROVAL_STATE_LABEL,
   APPROVAL_TONE,
   approvalLabel,
   TYPE_LABEL,
@@ -76,11 +77,11 @@ const MONTHS = [
  * fact: nobody is waiting on anybody.
  */
 const CALENDAR_LEGEND = [
-  { state: 'approved' as const, label: 'Approved or scheduled' },
-  { state: 'pending' as const, label: 'Waiting for approval' },
-  { state: 'declined' as const, label: 'Changes requested' },
-  { state: 'draft' as const, label: 'Not sent yet' },
-]
+  'approved',
+  'pending',
+  'declined',
+  'draft',
+] as const
 
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -392,7 +393,7 @@ export function ContentCalendar() {
                 pills on every other screen.
               */}
               <div className='mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5'>
-                {CALENDAR_LEGEND.map(({ state, label }) => (
+                {CALENDAR_LEGEND.map((state) => (
                   <span
                     key={state}
                     className='flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground'
@@ -404,7 +405,7 @@ export function ContentCalendar() {
                         APPROVAL_TONE[state]
                       )}
                     />
-                    {label}
+                    {APPROVAL_STATE_LABEL[state]}
                   </span>
                 ))}
               </div>

@@ -152,10 +152,17 @@ export function IdeasBank() {
           sees the four that need an answer today. Replacing one with the other
           would have traded a working screen for a nicer-looking one.
 
-          Renders only once a workspace has resolved — `clientId` is null on
-          first paint while the persisted selection loads.
+          Rendered once the workspace is settled. For STAFF that means waiting
+          for `clientId`: without it the request falls back to the first open
+          workspace alphabetically, which is the exact defect use-workspace.ts
+          exists to prevent. A CLIENT has no clientId by design and never needs
+          one — the server resolves their workspace from their grant — so
+          gating on it would have hidden this grid from the one audience Sofia
+          asked for it for.
         */}
-        {clientId && <PostGrid clientId={clientId} mode='decisions' className='mb-5' />}
+        {(!isStaff || clientId) && (
+          <PostGrid clientId={clientId} mode='decisions' className='mb-5' />
+        )}
 
         <div className='mb-4 flex flex-wrap gap-2'>
           <Select

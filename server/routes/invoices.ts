@@ -356,16 +356,7 @@ invoiceRoutes.post('/', requireStaff, async (c) => {
 
 const updateSchema = z.object({
   amountPence: z.number().int().positive().optional(),
-  /*
-   * The itemised description, which is why this is 4000 and not 500.
-   *
-   * Her real invoices carry a paragraph and a numbered list under one line
-   * item — "Development of a high-performance 10-page website", then the ten
-   * pages, then five bullets of strategic importance. At 500 characters the
-   * document could only ever hold the heading, which would have made the
-   * printable invoice a worse version of the one she already writes by hand.
-   * Line breaks are preserved and rendered as typed.
-   */
+  /** 4000, for the same reason as the create schema above. */
   description: z.string().max(4000).nullish(),
   dueOn: z.string().date().nullish(),
   notes: z.string().max(4000).nullish(),

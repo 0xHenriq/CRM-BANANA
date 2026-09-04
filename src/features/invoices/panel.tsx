@@ -66,7 +66,21 @@ const STATE_LABEL: Record<InvoiceState, string> = {
   void: 'Void',
 }
 
-export function InvoiceStatePill({ invoice }: { invoice: Invoice }) {
+/**
+ * Takes only the fields it reads, so the invoice DETAIL payload can use it.
+ *
+ * It asked for a whole `Invoice` before, which the detail endpoint does not
+ * return — it has no attachment join — and widening that type to fit would
+ * have meant claiming the endpoint sends fields it does not.
+ */
+export function InvoiceStatePill({
+  invoice,
+}: {
+  invoice: Pick<
+    Invoice,
+    'status' | 'amountPence' | 'paidPence' | 'currency' | 'dueOn'
+  >
+}) {
   const state = invoiceState(invoice)
   return (
     <span

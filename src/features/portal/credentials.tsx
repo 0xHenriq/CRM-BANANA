@@ -274,13 +274,21 @@ function CredentialRow({
     onError: (err: Error) => toast.error(err.message),
   })
 
+  /**
+   * Fetch the plaintext. It does NOT decide what happens to it.
+   *
+   * `onSuccess: setShown(...)` was the obvious place to put that and it was
+   * wrong: the Copy button below calls this same mutation with `mutateAsync`,
+   * so copying a password ALSO printed it on the screen — the exact thing the
+   * comment on that button says it avoids. Two callers want the same request
+   * and different outcomes, so the outcome belongs to the caller.
+   */
   const reveal = useMutation({
     mutationFn: () =>
       api.post<{ secret: string | null }>(
         `/portal/credentials/${credential.id}/reveal`,
         {}
       ),
-    onSuccess: (result) => setShown(result.secret ?? ''),
     onError: (err: Error) => toast.error(err.message),
   })
 
@@ -374,9 +382,14 @@ function CredentialRow({
                     ? `Show the password for ${credential.label}`
                     : `Hide the password for ${credential.label}`
                 }
-                onClick={() =>
-                  shown === null ? reveal.mutate() : setShown(null)
-                }
+                onClick={async () => {
+                  if (shown !== null) {
+                    setShown(null)
+                    return
+                  }
+                  const result = await reveal.mutateAsync().catch(() => null)
+                  if (result) setShown(result.secret ?? '')
+                }}
               >
                 {reveal.isPending ? (
                   <Loader2 className='size-3.5 animate-spin' />
@@ -403,7 +416,11 @@ function CredentialRow({
                     whether the text actually landed. A copy button that
                     silently does nothing is the failure that rule exists for.
                   */
+                  // Deliberately does not touch `shown`: the point of Copy is
+                  // to get it into the clipboard WITHOUT putting it on screen.
                   const result = await reveal.mutateAsync().catch(() => null)
+                  // A rejected request already toasted through the mutation's
+                  // own onError, so there is nothing more to say here.
                   if (!result?.secret) return
                   const ok = await copyText(result.secret)
                   toast[ok ? 'success' : 'error'](

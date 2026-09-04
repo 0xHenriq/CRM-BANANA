@@ -18,7 +18,6 @@ import { requireAuth, requireStaff } from '../middleware/session.js'
 import {
   decryptSecret,
   encryptSecret,
-  secretIsSet,
   secretsAvailable,
 } from '../lib/secrets.js'
 import { storage } from '../lib/storage.js'
@@ -576,7 +575,18 @@ portalRoutes.get('/tasks/:id/comments', async (c) => {
   return c.json({ comments: result })
 })
 
-const taskCommentSchema = z.object({ body: z.string().min(1).max(4000) })
+/**
+ * `.trim()` BEFORE `.min(1)`, not after.
+ *
+ * `z.string().min(1)` accepts "   ", and the handler then trimmed it on the
+ * way into a `text NOT NULL` column that is perfectly happy with ''. The
+ * thread would show a blank row from Sofia with a timestamp on it, and the
+ * reply COUNT on the to-do would go up — so the panel says there is something
+ * to read and there is not. Zod trims first, so the empty case is a 400.
+ */
+export const taskCommentSchema = z.object({
+  body: z.string().trim().min(1).max(4000),
+})
 
 /**
  * Reply, from either side.
@@ -616,7 +626,8 @@ portalRoutes.post('/tasks/:id/comments', async (c) => {
         clientId: task.clientId,
         taskId: task.id,
         authorId: currentUser.id,
-        body: parsed.data.body.trim(),
+        // Already trimmed by the schema — see taskCommentSchema.
+        body: parsed.data.body,
       })
       .returning()
     return row
@@ -635,10 +646,21 @@ portalRoutes.post('/tasks/:id/comments', async (c) => {
  * one posted in error is a different act and she is the one who does it.
  */
 portalRoutes.delete('/tasks/:taskId/comments/:id', requireStaff, async (c) => {
+  const taskId = c.req.param('taskId')
+  const id = c.req.param('id')
+  // A malformed uuid makes Postgres RAISE rather than match nothing, which
+  // surfaces as a 500 for what is really "no such thing". Same guard as every
+  // other id-addressed handler in this file.
+  if (!isUuid(taskId) || !isUuid(id)) return c.json({ error: 'Not found' }, 404)
+
   const removed = await withTenant(c.get('tenant'), (tx) =>
     tx
       .delete(taskComments)
-      .where(eq(taskComments.id, c.req.param('id')))
+      // Scoped to the task in the URL as well as the comment id. Matching on
+      // the id alone would delete a reply belonging to a DIFFERENT to-do if
+      // the two ids were ever mixed up in a caller — the path says which
+      // thread this is, so the query should mean it.
+      .where(and(eq(taskComments.id, id), eq(taskComments.taskId, taskId)))
       .returning({ id: taskComments.id })
   )
   if (!removed.length) return c.json({ error: 'Not found' }, 404)
@@ -689,11 +711,22 @@ portalRoutes.get('/credentials', async (c) => {
     tx
       .select({
         ...credentialColumns,
-        // A boolean, not a masked string of the right length: a row of dots
-        // that matches tells anyone glancing at the screen how long the
-        // password is, which is the one thing worth knowing about a password
-        // you cannot see.
-        secretCipher: clientCredentials.secretCipher,
+        /*
+         * A boolean computed IN POSTGRES, so the ciphertext is never selected.
+         *
+         * The first version selected `secret_cipher` and dropped it with a
+         * `.map()` on the way out, which is the same rule enforced one layer
+         * too late: the value crossed the driver, the ORM and this process,
+         * and the only thing standing between it and a response body was a
+         * destructuring nobody would notice removing. Now it cannot leak from
+         * here because it is never read from here.
+         *
+         * A boolean rather than a mask of the right length, too — a row of
+         * dots that matches tells anyone glancing at the screen how long the
+         * password is, which is the one thing worth knowing about a password
+         * you cannot see.
+         */
+        hasSecret: sql<boolean>`${clientCredentials.secretCipher} is not null`,
       })
       .from(clientCredentials)
       .where(eq(clientCredentials.clientId, clientId))
@@ -703,15 +736,14 @@ portalRoutes.get('/credentials', async (c) => {
   return c.json({
     clientId,
     configured: secretsAvailable(env.CREDENTIALS_SECRET),
-    credentials: rows.map(({ secretCipher, ...rest }) => ({
-      ...rest,
-      hasSecret: secretIsSet(secretCipher),
-    })),
+    credentials: rows,
   })
 })
 
 const credentialSchema = z.object({
-  label: z.string().min(1).max(80),
+  // Trimmed before the length check, so "   " is a 400 rather than a row with
+  // no name on it — `label text NOT NULL` accepts '' quite happily.
+  label: z.string().trim().min(1).max(80),
   username: z.string().max(200).nullish(),
   secret: z.string().max(500).nullish(),
   notes: z.string().max(2000).nullish(),
@@ -726,7 +758,7 @@ const credentialSchema = z.object({
  * neither — Failure Mode 1 is exactly this shape.
  */
 export const credentialPatchSchema = z.object({
-  label: z.string().min(1).max(80).optional(),
+  label: z.string().trim().min(1).max(80).optional(),
   username: z.string().max(200).nullish(),
   secret: z.string().max(500).nullish(),
   notes: z.string().max(2000).nullish(),
@@ -753,7 +785,7 @@ portalRoutes.post('/credentials', async (c) => {
       .insert(clientCredentials)
       .values({
         clientId,
-        label: label.trim(),
+        label,
         username: username?.trim() || null,
         secretCipher: secret
           ? encryptSecret(secret, env.CREDENTIALS_SECRET)
@@ -785,11 +817,19 @@ portalRoutes.patch('/credentials/:id', async (c) => {
     return c.json(CREDENTIALS_UNCONFIGURED, 503)
   }
 
+  // An empty body would otherwise stamp updatedBy and updatedAt for no change,
+  // which remounts the row's inputs (they are keyed on updatedAt) and claims
+  // in the record that somebody edited this login. The tasks handler already
+  // refuses this; so does this one now.
+  if (Object.keys(patch).length === 0) {
+    return c.json({ error: 'Nothing to update' }, 400)
+  }
+
   const updated = await withTenant(c.get('tenant'), (tx) =>
     tx
       .update(clientCredentials)
       .set({
-        ...(patch.label === undefined ? {} : { label: patch.label.trim() }),
+        ...(patch.label === undefined ? {} : { label: patch.label }),
         ...(patch.username === undefined
           ? {}
           : { username: patch.username?.trim() || null }),

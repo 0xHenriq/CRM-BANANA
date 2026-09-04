@@ -341,15 +341,20 @@ clientRoutes.patch('/:id', async (c) => {
     // Active, hand over a login, and they would find an empty portal with
     // nothing to explain it.
     //
-    // An explicit portalEnabled in the same patch still wins, and closing one
-    // is never undone by this: the guard is on the TRANSITION into a portal
-    // stage, so re-saving the form on a client whose portal she deliberately
-    // closed does not reopen it behind her.
+    // An explicit portalEnabled in the same patch still wins, and re-saving
+    // the form never reopens a portal she deliberately closed — the guard is
+    // on the status actually CHANGING, not merely being a portal stage.
+    //
+    // Written first as "moving into a portal stage from one without a portal",
+    // which quietly dropped proposal → active: both are portal stages, so the
+    // one transition that most obviously means "give them their workspace" was
+    // the one it skipped. Any move INTO a portal stage opens it, which is what
+    // the rule said before proposal existed and is a superset of it.
     const opensPortal =
       patch.portalEnabled ??
       (patch.status &&
-      PORTAL_STAGES.has(patch.status) &&
-      !PORTAL_STAGES.has(before.status)
+      patch.status !== before.status &&
+      PORTAL_STAGES.has(patch.status)
         ? true
         : undefined)
 

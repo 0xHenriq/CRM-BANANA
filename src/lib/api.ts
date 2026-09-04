@@ -331,9 +331,20 @@ export type InvoiceSettings = {
   footer: string
 }
 
-/** Everything the printable invoice renders, in one response. */
+/**
+ * Everything the printable invoice renders, in one response.
+ *
+ * `Omit` the attachment fields rather than spreading `Invoice` whole: those
+ * two are computed by the LIST query's join and `GET /invoices/:id` does not
+ * select them, so a type saying `attachmentId: string | null` would be a
+ * promise the endpoint does not keep. The server cannot import this file and
+ * this file cannot import the server, so nothing but care catches that — see
+ * invariant 17 for the same problem in the other direction.
+ */
 export type InvoiceDetail = {
-  invoice: Invoice & { clientBillingAddress: string | null }
+  invoice: Omit<Invoice, 'attachmentId' | 'attachmentName'> & {
+    clientBillingAddress: string | null
+  }
   payments: InvoicePayment[]
   settings: InvoiceSettings
 }

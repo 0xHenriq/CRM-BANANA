@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Send, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { api, formatShortDate, type TaskComment } from '@/lib/api'
+import { api, formatShortDate, localDayOf, type TaskComment } from '@/lib/api'
 import { useCurrentUser } from '@/hooks/use-current-user'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -111,7 +111,12 @@ export function TaskThread({
                       rendering bug. */}
                   {comment.authorName ?? 'Someone'}
                   <span className='ms-2 font-normal text-muted-foreground'>
-                    {formatShortDate(comment.createdAt.slice(0, 10))}
+                    {/* localDayOf, not .slice(0, 10). createdAt is a
+                        timestamp and the slice takes the UTC day, so a reply
+                        written at half past midnight in London reads as
+                        yesterday. This repo has already fixed this once, on
+                        the share page — see the same comment there. */}
+                    {formatShortDate(localDayOf(comment.createdAt))}
                   </span>
                 </p>
                 <p className='text-sm whitespace-pre-wrap'>{comment.body}</p>
@@ -138,7 +143,7 @@ export function TaskThread({
         onSubmit={(e) => {
           e.preventDefault()
           const body = draft.trim()
-          if (body) send.mutate(body)
+          if (body && !send.isPending) send.mutate(body)
         }}
       >
         <Textarea
@@ -156,10 +161,15 @@ export function TaskThread({
             // Enter sends, shift+Enter is a new line — the shape everybody
             // already has in their fingers from every chat app. A textarea is
             // still the control underneath so a long reply can be written.
+            //
+            // `send.isPending` is checked here as well as on the button: the
+            // button is disabled while a reply is in flight, and the keyboard
+            // path went straight past that. Two Enters on a slow connection
+            // posted the same reply twice.
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()
               const body = draft.trim()
-              if (body) send.mutate(body)
+              if (body && !send.isPending) send.mutate(body)
             }
           }}
         />

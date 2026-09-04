@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   decryptSecret,
   encryptSecret,
-  secretIsSet,
   secretsAvailable,
   SecretsUnconfigured,
 } from '../lib/secrets.js'
@@ -75,10 +74,5 @@ describe('the password hub cipher', () => {
     expect(secretsAvailable(undefined)).toBe(false)
     expect(secretsAvailable('short')).toBe(false)
     expect(secretsAvailable(KEY)).toBe(true)
-  })
-
-  it('reports only whether a secret is set, never its length', () => {
-    expect(secretIsSet(encryptSecret('a', KEY))).toBe(true)
-    expect(secretIsSet(null)).toBe(false)
   })
 })
