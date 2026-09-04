@@ -192,6 +192,16 @@ export const clients = pgTable(
      */
     toneOfVoice: text('tone_of_voice'),
     /**
+     * Who the invoice is made out to, printed verbatim.
+     *
+     * `name` is what she calls them; this is the legal entity and its address,
+     * which on a real one of hers runs to four lines and includes a trading
+     * name and a project. One free-text column rather than structured fields:
+     * an address is lines, and any shape modelled from one client's is wrong
+     * for the next. See migration 0023.
+     */
+    billingAddress: text('billing_address'),
+    /**
      * Archived, not deleted.
      *
      * She asked to be able to remove a client — two of the seeded examples are
@@ -470,6 +480,39 @@ export const tasks = pgTable(
 )
 
 /**
+ * Replies on a to-do, shaped exactly like `contentComments`.
+ *
+ * A post has had a comment thread since phase 2; a to-do had a deadline and a
+ * Done button and nothing to say about it, so half of the Next Steps panel
+ * could be discussed inside the product and half of it moved to WhatsApp.
+ * Sofia asked for "reply to next steps" twice.
+ *
+ * Same columns and the same visibility class as the content thread on purpose.
+ * Its `taskId` clause composes with the tasks policy, so an INTERNAL to-do's
+ * replies inherit that hiding rather than restating it — see migration 0021.
+ */
+export const taskComments = pgTable(
+  'task_comments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    clientId: uuid('client_id')
+      .notNull()
+      .references(() => clients.id, { onDelete: 'cascade' }),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    authorId: text('author_id').references(() => user.id, {
+      onDelete: 'set null',
+    }),
+    body: text('body').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index('task_comments_task_idx').on(t.taskId, t.createdAt)]
+)
+
+/**
  * The Ideas Bank and the Content Calendar are the same table.
  *
  * Unscheduled rows are ideas; set `scheduledAt` and the row appears on the
@@ -732,6 +775,47 @@ export const moodboardItems = pgTable(
       sql`${t.storageKey} is not null or ${t.url} is not null`
     ),
   ]
+)
+
+/**
+ * The password hub — one row per social account the agency has to post from.
+ *
+ * `secretCipher` is AES-256-GCM ciphertext, never a password. The plaintext
+ * exists in this process for exactly as long as it takes to encrypt or decrypt
+ * it and is never selected into a list payload; revealing one is its own
+ * endpoint and writes an audit row. See `server/lib/secrets.ts` and migration
+ * 0022 for why the key is its own environment variable rather than a second
+ * use of BETTER_AUTH_SECRET.
+ *
+ * Client-writable, which is the point: she asked for the client to fill these
+ * in, and today they arrive as a WhatsApp message that lives forever in two
+ * phone backups.
+ */
+export const clientCredentials = pgTable(
+  'client_credentials',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    clientId: uuid('client_id')
+      .notNull()
+      .references(() => clients.id, { onDelete: 'cascade' }),
+    /** Which account: 'Instagram', 'TikTok', 'Meta Business Suite'. */
+    label: text('label').notNull(),
+    /** The handle or email that goes in the first box of that login screen. */
+    username: text('username'),
+    secretCipher: text('secret_cipher'),
+    notes: text('notes'),
+    sortOrder: integer('sort_order').notNull().default(0),
+    updatedBy: text('updated_by').references(() => user.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index('client_credentials_client_sort_idx').on(t.clientId, t.sortOrder)]
 )
 
 /* -------------------------------------------------------------------------

@@ -1098,6 +1098,14 @@ export type FeedCellRow = {
   title: string
   type: string
   status: string
+  /**
+   * The latest decision, so the grid can carry the same traffic light as the
+   * calendar and the Ideas Bank. Null under a review context by construction:
+   * `content_approvals` has no review arm at all (migration 0016), so a share
+   * link sees no decision history and every tile reads as undecided — which is
+   * correct for someone who is being ASKED to decide.
+   */
+  lastDecision: 'approved' | 'changes_requested' | null
   scheduledAt: string | null
   scheduledTime: string | null
   feedOrder: number | null
@@ -1112,6 +1120,7 @@ export function selectFeedCells(tx: Tx, clientId: string) {
         title,
         type,
         status,
+        last_decision as "lastDecision",
         scheduled_at  as "scheduledAt",
         scheduled_time as "scheduledTime",
         feed_order    as "feedOrder",
@@ -1123,6 +1132,12 @@ export function selectFeedCells(tx: Tx, clientId: string) {
           ci.title         as title,
           ci.type          as type,
           ci.status        as status,
+          (
+            select ca2.decision from content_approvals ca2
+             where ca2.content_item_id = ci.id
+             order by ca2.decided_at desc
+             limit 1
+          )                as last_decision,
           ci.scheduled_at  as scheduled_at,
           ci.scheduled_time as scheduled_time,
           ci.feed_order    as feed_order,

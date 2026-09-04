@@ -11,9 +11,9 @@ import {
   Plus,
   Star,
   Trash2,
+  UserPlus,
   MessageSquare,
   ArrowRightLeft,
-  Share2,
   X,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -24,12 +24,8 @@ import {
   BRAND_COLOR_SLOTS,
   brandPalette,
   formatMoney,
-  formatShortDate,
   type InviteResult,
-  linkState,
-  localDayOf,
   normaliseHex,
-  type ShareLink,
   type ClientDetail,
   CLIENT_STATUSES,
   type PortalWorkspace,
@@ -76,9 +72,12 @@ import { ThemeSwitch } from '@/components/theme-switch'
 import { CalendarPreview } from '@/features/content/calendar-preview'
 import { IdeasPreview } from '@/features/content/ideas-preview'
 import { MoodboardPreview } from '@/features/content/moodboard-preview'
+import { PostGrid } from '@/features/content/post-grid'
 import { NextSteps } from '@/features/content/review-queue'
+import { FeedShareButton } from '@/features/content/share-links'
 import { InvoicesPanel } from '@/features/invoices/panel'
 import { LinkStack } from '@/features/portal/link-stack'
+import { CredentialsHub } from '@/features/portal/credentials'
 import { FileFolder, TaskList } from '@/features/portal/panels'
 import { useWorkspace } from '@/features/portal/use-workspace'
 import { CLIENT_TAB_LABEL, CLIENT_TAB_VALUES, type ClientTab } from './tabs'
@@ -268,7 +267,22 @@ export function ClientDetailPage({
                 </Link>
               </Button>
               <ClientStatusPill status={client.status} />
-              <ShareClientMenu clientId={clientId} />
+              {/*
+                R06's Share control, now the SHARED component.
+                
+                It used to be a copy that lived only here, which is why Sofia
+                could not find it while standing on the Feed Preview page —
+                the screen where you actually decide the grid is ready to send.
+                Same popover, same wording, two call sites.
+
+                What she originally asked for was "almost like a web page they
+                can just view all of it on" — a read-only version of THIS page
+                — and that is deliberately not built. This page carries
+                invoices, deal values and her private activity timeline. The
+                feed preview is the part a client should see, and it is the
+                part that was actually being asked about.
+              */}
+              <FeedShareButton clientId={clientId} variant='outline' label='Share' />
               <ClientLogo
                 clientId={clientId}
                 name={client.name}
@@ -332,6 +346,17 @@ export function ClientDetailPage({
                   seats={seats}
                   pendingInvites={pendingInvites}
                 />
+
+                {/*
+                  The password hub, which Sofia asked for in this column —
+                  under the Brand block, on the Overview tab.
+
+                  Not behind the portal gate that the Work and Files tabs use.
+                  The logins are hers to hold whether or not the client's
+                  portal is open, and the pitch stage is when she is most
+                  likely to be handed them.
+                */}
+                <CredentialsHub clientId={clientId} />
               </div>
 
               <TimelineCard clientId={clientId} timeline={timeline} />
@@ -346,6 +371,16 @@ export function ClientDetailPage({
                 she can plan and schedule for someone still at proposal stage —
                 which is when a moodboard and a calendar are most of the pitch.
               */}
+              {/*
+                What is waiting on somebody, as pictures, before the lists.
+
+                The same grid the Ideas Bank leads with. Her Work tab answered
+                "what exists" — a list of ideas and a month view — and not "what
+                is anybody waiting for", which is the question that has an
+                answer she can act on today.
+              */}
+              <PostGrid clientId={clientId} mode='decisions' />
+
               <div className='grid items-start gap-5 lg:grid-cols-2'>
                 <IdeasPreview clientId={clientId} />
                 <CalendarPreview clientId={clientId} />
@@ -458,150 +493,6 @@ export function ClientDetailPage({
 }
 
 /**
- * R06: the top-right control, once share links exist.
- *
- * Two doors, both of which now go somewhere: give somebody a login (the seat
- * invite from phase 3), or send a read-only feed preview.
- *
- * What she asked for was "almost like a web page they can just view all of it
- * on" — a read-only version of THIS page — and that is deliberately not built.
- * This page carries invoices, deal values and her private activity timeline.
- * A feed preview is the part a client should see, and it is the part that was
- * actually being asked about.
- */
-function ShareClientMenu({ clientId }: { clientId: string }) {
-  const queryClient = useQueryClient()
-  const [open, setOpen] = useState(false)
-  const [fresh, setFresh] = useState<string | null>(null)
-  const now = new Date()
-
-  // Only while the menu is open. Nothing outside it reads this, and without
-  // the gate every client page load fetched share links nobody had asked to
-  // see.
-  const { data } = useQuery({
-    queryKey: ['feed-shares', clientId],
-    queryFn: () =>
-      api.get<{ links: ShareLink[] }>(`/shares/client/${clientId}/feed`),
-    enabled: open,
-  })
-
-  const mint = useMutation({
-    mutationFn: () =>
-      api.post<{ url: string }>(`/shares/client/${clientId}/feed`, {}),
-    onSuccess: async (result) => {
-      setFresh(result.url)
-      const ok = await copyText(result.url)
-      toast[ok ? 'success' : 'error'](
-        ok
-          ? 'Feed preview link copied. It cannot be shown again.'
-          : 'Link created — copy it from the box, it cannot be shown again.'
-      )
-      await queryClient.invalidateQueries({ queryKey: ['feed-shares', clientId] })
-    },
-    onError: (err: Error) => toast.error(err.message),
-  })
-
-  const revoke = useMutation({
-    mutationFn: (id: string) => api.post(`/shares/${id}/revoke`, {}),
-    onSuccess: async () => {
-      toast.success('Link revoked.')
-      await queryClient.invalidateQueries({ queryKey: ['feed-shares', clientId] })
-    },
-    onError: (err: Error) => toast.error(err.message),
-  })
-
-  const live = (data?.links ?? []).filter((l) => linkState(l, now) === 'live')
-
-  return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next)
-        if (!next) setFresh(null)
-      }}
-    >
-      <PopoverTrigger asChild>
-        <Button size='sm' variant='outline'>
-          <Share2 />
-          Share
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align='end' className='w-80 crate-card'>
-        <div className='space-y-3'>
-          <div>
-            <p className='display text-sm'>Share the feed preview</p>
-            <p className='text-xs text-muted-foreground'>
-              A read-only grid of what is coming up. No sign-in, and anyone
-              with the link can open it.
-            </p>
-            {/*
-              Said out loud, because the grid she is looking at and the grid
-              they get are not the same one. Feed Preview shows her everything
-              including internal concepts; a share link shows only what is
-              already shared with the client. Without this she sends nine cells
-              and they open seven, and the first she hears of it is them asking.
-            */}
-            <p className='mt-1 text-xs text-muted-foreground'>
-              Only posts already shared with the client appear — internal ones
-              are left out.
-            </p>
-          </div>
-
-          {fresh && (
-            <>
-              <Input readOnly value={fresh} className='font-mono text-xs' />
-              <p className='text-xs text-muted-foreground'>
-                Copy it now — it cannot be displayed again.
-              </p>
-            </>
-          )}
-
-          <Button
-            size='sm'
-            className='w-full'
-            onClick={() => mint.mutate()}
-            disabled={mint.isPending}
-          >
-            {mint.isPending && <Loader2 className='animate-spin' />}
-            {live.length ? 'Create another link' : 'Create a link'}
-          </Button>
-
-          {live.length > 0 && (
-            <ul className='space-y-1.5 text-xs'>
-              {live.map((l) => (
-                <li key={l.id} className='flex items-center gap-2'>
-                  <span className='min-w-0 flex-1 truncate'>
-                    {l.useCount === 0
-                      ? 'Not opened yet'
-                      : `Opened ${l.useCount} time${l.useCount === 1 ? '' : 's'}`}
-                    , expires {formatShortDate(localDayOf(l.expiresAt))}
-                  </span>
-                  <Button
-                    size='sm'
-                    variant='ghost'
-                    className='h-6 shrink-0 px-2 text-xs'
-                    onClick={() => revoke.mutate(l.id)}
-                    disabled={revoke.isPending}
-                  >
-                    Revoke
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          <div className='crate-rule' />
-          <p className='text-xs text-muted-foreground'>
-            Need them to see invoices and files too? Give them a login from a
-            contact below, or on the Seats page.
-          </p>
-        </div>
-      </PopoverContent>
-    </Popover>
-  )
-}
-
-/**
  * Anything that mutates the client row goes through the page's one PATCH.
  *
  * Typed structurally rather than as a UseMutationResult so these cards state
@@ -690,7 +581,54 @@ function AccountCard({
                 ? `${seats.length} seat${seats.length === 1 ? '' : 's'} with access`
                 : 'Closed'}
             </span>
+            {/*
+              Sofia, with an arrow pointing at this toggle: "link to give
+              client access to portal".
+
+              The capability existed — one row per contact, further down the
+              page — but the question is asked HERE, standing at the switch
+              that opens the portal, and the answer at that moment was a
+              switch that opens a door nobody has a key to. So the key is
+              beside the door.
+
+              Same endpoint as the contact rows, so there is one seat count,
+              one invitation and one way in.
+            */}
+            <PortalAccessButton clientId={client.id} seats={seats} />
           </div>
+        </div>
+
+        {/*
+          Who the invoice is made out to.
+
+          `name` is what she calls them; this is the legal entity and its
+          address, printed verbatim at the top of the document. Hers runs to
+          four lines and carries a trading name and a project, which is why it
+          is one box and not four fields.
+
+          On blur, and only when it changed, like every other field on this
+          card — a PATCH per keystroke would put a paragraph's worth of rows
+          through the activity log for one address.
+        */}
+        <div className='grid gap-1.5 sm:col-span-2'>
+          <Label htmlFor='client-billing'>Billed to</Label>
+          <Textarea
+            id='client-billing'
+            key={`billing-${client.id}`}
+            defaultValue={client.billingAddress ?? ''}
+            placeholder={`Their legal name\nStreet\nCity, Country`}
+            className='min-h-16 resize-y'
+            onBlur={(e) => {
+              const next = e.target.value.trim()
+              if (next !== (client.billingAddress ?? '')) {
+                patch.mutate({ billingAddress: next })
+              }
+            }}
+          />
+          <p className='text-xs text-muted-foreground'>
+            Printed at the top of their invoices. Blank falls back to{' '}
+            <strong>{client.name}</strong>.
+          </p>
         </div>
 
         {/*
@@ -744,6 +682,139 @@ function AccountCard({
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+/**
+ * "Link to give client access to portal", where she asked for it.
+ *
+ * An invitation needs an email address — Better Auth's invitation IS an
+ * address, and there is no such thing as a bearer link that anyone can redeem
+ * into a seat. That is a deliberate property rather than a limitation: a seat
+ * is one of ten, it costs money, and a link that mints an account for whoever
+ * opens it is a link that mints an account for whoever it gets forwarded to.
+ *
+ * So this asks for the address and hands back a link she sends herself, and
+ * says so — there is no email delivery in this product and pretending
+ * otherwise would leave her waiting for something to arrive.
+ *
+ * Two states worth telling apart, both from the same endpoint: an address that
+ * has no account is INVITED and produces a link; an address that already has
+ * one is GRANTED this workspace outright and produces nothing to send, because
+ * they sign in with the password they already have.
+ */
+function PortalAccessButton({
+  clientId,
+  seats,
+}: {
+  clientId: string
+  seats: ClientDetail['seats']
+}) {
+  const queryClient = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [email, setEmail] = useState('')
+  const [fresh, setFresh] = useState<string | null>(null)
+
+  const invite = useMutation({
+    mutationFn: (address: string) =>
+      api.post<InviteResult>('/seats/invite', {
+        email: address,
+        role: 'client',
+        clientIds: [clientId],
+      }),
+    onSuccess: async (result) => {
+      if (result.kind === 'granted') {
+        setFresh(null)
+        setEmail('')
+        toast.success(
+          result.restored
+            ? `${result.email} already had an account, so their seat is back and this workspace is open to them.`
+            : `${result.email} already has a login — this workspace is now open to them. Nothing to send.`
+        )
+      } else {
+        setFresh(result.inviteUrl)
+        setEmail('')
+        const ok = await copyText(result.inviteUrl)
+        toast[ok ? 'success' : 'error'](
+          ok
+            ? 'Access link copied. Send it to them yourself — there is no email delivery yet.'
+            : 'Invitation created, but the copy failed. Copy it from the box.',
+          { duration: ok ? 6000 : 30000 }
+        )
+      }
+      await queryClient.invalidateQueries({ queryKey: ['client', clientId] })
+      await queryClient.invalidateQueries({ queryKey: ['seats'] })
+      await queryClient.invalidateQueries({ queryKey: ['clients'] })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        if (!next) setFresh(null)
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Button size='sm' variant='outline' className='ms-auto h-7 px-2 text-xs'>
+          <UserPlus className='size-3' />
+          Give access
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align='end' className='w-80 crate-card'>
+        <div className='space-y-3'>
+          <div>
+            <p className='display text-sm'>Give someone a login</p>
+            <p className='text-xs text-muted-foreground'>
+              They get their own account and see only this workspace. It holds
+              one of your ten seats from the moment you create it.
+            </p>
+          </div>
+
+          <form
+            className='flex gap-2'
+            onSubmit={(e) => {
+              e.preventDefault()
+              const address = email.trim()
+              if (address) invite.mutate(address)
+            }}
+          >
+            <Input
+              type='email'
+              placeholder='them@theircompany.com'
+              aria-label='Their email address'
+              className='h-8'
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <Button size='sm' disabled={!email.trim() || invite.isPending}>
+              {invite.isPending && <Loader2 className='animate-spin' />}
+              Create
+            </Button>
+          </form>
+
+          {fresh && (
+            <>
+              <Input readOnly value={fresh} className='font-mono text-xs' />
+              <p className='text-xs text-muted-foreground'>
+                Send this to them. Nothing has been emailed.
+              </p>
+            </>
+          )}
+
+          {seats.length > 0 && (
+            <>
+              <div className='crate-rule' />
+              <p className='text-xs text-muted-foreground'>
+                Already in: {seats.map((s) => s.email).join(', ')}
+              </p>
+            </>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 

@@ -6,6 +6,8 @@ import tailwindcss from '@tailwindcss/vite'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 import { playwright } from '@vitest/browser-playwright'
 
+const apiTarget = process.env.VITE_API_TARGET ?? 'http://127.0.0.1:4300'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -26,9 +28,19 @@ export default defineConfig({
     // process (npm run dev:api). In production Caddy plays this role, so the
     // frontend only ever talks to same-origin /api — no CORS, and session
     // cookies work identically in both environments.
+    //
+    // The target is overridable so a SECOND dev server can be pointed at a
+    // second API — the `:4399` against `bd_portal_test` that this project's
+    // tool matrix already recommends for exercising routes without touching
+    // production. Without this the only way to look at a UI change in a
+    // browser was to look at it against the live agency's data, because
+    // `npm run dev` and `npm run dev:api` are hardcoded to each other.
+    //
+    //   VITE_API_TARGET=http://127.0.0.1:4399 npx vite --port 5174
+    //
     proxy: {
-      '/api': { target: 'http://127.0.0.1:4300', changeOrigin: false },
-      '/healthz': { target: 'http://127.0.0.1:4300', changeOrigin: false },
+      '/api': { target: apiTarget, changeOrigin: false },
+      '/healthz': { target: apiTarget, changeOrigin: false },
     },
   },
   test: {

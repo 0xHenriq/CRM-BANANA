@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, isNull } from 'drizzle-orm'
+import { and, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { withTenant, type TenantContext } from '../db/index.js'
 import { clients, contentItems, tasks } from '../db/schema.js'
@@ -39,6 +39,14 @@ export type NextStep = {
   due: string | null
   type?: string
   visibleToClient?: boolean
+  /**
+   * How many replies the to-do has. Only on a `task` step.
+   *
+   * Carried on the step rather than fetched when a row is expanded, so the
+   * panel can say "2 replies" before anything is opened — a thread nobody
+   * knows is there is a thread nobody reads.
+   */
+  replies?: number
 }
 
 /**
@@ -98,6 +106,16 @@ async function loadSteps(
           title: tasks.title,
           due: tasks.dueDate,
           visibleToClient: tasks.visibleToClient,
+          /*
+           * Explicit alias, literal column names. Interpolating a Drizzle
+           * column into a correlated subquery renders it UNQUALIFIED, so
+           * "task_id" would bind to the outer row and every count would be the
+           * same wrong number with no error — Failure Mode 2.
+           */
+          replies: sql<number>`(
+            select count(*)::int from task_comments tc
+             where tc.task_id = tasks.id
+          )`,
         })
         .from(tasks)
         .innerJoin(clients, eq(clients.id, tasks.clientId))

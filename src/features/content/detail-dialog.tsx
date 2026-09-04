@@ -208,7 +208,20 @@ export function ContentDetailDialog({
               <DialogDescription asChild>
                 <div className='flex flex-wrap items-center gap-2 pt-1'>
                   <TypePill type={item.type} />
-                  <StatusPill status={item.status} />
+                  {/*
+                    The decision list is ordered newest first by the API, so
+                    its head IS `lastDecision`. Derived here rather than added
+                    to the detail payload: the dialog already has the whole
+                    approval history on screen below, and a second field
+                    carrying a summary of it is a second thing that can
+                    disagree with it.
+                  */}
+                  <StatusPill
+                    item={{
+                      status: item.status,
+                      lastDecision: data.approvals[0]?.decision ?? null,
+                    }}
+                  />
                   <ApprovalOverduePill item={item} />
                   {item.scheduledAt ? (
                     <span className='text-xs text-muted-foreground'>

@@ -4,6 +4,7 @@ import { Play, GripVertical } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   api,
+  approvalState,
   assetUrl,
   formatShortDate,
   formatTime,
@@ -22,7 +23,9 @@ import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { ContentDetailDialog } from './detail-dialog'
-import { TYPE_LABEL } from './vocabulary'
+import { ApprovalDot } from './pills'
+import { FeedShareButton } from './share-links'
+import { approvalLabel, TYPE_LABEL } from './vocabulary'
 
 /**
  * The 3×3 grid.
@@ -91,6 +94,21 @@ export function FeedPreview() {
           eyebrow='3×3 grid mock up'
           title='Feed Preview'
           stamp={{ top: 'GRID', big: '9', bottom: 'POST' }}
+          /*
+            Sofia: "when u click on feed preview tab can we have a button that
+            send that preview to client". The link could already be minted —
+            from a popover on the client page, which is not where anybody is
+            standing when they look at the grid and decide it is ready. Same
+            component, so the two cannot drift.
+
+            Staff only, and only once a workspace has actually resolved: a
+            Send button that answers "no workspace" is worse than no button.
+          */
+          actions={
+            isStaff && data?.clientId ? (
+              <FeedShareButton clientId={data.clientId} />
+            ) : undefined
+          }
         />
 
         {isLoading ? (
@@ -136,7 +154,7 @@ export function FeedPreview() {
                         cell.scheduledAt
                           ? ` · ${formatShortDate(cell.scheduledAt)}${cell.scheduledTime ? ` at ${formatTime(cell.scheduledTime)}` : ''}`
                           : ''
-                      }`}
+                      } — ${approvalLabel(cell)}`}
                     >
                       <img
                         src={assetUrl(
@@ -159,6 +177,19 @@ export function FeedPreview() {
                       {isStaff && (
                         <GripVertical className='absolute top-1 left-1 size-3.5 text-white opacity-0 drop-shadow group-hover:opacity-100' />
                       )}
+
+                      {/*
+                        The traffic light, top right, on the grid too.
+                        
+                        The nine cells are the thing she sends; whether each
+                        one has actually been approved is the question she is
+                        answering when she decides to send them, and until now
+                        the grid was the one content screen that did not say.
+                      */}
+                      <ApprovalDot
+                        state={approvalState(cell)}
+                        className='absolute top-1 right-1 shadow'
+                      />
 
                       {/*
                         Title and posting date together.

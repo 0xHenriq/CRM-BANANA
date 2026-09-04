@@ -28,10 +28,11 @@ import { MoodboardLightbox } from './moodboard-lightbox'
 export function MoodboardPreview({
   clientId,
   canEdit,
-  limit = 6,
+  limit = 8,
 }: {
   clientId: string
   canEdit: boolean
+  /** Eight, so the grid fills two rows of four rather than ending ragged. */
   limit?: number
 }) {
   const queryClient = useQueryClient()
@@ -112,7 +113,22 @@ export function MoodboardPreview({
               : 'Your moodboard is empty for now.'}
           </p>
         ) : (
-          <ul className='flex flex-wrap gap-2'>
+          /*
+            A grid of large squares, not a strip of 96px thumbnails.
+
+            Sofia: "can we make a little bigger please moodboard". The tiles
+            were `size-24` — 96 pixels — which is smaller than the thumbnail a
+            phone shows in its camera roll, on the one card in this product
+            whose entire job is to be LOOKED at. Six of them on a full-width
+            card left most of the row empty as well, so it read as a leftover
+            strip rather than as the visual direction.
+
+            Sized by COLUMN COUNT rather than by a fixed pixel width, so the
+            tiles grow with the card instead of staying small on a wide screen
+            and overflowing on a phone. Three across on a phone is roughly
+            110px; four on a laptop is around 200px.
+          */
+          <ul className='grid grid-cols-3 gap-2 sm:grid-cols-4 sm:gap-3'>
             {shown.map((item, index) => {
               // Rows from the prototype era hold a URL instead of stored bytes.
               const src = item.storageKey
@@ -129,21 +145,29 @@ export function MoodboardPreview({
                     type='button'
                     onClick={() => setOpenIndex(index)}
                     aria-label={`Open ${item.caption ?? 'moodboard image'}`}
-                    className='block cursor-zoom-in transition-opacity hover:opacity-85'
+                    className='block w-full cursor-zoom-in transition-opacity hover:opacity-85'
                   >
                     <img
                       src={src}
                       alt={item.caption ?? 'Moodboard reference'}
                       loading='lazy'
-                      className='size-24 rounded border-2 border-bd-ink object-cover'
+                      className='aspect-square w-full rounded border-2 border-bd-ink object-cover'
                     />
                   </button>
                 </li>
               )
             })}
             {items.length > shown.length && (
-              <li className='flex size-24 items-center justify-center rounded border-2 border-dashed border-bd-rule text-xs text-muted-foreground'>
-                +{items.length - shown.length} more
+              /* A cell in the same grid, so the row never ends ragged. It is a
+                 LINK now rather than a dead label: "+4 more" that cannot be
+                 clicked is a sign pointing at nothing. */
+              <li>
+                <Link
+                  to='/portal/moodboard'
+                  className='flex aspect-square w-full items-center justify-center rounded border-2 border-dashed border-bd-rule text-xs text-muted-foreground hover:border-bd-ink hover:text-bd-ink'
+                >
+                  +{items.length - shown.length} more
+                </Link>
               </li>
             )}
           </ul>

@@ -5,6 +5,7 @@ import {
   Check,
   ListChecks,
   Loader2,
+  MessageSquare,
   Pencil,
   Plus,
   SquareCheckBig,
@@ -16,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { DueDate } from '@/features/portal/panels'
+import { TaskThread } from '@/features/portal/task-thread'
 import { ContentDetailDialog } from './detail-dialog'
 import { TypePill } from './pills'
 
@@ -126,9 +128,24 @@ export function NextSteps({
   if (isPending) return null
 
   const steps = data?.steps ?? []
-  if (steps.length === 0) return null
-
   const isClient = variant === 'client'
+
+  /*
+   * An empty panel is shown on ONE screen: a client's own page, to staff.
+   *
+   * Sofia, under a screenshot of a client at proposal stage: "no next steps on
+   * client that are in proposal or lead mode". A lead or a proposal has no
+   * content awaiting review and no dated to-dos, so this panel returned null
+   * and the one place to write down "send the quote by Friday" simply was not
+   * on the page — on exactly the clients where chasing is the entire job.
+   *
+   * Everywhere else, empty still means absent. On the agency dashboard an
+   * empty next-steps panel says nothing and takes the space above the work;
+   * for a CLIENT it is worse than nothing, because a box headed "Your next
+   * steps" containing a shrug invites them to wonder what they have missed.
+   */
+  const canAdd = !isClient && Boolean(clientId)
+  if (steps.length === 0 && !canAdd) return null
 
   return (
     <>
@@ -142,7 +159,9 @@ export function NextSteps({
               {isClient ? 'Your next steps' : 'Next steps'}
             </h2>
             <span className='text-xs text-muted-foreground'>
-              {steps.length} {steps.length === 1 ? 'thing' : 'things'}
+              {steps.length === 0
+                ? 'nothing outstanding'
+                : `${steps.length} ${steps.length === 1 ? 'thing' : 'things'}`}
             </span>
           </div>
 
@@ -179,7 +198,7 @@ export function NextSteps({
             dashboard `clientId` is undefined and a new to-do would have no
             workspace to belong to.
           */}
-          {!isClient && clientId && (
+          {canAdd && (
             adding ? (
               <form
                 className='mt-3 flex flex-wrap gap-2 rounded-md border-[1.5px] border-dashed border-bd-rule p-2'
@@ -232,8 +251,10 @@ export function NextSteps({
 
           <p className='mt-3 text-xs text-muted-foreground'>
             {isClient
-              ? 'Open a post to approve it or ask for changes.'
-              : 'Open a post to decide on it, or tick and edit a to-do here.'}
+              ? 'Open a post to approve it or ask for changes, or reply on a to-do.'
+              : steps.length === 0
+                ? 'Nothing is waiting. Add what happens next and it appears here and on your dashboard.'
+                : 'Open a post to decide on it, or tick, edit and reply to a to-do here.'}
           </p>
         </CardContent>
       </Card>
@@ -253,6 +274,8 @@ type NextStep = {
   /** Only on a review step — it is the content item's own type. */
   type?: ContentType
   visibleToClient?: boolean
+  /** Only on a to-do. Lets the Reply button say there is something to read. */
+  replies?: number
 }
 
 /**
@@ -282,6 +305,7 @@ function StepRow({
   onEdit?: (patch: { title?: string; dueDate?: string | null }) => void
 }) {
   const [editing, setEditing] = useState(false)
+  const [replying, setReplying] = useState(false)
   const [form, setForm] = useState({ title: step.title, due: step.due ?? '' })
   const body = (
     <>
@@ -426,19 +450,67 @@ function StepRow({
     </button>
   ) : null
 
-  return onOpen ? (
+  /*
+   * Reply, on a to-do, for BOTH audiences.
+   *
+   * Sofia asked for this twice. A review step already had somewhere to talk —
+   * opening the post gives you its comment thread — so the gap was entirely on
+   * the to-do rows, which is where "swap the Nyall photo for the CIC logo"
+   * lives. The client can write here too; a thread only the agency can post in
+   * is a notice board, and there is already one of those on the homepage.
+   *
+   * The count is on the button before anything is fetched, which is what makes
+   * it worth pressing: "Reply" alone gives nobody a reason to look, and a
+   * thread nobody looks at is a thread nobody answers.
+   */
+  const replyButton = step.kind === 'task' ? (
     <button
       type='button'
-      onClick={onOpen}
-      className='flex w-full items-center gap-3 py-2 text-start hover:opacity-70'
+      onClick={(e) => {
+        e.stopPropagation()
+        setReplying((open) => !open)
+      }}
+      aria-expanded={replying}
+      aria-label={
+        step.replies
+          ? `${replying ? 'Hide' : 'Show'} ${step.replies} ${step.replies === 1 ? 'reply' : 'replies'} on "${step.title}"`
+          : `Reply to "${step.title}"`
+      }
+      className={cn(
+        'flex shrink-0 items-center gap-1 rounded-full border-[1.5px] px-2 py-0.5',
+        'text-[0.625rem] font-bold whitespace-nowrap transition-colors',
+        step.replies
+          ? 'border-bd-ink bg-bd-yellow text-bd-ink hover:brightness-95'
+          : 'border-bd-rule text-muted-foreground hover:border-bd-ink hover:text-bd-ink'
+      )}
     >
-      {body}
+      <MessageSquare className='size-3' />
+      {step.replies ? step.replies : 'Reply'}
     </button>
-  ) : (
-    <div className='flex w-full items-center gap-3 py-2 text-start'>
-      {body}
-      {editButton}
-      {doneButton}
-    </div>
+  ) : null
+
+  return (
+    <>
+      {onOpen ? (
+        <button
+          type='button'
+          onClick={onOpen}
+          className='flex w-full items-center gap-3 py-2 text-start hover:opacity-70'
+        >
+          {body}
+        </button>
+      ) : (
+        <div className='flex w-full items-center gap-3 py-2 text-start'>
+          {body}
+          {replyButton}
+          {editButton}
+          {doneButton}
+        </div>
+      )}
+
+      {replying && step.kind === 'task' && (
+        <TaskThread taskId={step.id} canModerate={!isClient} />
+      )}
+    </>
   )
 }

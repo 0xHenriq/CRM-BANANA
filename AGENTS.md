@@ -116,6 +116,8 @@ The database is shared with production. **There is no separate development datab
 
    Seed rows for it in the fixture too. A table with no fixture rows makes every isolation assertion trivially true.
 
+   `task_comments` and `client_credentials` (migrations 0021 and 0022) are the worked example: both are in the RLS migration, the guard list, all three fixture class lists, and both have rows for BOTH clients — including a reply on an INTERNAL to-do, which is the row that makes the parent-visibility test fail when the parent clause is removed.
+
 ---
 
 ## Multi-Agent Coordination
@@ -269,12 +271,13 @@ npm run test:coverage
 | API/client contract | `server/__tests__/contract.test.ts` | Deal stages match on both sides; money arithmetic |
 | Patch schemas | `server/__tests__/patch-schemas.test.ts` | PATCH bodies invent no fields; duplicate resets; schedule invariants |
 | Media | `server/__tests__/media.test.ts` | Magic-number sniffing, range arithmetic, download headers, size messages, `imageTypeForKey` |
+| Secrets | `server/__tests__/secrets.test.ts` | The password hub's AES-256-GCM: round trip, tamper detection, wrong key, refusing to run unconfigured. Pure — no database, no server |
 | URL safety | `src/lib/safe-href.test.ts` | `javascript:`/`data:` refused; `//evil.com` is not an internal path |
 | Components | `src/**/*.test.tsx` | Sign-in, config drawer, search palette, client logo, hashtag editor |
 
 The contract suite also binds the two copies of hashtag normalisation and the `canSeePortal` predicate. See invariant 17.
 
-Current counts: **108 component tests, 313 server tests.** If a change drops either number, you deleted a test — or a suite stopped running. Both have happened; see Failure Mode 25.
+Current counts: **108 component tests, 338 server tests.** If a change drops either number, you deleted a test — or a suite stopped running. Both have happened; see Failure Mode 25.
 
 ### The Isolation Suite Covers Three Distinct Failure Modes
 
@@ -370,6 +373,9 @@ server/
                          5 file slots / 4 onboarding to-dos
     hashtags.ts          normaliseHashtags/parseHashtagInput. MIRRORED in
                          src/lib/hashtags.ts — see invariant 17
+    secrets.ts           AES-256-GCM for the password hub. Its OWN module with
+                         no imports, so a test can reach it without booting an
+                         HTTP server — same rule as redact.ts
   middleware/
     session.ts           withSession, requireAuth, requireStaff
     rate-limit.ts        In-process fixed-window limiter
@@ -428,6 +434,15 @@ src/
                               review-queue.tsx exports NEXTSTEPS — the file
                               kept its old name so no import path moved.
     invoices/panel.tsx        Invoices + receipts. ONE panel for both audiences.
+    invoices/document.tsx     The invoice as the DOCUMENT she sends — her
+                              layout, printable, with the Pay button on it.
+                              The PDF is the browser's; see the print rules in
+                              src/styles/index.css
+    content/post-grid.tsx     Posts as square previews. One component, two
+                              filters: "Needs a decision" (pending + declined)
+                              and "Coming up" (approved)
+    portal/task-thread.tsx    The reply thread on one to-do. Both sides write
+    portal/credentials.tsx    The password hub, same component both sides
     clients/ pipeline/ dashboard/ auth/
   routes/                TanStack file-based routes
 
@@ -451,6 +466,8 @@ scripts/
 | `content_assets` | Uploaded media for an item. First asset (by `sortOrder`) fills the feed cell. | `server/db/schema.ts` |
 | `content_approvals` | Append-only decision record. No UPDATE/DELETE policy exists. | `server/db/schema.ts` |
 | `tasks` | To-dos, with `visibleToClient` separating internal work and `dueDate` for deadlines. | `server/db/schema.ts` |
+| `task_comments` | Replies on a to-do, so both sides can talk about one. Shaped exactly like `content_comments`, and inherits its parent's visibility rather than restating it. No UPDATE policy. | `server/db/schema.ts` |
+| `client_credentials` | The password hub. `secretCipher` is AES-256-GCM ciphertext and never a password; the plaintext never enters a list payload. Client-WRITABLE — they fill it in. | `server/db/schema.ts` |
 | `invoices` | A demand for money. Many per deal — a retainer is billed in stages. Client sees it only once `issuedOn` is set. | `server/db/schema.ts` |
 | `invoice_payments` | Money received. **Each row IS a receipt.** No UPDATE policy. | `server/db/schema.ts` |
 | `NextStep` | A post awaiting a decision, or a dated open to-do. The panel that leads every page. | `server/routes/next-steps.ts` |
@@ -497,6 +514,8 @@ scripts/
 | 17 | Logic duplicated across the client/server boundary is bound by a test in `contract.test.ts` | The server cannot import from `src` and the browser should not import from `server`, so some logic exists twice. Two copies that drift produce a UI that disagrees with what was saved. Both hashtag normalisers run over the same inputs there |
 | 18 | A query key rename is finished only when the OLD key has no references left | Keys are strings; the compiler cannot see them. Renaming one already left two mutations invalidating a key nothing read |
 | 19 | A client-role user may reach **nothing** belonging to a workspace whose `portal_enabled` is false, or whose client is archived | Enforced in `app_client_ids()` (migration 0014), which every client-visible policy goes through, and again in `resolveClientId`. It lived only in `canSeePortal` before, so the toggle closed the homepage and left the calendar, ideas bank, feed and moodboard fully readable. `invoices` and `invoice_payments` are the stated exception — money owed must not vanish |
+| 20 | A stored password is encrypted **before it reaches Postgres**, and is never in a list response | The nightly dump is copied to a laptop by this repo's own runbook, `bd_owner` can read every row, and the class of bug this schema is arranged around is a SELECT that leaks. All three then leak ciphertext. Revealing one is its own request and writes an audit row; there is deliberately no mode that stores plaintext "for now" |
+| 21 | An invoice has exactly ONE line item, because `invoices.amount_pence` is one integer | The printable document renders it as row 1 and puts the itemisation in the description, line breaks preserved. Splitting the money across rows needs a line-items table AND a second answer to "what is owed" — the one number both sides have to agree on |
 
 ### Share Links (`review_links`)
 
@@ -565,6 +584,10 @@ All under `/api`, same-origin, cookie-authenticated.
 | `/api/invoices` | authed | Staff see all (and every client's, unfiltered — that is what a payment view needs); a client sees only their own **issued** ones. Writes are staff only. |
 | `/api/invoices/:id/payments` | staff only | Records a payment and issues a receipt number. Overpayment is refused |
 | `/api/portal`, `/api/content`, `/api/media` | authed | `?client=<uuid>` honoured for staff, **ignored** for clients. A client whose portal is closed (or whose account is archived) gets 404 from all three — invariant 19 |
+| `/api/portal/tasks/:id/comments` | authed | The reply thread on one to-do. GET and POST are open to BOTH audiences by design — a thread only the agency can write in is a notice board. DELETE is staff only, and there is no edit at all |
+| `/api/portal/credentials` | authed | The password hub. Client-writable: they fill it in. The list carries `hasSecret`, never the secret |
+| `/api/portal/credentials/:id/reveal` | authed | Returns ONE plaintext password and writes an audit row naming who looked. 503 when `CREDENTIALS_SECRET` is unset; 409 for a row saved under a previous key |
+| `/api/invoices/settings` | GET authed, PATCH staff | Payment method, payment condition and closing line for every invoice document. Readable by a CLIENT — it is the block telling them where to send the money |
 | `/api/next-steps`, `/api/next-steps/:clientId` | authed | Posts awaiting a decision plus dated open to-dos, soonest first. One loader serves both — do not add a second query |
 | `/api/clients/:id/archive`, `/restore` | staff only | Archive is a timestamp, never a DELETE. It closes the portal and drops the client from `/api/clients`, `/api/deals` and `/api/next-steps` — but **not** from `/api/invoices`: tidying a client away must never hide money owed. Any new list that joins `clients` for staff needs `isNull(clients.archivedAt)`, because RLS deliberately still shows staff the row |
 | `/api/media/clients/:id/logo` | authed | Reads the key off the row, never from the URL; RLS decides who sees it |
@@ -630,6 +653,30 @@ chrome-devtools-axi eval "(function(){ return document.title })()"
 chrome-devtools-axi screenshot /path/to/shot.png
 chrome-devtools-axi console --type error
 ```
+
+**When it will not run at all.** In at least one session the bridge answered
+every `snapshot`, `eval` and `click` with `Invalid arguments … Required at
+pageId` and could not be recovered by restarting it. The fallback is
+Playwright, which is already a dependency (the component suite runs on it) —
+drive it from a script in the scratchpad and READ the screenshots. Do not
+report a UI change as verified because the tool that verifies it was broken.
+
+**Do not verify UI against production data.** `npm run dev` proxies `/api` to
+`:4300`, which is the live agency's database. `VITE_API_TARGET` overrides that
+target, so a second dev server can be pointed at a second API:
+
+```bash
+# an API on the TEST database…
+DATABASE_URL="$TEST_DATABASE_URL" DATABASE_URL_OWNER="$TEST_DATABASE_URL_OWNER" \
+  PORT=4401 APP_URL=http://localhost:5199 npx tsx server/index.ts
+# …and a dev server pointed at it
+VITE_API_TARGET=http://127.0.0.1:4401 npx vite --port 5199 --strictPort
+```
+
+`APP_URL` must match the dev server's origin or Better Auth answers **403
+INVALID_ORIGIN** on sign-in, which looks like a wrong password and is not.
+`bootstrap.ts` refuses if an organization already exists; on the test database
+`delete from organization` first — the isolation fixtures create their own.
 
 **Common pitfalls.**
 - **uids go stale.** Take one snapshot and use uids from *that* snapshot. Grepping a fresh snapshot for each uid gives mismatched ids and silent no-op clicks.
@@ -1141,6 +1188,51 @@ before-and-after rather than reasoning about it: with the old shutdown and the
 new handler, the process was still running 14 seconds after SIGTERM.
 
 
+### Failure Mode 27: A scripted edit landing on the first of two identical anchors
+
+**The bad behavior:** adding `clientBillingAddress: clients.billingAddress` to
+"the select in the invoices route" with a single-occurrence replace, when that
+file has TWO selects beginning `clientName: clients.name,` — the list handler
+and the detail handler. The edit landed on the list, which nothing reads it
+from, and the detail payload never carried the field.
+
+**What happened:** the printable invoice rendered `BILL TO: Change of
+Perspective` — the client's short name — instead of the four-line legal address
+that was already in the database. It looked exactly like a client who had not
+filled the field in, which is a state that genuinely exists, so nothing on
+screen said anything was wrong. `tsc` was clean on both sides: the server does
+not import the client's types, so a field the browser expects and the API never
+sends is invisible to the compiler by construction.
+
+**The correct behavior:** before a scripted edit, count the matches. `grep -c`
+takes two seconds. Then verify the RESULT — the bug was found by looking at the
+rendered document, and it would not have been found by re-reading the patch.
+This is Failure Mode 16 in a new place: the claim "the select now has it" was
+true of a select, and false of the one that mattered.
+
+---
+
+### Failure Mode 28: `position: absolute` in a print stylesheet
+
+**The bad behavior:** the textbook recipe for printing one element —
+`body * { visibility: hidden }`, the sheet and its descendants visible again,
+and `position: absolute; inset: 0` on the sheet.
+
+**What happened:** `position: absolute` resolves against the nearest POSITIONED
+ancestor, and in this app that is the sidebar shell. The invoice started at the
+sidebar's inner edge and ran off the right of the page with the totals column
+cut in half — on the one document that exists to be handed to somebody who is
+about to pay it.
+
+**The correct behavior:** take the chrome out of the FLOW rather than trying to
+position around it, and flatten the elements between the page and the sheet so
+it inherits the page box (`src/styles/index.css`). Scope the whole block to
+`body:has(.invoice-sheet)` — without that guard the "hide everything else" rule
+matches on every other page in the app and prints a blank sheet of paper.
+Verify by actually printing: `page.emulateMedia({media:'print'})` and a
+screenshot, plus `page.pdf()`. Reading print CSS tells you nothing.
+
+
 ## Appendix A: Environment Variables
 
 | Variable | Purpose | Notes |
@@ -1157,6 +1249,7 @@ new handler, the process was still running 14 seconds after SIGTERM.
 | `APP_URL` | Public origin | Better Auth derives callbacks and trusted origins from it |
 | `BETTER_AUTH_SECRET` | Session signing key | **Required in production.** Rotating it logs everyone out. |
 | `STRIPE_SECRET_KEY` | Card payments | Optional. Absent, the Pay buttons answer 503 naming what is missing and the rest of the portal is untouched. |
+| `CREDENTIALS_SECRET` | The password hub's AES-256-GCM key | Optional to boot. Absent, the hub stores and reveals nothing and says so — there is deliberately no plaintext fallback. **NOT `BETTER_AUTH_SECRET`**: rotating that logs everyone out, which is recoverable; rotating this makes every stored password undecryptable, which is not. `openssl rand -base64 48` |
 | `STRIPE_WEBHOOK_SECRET` | Verifies webhook deliveries | Optional, and **belongs to the webhook endpoint, not the API keys page** — each endpoint has its own. Absent, the webhook refuses to run at all: an unverified webhook is an open endpoint that marks invoices paid. |
 
 ## Appendix B: Quick Reference
@@ -1174,6 +1267,8 @@ new handler, the process was still running 14 seconds after SIGTERM.
 | Add a staff-facing list that joins `clients` | Add `isNull(clients.archivedAt)` — invariant 15 |
 | Rename a query key | Change it, then `grep -rn "'oldKey'" src/` and expect zero — invariant 18 |
 | Copy text to the clipboard | `copyText()` from `src/lib/copy-text.ts`. NEVER `navigator.clipboard` |
+| Look at a UI change in a browser | A second API on the TEST database plus `VITE_API_TARGET` — see Browser Verification. Never against `:4300`, which is production |
+| Store a secret for a client | The password hub. It needs `CREDENTIALS_SECRET`; without it the routes answer 503 rather than writing plaintext |
 | Open a file picker | `<UploadButton>`, or a native `<label htmlFor>`. NEVER a scripted `.click()` |
 | Retire a client | Archive it. There is no delete AFFORDANCE and there must not be one — the button, the route and the label all say archive |
 | Actually destroy a client | Only on an explicit, in-conversation instruction from the human. Back up first, rehearse the DELETE inside a transaction and ROLLBACK, check for attached invoices, then commit. Bytes on disk are NOT removed by the cascade — hand the human the orphan list; Rule 1 still applies to you |
@@ -1197,6 +1292,19 @@ State these plainly when relevant. Do not paper over them.
 - **Backups sit on the same disk as the data.** They survive a mistake, not a disk failure. Copy the newest pair off the box after any session that mattered — see Backups above.
 - **Mobile layout is unverified.** The browser harness cannot resize, and it cannot switch engine either: **nothing here has been verified on Safari or iOS**, which is where the upload picker failed. Say so rather than implying coverage.
 - **No per-client timezone.** `content_items.scheduled_time` is a bare wall-clock time and means her local reckoning. Correct for a London agency today; it is the thing to revisit before an international client.
+- **The password hub needs `CREDENTIALS_SECRET` on the server.** Until it is
+  set on VPS4 the hub stores handles and notes and refuses passwords, with a
+  line on the card saying so. Setting it later is safe; CHANGING it later
+  makes every already-stored password undecryptable, and the reveal route
+  answers 409 telling her to ask for it again rather than showing a blank box.
+- **An invoice is one line item.** The document renders the itemisation from
+  the description's line breaks, which is what her real invoices look like —
+  one numbered item with a paragraph and a list under it. Several priced rows
+  would need a line-items table; see invariant 21.
+- **`chrome-devtools-axi` was unusable in the session this was written in** —
+  every command answered `Required at pageId`. The UI here was verified with
+  Playwright instead. Nothing in this project has been verified on Safari or
+  iOS, and the print output was checked in Chrome only.
 - **No platform model.** `content_type` is a FORMAT (video/reel/story/graphic/carousel), not a channel. There is no Instagram-vs-TikTok distinction and one caption and one hashtag set serve all destinations — the 30-tag warning names Instagram because that is the strictest, not because the post is bound to it. The Feed Preview is a hardcoded 3x3 Instagram grid.
 - **Approvals do not bind to an asset version.** `content_assets.version` and `content_approvals.version` are always 1. A client approves, the creative is replaced, and the approval row still says approved.
 - **The seat cap counts client users.** `MAX_SEATS` is 10 across staff AND every client's users, because clients are modelled as members of the agency org.

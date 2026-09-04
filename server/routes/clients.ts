@@ -32,6 +32,31 @@ export const CLIENT_STATUSES = [
   'churned',
 ] as const
 
+/**
+ * The stages that come with a client workspace.
+ *
+ * Sofia: "make client portal active in the 'proposal stage'". A proposal IS
+ * the pitch — the moodboard, the content calendar and the brief are most of
+ * what she is selling — and until now the portal opened only once they had
+ * already said yes, so the one artefact that wins the work could not be shown
+ * through the product that produces it. The Work tab said "has no workspace
+ * yet" on exactly the clients she most needed to show something to.
+ *
+ * A lead is deliberately still closed. A lead is a name in a list, often
+ * somebody who has not spoken to her yet; seeding eight links and four
+ * onboarding to-dos for every one of those fills the database with workspaces
+ * nobody opens. Proposal is where a real engagement starts.
+ *
+ * `paused` and `churned` are absent for a different reason: they are stages
+ * you arrive at from `active`, so the portal is already open and the guard
+ * below only fires on the way IN. Closing one is her decision, not a status
+ * side effect — see the archive route for the case where it is automatic.
+ */
+const PORTAL_STAGES = new Set<(typeof CLIENT_STATUSES)[number]>([
+  'proposal',
+  'active',
+])
+
 /** Client list with the counts she actually scans for. */
 clientRoutes.get('/', async (c) => {
   // Archived clients are hidden unless explicitly asked for. Opt-IN rather
@@ -116,8 +141,8 @@ clientRoutes.post('/', async (c) => {
         slug,
         status,
         brandColor: brandColor ?? null,
-        // A lead has no portal. It opens when she moves them to active.
-        portalEnabled: status === 'active',
+        // A lead has no portal; a PROPOSAL does. See PORTAL_STAGES.
+        portalEnabled: PORTAL_STAGES.has(status),
       })
       .returning()
 
@@ -267,6 +292,8 @@ const updateSchema = z.object({
   brandColors: brandColorsSchema.optional(),
   brief: z.string().max(20000).nullable().optional(),
   toneOfVoice: z.string().max(5000).nullable().optional(),
+  /** Who the invoice is made out to. Printed verbatim — see migration 0023. */
+  billingAddress: z.string().max(1000).nullable().optional(),
   portalEnabled: z.boolean().optional(),
 })
 
@@ -307,15 +334,22 @@ clientRoutes.patch('/:id', async (c) => {
       .limit(1)
     if (!before) return null
 
-    // Moving a client to `active` opens their portal, exactly as creating one
-    // as active does. Without this the two paths diverged: create-as-active
-    // seeded a workspace, but the ordinary route — lead becomes client — left
-    // portalEnabled false. She would move them to Active, hand over a login,
-    // and they would find an empty portal with nothing to explain it.
-    // An explicit portalEnabled in the same patch still wins.
+    // Moving a client into a stage that has a portal opens it, exactly as
+    // creating one in that stage does. Without this the two paths diverged:
+    // create-as-active seeded a workspace, but the ordinary route — lead
+    // becomes client — left portalEnabled false. She would move them to
+    // Active, hand over a login, and they would find an empty portal with
+    // nothing to explain it.
+    //
+    // An explicit portalEnabled in the same patch still wins, and closing one
+    // is never undone by this: the guard is on the TRANSITION into a portal
+    // stage, so re-saving the form on a client whose portal she deliberately
+    // closed does not reopen it behind her.
     const opensPortal =
       patch.portalEnabled ??
-      (patch.status === 'active' && before.status !== 'active'
+      (patch.status &&
+      PORTAL_STAGES.has(patch.status) &&
+      !PORTAL_STAGES.has(before.status)
         ? true
         : undefined)
 
@@ -327,6 +361,9 @@ clientRoutes.patch('/:id', async (c) => {
         ...(patch.toneOfVoice === undefined
           ? {}
           : { toneOfVoice: blankToNull(patch.toneOfVoice) }),
+        ...(patch.billingAddress === undefined
+          ? {}
+          : { billingAddress: blankToNull(patch.billingAddress) }),
         // brand_color follows slot 1 rather than being written beside it, so
         // the logo's initials fallback can never show a colour the palette
         // does not. An unset slot 1 puts it back to null — the yellow default.

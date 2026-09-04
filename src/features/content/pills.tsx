@@ -1,6 +1,18 @@
 import { cn } from '@/lib/utils'
-import { isApprovalOverdue, type ContentStatus, type ContentType } from '@/lib/api'
-import { STATUS_LABEL, STATUS_TONE, TYPE_LABEL, TYPE_TONE } from './vocabulary'
+import {
+  approvalState,
+  isApprovalOverdue,
+  type ApprovalState,
+  type ContentStatus,
+  type ContentType,
+} from '@/lib/api'
+import {
+  APPROVAL_TONE,
+  approvalLabel,
+  DECLINED_LABEL,
+  TYPE_LABEL,
+  TYPE_TONE,
+} from './vocabulary'
 
 function Pill({ tone, children }: { tone: string; children: React.ReactNode }) {
   return (
@@ -20,8 +32,63 @@ export function TypePill({ type }: { type: ContentType }) {
   return <Pill tone={TYPE_TONE[type]}>{TYPE_LABEL[type]}</Pill>
 }
 
-export function StatusPill({ status }: { status: ContentStatus }) {
-  return <Pill tone={STATUS_TONE[status]}>{STATUS_LABEL[status]}</Pill>
+/**
+ * Where a post is, in her colours.
+ *
+ * Takes the ITEM rather than the status, because the third colour is not a
+ * status: a declined post is moved back to `in_progress`, which is where a
+ * fresh draft also sits. `lastDecision` is what tells them apart, and asking
+ * every caller to work that out for themselves is how three screens end up
+ * disagreeing about which posts are red.
+ *
+ * Optional `lastDecision` so a caller that genuinely does not have it — a
+ * payload written before this existed, arriving in a tab open across a
+ * deploy — renders a grey draft rather than blanking the row.
+ */
+export function StatusPill({
+  item,
+}: {
+  item: { status: ContentStatus; lastDecision?: 'approved' | 'changes_requested' | null }
+}) {
+  return (
+    <Pill tone={APPROVAL_TONE[approvalState(item)]}>{approvalLabel(item)}</Pill>
+  )
+}
+
+/**
+ * The traffic light on its own, for a square preview tile.
+ *
+ * The grid views have no room for a word, and the colour IS the message
+ * there — but a dot with no text is unreadable to a screen reader and to
+ * anyone who cannot separate the three hues, so the label rides along
+ * invisibly. Never colour alone.
+ */
+export function ApprovalDot({
+  state,
+  className,
+}: {
+  state: ApprovalState
+  className?: string
+}) {
+  const label =
+    state === 'declined'
+      ? DECLINED_LABEL
+      : state === 'pending'
+        ? 'Waiting for approval'
+        : state === 'approved'
+          ? 'Approved'
+          : 'Not sent yet'
+  return (
+    <span
+      className={cn(
+        'inline-flex size-3 shrink-0 rounded-full border-[1.5px] border-bd-ink',
+        APPROVAL_TONE[state],
+        className
+      )}
+    >
+      <span className='sr-only'>{label}</span>
+    </span>
+  )
 }
 
 /**

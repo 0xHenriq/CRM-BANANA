@@ -39,6 +39,19 @@ const schema = z.object({
    * trusting the body.
    */
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  /**
+   * The password hub's encryption key. Optional in the same way and for the
+   * same reason as the Stripe keys — the app boots without it and the hub says
+   * what is missing — but with one difference worth stating: absent, nothing
+   * is stored at all. There is no degraded mode where a password is written in
+   * plain text "until the key is set up", because that is how plain text
+   * becomes permanent.
+   *
+   * NOT BETTER_AUTH_SECRET. Rotating that logs everyone out and is recoverable
+   * in a minute; rotating it must not also make every stored password
+   * undecryptable, which is not recoverable at all.
+   */
+  CREDENTIALS_SECRET: z.string().min(32).optional(),
 })
 
 const parsed = schema.safeParse(process.env)

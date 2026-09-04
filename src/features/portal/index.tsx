@@ -1,5 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
-import { api, type PortalWorkspace } from '@/lib/api'
+import {
+  api,
+  outstandingPence,
+  type Invoice,
+  type PortalWorkspace,
+} from '@/lib/api'
 import {
   Card,
   CardContent,
@@ -16,8 +21,10 @@ import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { MoodboardPreview } from '@/features/content/moodboard-preview'
+import { PostGrid } from '@/features/content/post-grid'
 import { NextSteps } from '@/features/content/review-queue'
 import { InvoicesPanel } from '@/features/invoices/panel'
+import { CredentialsHub } from './credentials'
 import { LinkStack } from './link-stack'
 import { FileFolder, NoticeBoard, TaskList } from './panels'
 import { useWorkspace, withClient } from './use-workspace'
@@ -38,6 +45,24 @@ export function PortalHome() {
     queryKey: ['portal', clientId ?? 'default'],
     queryFn: () => api.get<PortalWorkspace>(withClient('/portal', clientId)),
     enabled: isReady,
+  })
+
+  /*
+   * Whether anything is actually owed, which decides where money sits.
+   *
+   * The SAME key InvoicesPanel reads, so this is not a second request — it is
+   * the same cache entry, and one refetch moves both the panel and its
+   * position. A separate endpoint answering "do they owe anything" would be a
+   * second source of truth for the one number on this page that has to agree
+   * with itself on both sides of the relationship.
+   */
+  const invoices = useQuery({
+    queryKey: ['invoices', query.data?.client.id],
+    queryFn: () =>
+      api.get<{ invoices: Invoice[] }>(
+        `/invoices?client=${query.data!.client.id}`
+      ),
+    enabled: Boolean(query.data?.client.id),
   })
 
   const chrome = (
@@ -97,6 +122,34 @@ export function PortalHome() {
   // own, and for staff it matches the switcher.
   const workspaceId = client.id
 
+  /*
+   * Money leads only when there is money outstanding.
+   *
+   * Two of Sofia's requests point in opposite directions and both are right.
+   * The first — "a client owes her 5k, so it should be visually on top of
+   * their homepage" — is about the case where something is owed. The second —
+   * "I want their first page they see to be the work tab" — is about every
+   * other day, when the invoice panel reading "Nothing outstanding" was the
+   * first thing a client saw on a page that is supposed to be about the work.
+   *
+   * So the rule is the fact rather than the layout: if they owe something it
+   * goes above everything, and if they do not it sits below the work where it
+   * is still one scroll away. Nothing is hidden in either case.
+   *
+   * `undefined` while the query is in flight is treated as "does not lead",
+   * which is the quiet answer — the panel arriving and then jumping to the top
+   * would be worse than it appearing where it ends up.
+   */
+  const owesMoney = (invoices.data?.invoices ?? []).some(
+    (invoice) => outstandingPence(invoice) > 0
+  )
+
+  const moneyPanel = (
+    <div className='mb-5'>
+      <InvoicesPanel clientId={workspaceId} canEdit={isStaff} />
+    </div>
+  )
+
   return (
     <>
       {chrome}
@@ -131,14 +184,18 @@ export function PortalHome() {
           clientId={workspaceId}
         />
 
+        {/* Only when they owe something — see `owesMoney` above. */}
+        {owesMoney && moneyPanel}
+
         {/*
-          Money first. "A client owes her 5k, so it should be visually on top
-          of their homepage" — and it is the one thing on this screen where
-          both sides need to be looking at the same number.
+          The work, which is what they came for.
+
+          Sofia asked for "a page feed of approved one" on the portal, and for
+          the client's first screen to be the work rather than the admin around
+          it. This is that feed: the approved and scheduled posts as pictures,
+          soonest first, in the same square tiles as the Feed Preview.
         */}
-        <div className='mb-5'>
-          <InvoicesPanel clientId={workspaceId} canEdit={isStaff} />
-        </div>
+        <PostGrid clientId={workspaceId} mode='upcoming' className='mb-5' />
 
         {/*
           Then the visual direction: the thing a social client actually opens
@@ -209,6 +266,9 @@ export function PortalHome() {
           </Card>
         )}
 
+        {/* Settled: the panel still belongs on this page, just not at the top. */}
+        {!owesMoney && moneyPanel}
+
         <div className='grid items-start gap-5 lg:grid-cols-2'>
           <div className='space-y-5'>
             <LinkStack links={links} canEdit={isStaff} clientId={workspaceId} />
@@ -226,6 +286,18 @@ export function PortalHome() {
             />
             <TaskList tasks={tasks} canEdit={isStaff} clientId={workspaceId} />
           </div>
+        </div>
+
+        {/*
+          The password hub, last, and on the CLIENT's own page as well as hers.
+          
+          "Client can fill in social media passwords" was the request, and this
+          is the screen they are already signed into. Bottom of the page on
+          purpose: it is a thing you come here to do once, not something that
+          should be competing with the work every time they open the portal.
+        */}
+        <div className='mt-5'>
+          <CredentialsHub clientId={workspaceId} />
         </div>
       </Main>
     </>

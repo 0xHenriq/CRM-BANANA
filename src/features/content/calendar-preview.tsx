@@ -103,7 +103,7 @@ export function CalendarPreview({
                   </p>
                   <div className='flex shrink-0 items-center gap-2'>
                     <TypePill type={item.type} />
-                    <StatusPill status={item.status} />
+                    <StatusPill item={item} />
                   </div>
                 </li>
               ))}

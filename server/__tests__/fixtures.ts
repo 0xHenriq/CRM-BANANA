@@ -65,6 +65,21 @@ export type Fixture = {
   clientUserA: string
   taskAVisible: string
   taskAInternal: string
+  /** The OTHER client's to-do, so task_comments has something to leak. */
+  taskB: string
+  /**
+   * A reply on each of the three to-dos.
+   *
+   * The internal one is the reason the parent gate exists: a client who can
+   * read a reply on a to-do they cannot see would have the to-do's contents
+   * quoted straight back at them.
+   */
+  taskCommentAVisible: string
+  taskCommentAInternal: string
+  taskCommentB: string
+  /** A stored login per client. Ciphertext, exactly as the app writes it. */
+  credentialA: string
+  credentialB: string
   contentAVisible: string
   contentAHidden: string
   dealA: string
@@ -133,6 +148,8 @@ const TENANT_TABLES = [
   'invoice_payments',
   'invoices',
   'invitation_grants',
+  'client_credentials',
+  'task_comments',
   'content_approvals',
   'content_comments',
   'content_assets',
@@ -186,6 +203,12 @@ export async function resetAndSeed(): Promise<Fixture> {
     const ids = {
       taskAVisible: randomUUID(),
       taskAInternal: randomUUID(),
+      taskB: randomUUID(),
+      taskCommentAVisible: randomUUID(),
+      taskCommentAInternal: randomUUID(),
+      taskCommentB: randomUUID(),
+      credentialA: randomUUID(),
+      credentialB: randomUUID(),
       contentAVisible: randomUUID(),
       contentAHidden: randomUUID(),
       dealA: randomUUID(),
@@ -226,8 +249,50 @@ export async function resetAndSeed(): Promise<Fixture> {
     await c.query(
       `insert into tasks(id, client_id, title, visible_to_client)
        values ($1,$2,'Client can see this',true),
-              ($3,$2,'Internal: chase invoice',false)`,
-      [ids.taskAVisible, clientA, ids.taskAInternal]
+              ($3,$2,'Internal: chase invoice',false),
+              ($4,$5,'Client B to-do',true)`,
+      [ids.taskAVisible, clientA, ids.taskAInternal, ids.taskB, clientB]
+    )
+
+    /*
+     * A reply on each to-do, including the internal one.
+     *
+     * The internal row is the assertion that matters: task_comments carries
+     * client_id directly, so a policy that asked only "is this your client"
+     * would hand a client the discussion attached to a to-do they cannot see.
+     * The parent clause is what stops it, and without this row the test for it
+     * would pass against a policy that had no parent clause at all.
+     */
+    await c.query(
+      `insert into task_comments(id, client_id, task_id, author_id, body)
+       values ($1,$2,$3,$4,'Replying to the visible one'),
+              ($5,$2,$6,$4,'INTERNAL: he still has not paid'),
+              ($7,$8,$9,$4,'Client B reply')`,
+      [
+        ids.taskCommentAVisible,
+        clientA,
+        ids.taskAVisible,
+        staffUser,
+        ids.taskCommentAInternal,
+        ids.taskAInternal,
+        ids.taskCommentB,
+        clientB,
+        ids.taskB,
+      ]
+    )
+
+    /*
+     * One stored login per client.
+     *
+     * The value is a plausible ciphertext string rather than a password: these
+     * assertions are about which ROWS cross the boundary, and seeding a real
+     * secret here would put one in a fixture file for no gain.
+     */
+    await c.query(
+      `insert into client_credentials(id, client_id, label, username, secret_cipher)
+       values ($1,$2,'Instagram','@client-a','v1.aaa.bbb.ccc'),
+              ($3,$4,'Instagram','@client-b','v1.ddd.eee.fff')`,
+      [ids.credentialA, clientA, ids.credentialB, clientB]
     )
 
     await c.query(
@@ -511,6 +576,12 @@ export const CLIENT_VISIBLE_TABLES = [
   'content_assets',
   'content_comments',
   'content_approvals',
+  // The password hub. Client-visible AND client-writable — they fill it in.
+  'client_credentials',
+  // Replies on a to-do. Client-visible through their parent task, which
+  // carries the visible_to_client gate, so an internal to-do's thread is
+  // hidden by composition rather than by a rule restated here.
+  'task_comments',
   // A receipt for their own issued invoice.
   'invoice_payments',
 ] as const

@@ -150,3 +150,83 @@
     height: 0;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Printing an invoice.
+ *
+ * Sofia sent a picture of a Banana Digital invoice and asked whether Stripe
+ * could "generate invoices like this". Stripe's hosted invoice cannot — it is
+ * Stripe's document with a logo dropped into it — so the document is rendered
+ * in the app and the browser's own print dialog turns it into the PDF she
+ * sends. That is deliberate rather than a shortcut: a PDF library would be a
+ * dependency, a font-embedding problem and a second layout to keep in step
+ * with this one, to produce a file the browser already makes from this markup.
+ *
+ * The first version of this used the classic `visibility: hidden` on
+ * `body *` plus `position: absolute` on the sheet, and it was WRONG — verified
+ * by printing it rather than by reading it. `position: absolute` resolves
+ * against the nearest positioned ancestor, which here is the app shell, so the
+ * sheet started at the sidebar's edge and ran off the right of the page with
+ * the totals column cut in half.
+ *
+ * What works is removing the chrome from the flow entirely and flattening the
+ * elements between the page and the sheet, so the sheet simply IS the page:
+ *
+ *   1. everything that is not the sheet, not inside it, and not an ancestor
+ *      of it is `display: none`
+ *   2. every ancestor becomes a plain block with no width, padding or
+ *      positioning of its own
+ *
+ * The whole thing is scoped to `body:has(.invoice-sheet)`. Without that guard
+ * rule 1 would match every element on every OTHER page in the app and print a
+ * blank sheet of paper. Where `:has()` is unsupported the rules are dropped
+ * and the page prints with its navigation attached — worse-looking, not
+ * broken, which is the right way round for a progressive enhancement.
+ * ------------------------------------------------------------------------ */
+@media print {
+  body:has(.invoice-sheet)
+    *:not(:has(.invoice-sheet)):not(.invoice-sheet):not(.invoice-sheet *) {
+    display: none !important;
+  }
+
+  body:has(.invoice-sheet) :has(.invoice-sheet) {
+    display: block !important;
+    position: static !important;
+    overflow: visible !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
+  }
+
+  .invoice-sheet {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    box-shadow: none;
+  }
+
+  /* Anything that is an action rather than part of the document. Kept as its
+     own rule because it also covers controls INSIDE the sheet. */
+  .print-hide {
+    display: none !important;
+  }
+
+  /* Backgrounds are dropped by default in every browser's print path, which
+     would take the paid/overdue pills with them — those carry meaning here. */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  @page {
+    margin: 14mm;
+  }
+}

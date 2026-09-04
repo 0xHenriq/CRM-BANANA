@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  credentialPatchSchema,
   filePatchSchema,
   linkPatchSchema,
   taskPatchSchema,
@@ -38,6 +39,34 @@ describe('patch schemas do not invent fields', () => {
     const parsed = filePatchSchema.parse({ name: 'Agreement v2' })
     expect(Object.keys(parsed)).toEqual(['name'])
     expect('externalUrl' in parsed).toBe(false)
+  })
+
+  it('renaming a stored login does not clear its password', () => {
+    /*
+     * The three states this schema has to keep apart, and the reason it is
+     * written out rather than derived from the create schema:
+     *
+     *   absent      leave the stored secret exactly as it is
+     *   null        clear it
+     *   a string    replace it
+     *
+     * Only the first is at risk from the `.partial()` trap, and it is the one
+     * that matters most: correcting the username on a row would otherwise
+     * blank the password with nothing on screen to say so, and the next time
+     * anyone needed it they would find an empty field and no idea when it went.
+     */
+    const parsed = credentialPatchSchema.parse({ username: '@banana.digital' })
+    expect(Object.keys(parsed)).toEqual(['username'])
+    expect('secret' in parsed).toBe(false)
+  })
+
+  it('a stored login can still be cleared on purpose', () => {
+    // The other two states, so "absent" above is a distinction rather than the
+    // only behaviour the schema has.
+    expect(credentialPatchSchema.parse({ secret: null })).toEqual({ secret: null })
+    expect(credentialPatchSchema.parse({ secret: 'new-one' })).toEqual({
+      secret: 'new-one',
+    })
   })
 
   it('still accepts the fields that are sent', () => {

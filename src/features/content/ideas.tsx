@@ -49,6 +49,7 @@ import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { ContentDetailDialog } from './detail-dialog'
+import { PostGrid } from './post-grid'
 import { ApprovalOverduePill, StatusPill, TypePill } from './pills'
 import { STATUS_LABEL, TYPE_LABEL } from './vocabulary'
 
@@ -136,6 +137,25 @@ export function IdeasBank() {
           stamp={{ top: 'IDEA', big: '★', bottom: 'BANK' }}
           actions={isStaff ? <NewIdeaDialog clientId={clientId} /> : undefined}
         />
+
+        {/*
+          The pictures first, then the table.
+
+          Sofia: "ideas bank should look like feedpreview with little square
+          previews, but only the pending approval ones or declined one. with a
+          red or orange button". A social post IS an image, and a table of
+          titles is the one view of it that cannot tell you whether it is any
+          good — so the posts somebody is waiting on get shown as posts.
+
+          ABOVE the table rather than instead of it. The table is how she
+          finds, sorts and filters two hundred concepts; the grid is how she
+          sees the four that need an answer today. Replacing one with the other
+          would have traded a working screen for a nicer-looking one.
+
+          Renders only once a workspace has resolved — `clientId` is null on
+          first paint while the persisted selection loads.
+        */}
+        {clientId && <PostGrid clientId={clientId} mode='decisions' className='mb-5' />}
 
         <div className='mb-4 flex flex-wrap gap-2'>
           <Select
@@ -324,7 +344,7 @@ function IdeaRow({
             Collapsing them into a single "overdue" status would lose the fact
             that it is still sitting at ready-for-review. */}
         <div className='flex flex-wrap items-center gap-1.5'>
-          <StatusPill status={item.status} />
+          <StatusPill item={item} />
           <ApprovalOverduePill item={item} />
         </div>
       </TableCell>

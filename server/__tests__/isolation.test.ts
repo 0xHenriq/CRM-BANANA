@@ -504,6 +504,172 @@ describe('append-only approvals', () => {
   })
 })
 
+/**
+ * Replies on a to-do inherit the to-do's visibility, and cannot be rewritten.
+ *
+ * `task_comments` carries `client_id` directly like every other tenant table,
+ * so a policy that asked only "is this your workspace" would be wrong in a way
+ * that reads as correct: the client would see their own workspace's rows, and
+ * some of those rows are the discussion attached to "INTERNAL: chase unpaid
+ * invoice". The parent clause is the whole defence, and it is composed rather
+ * than restated — it inherits the `visible_to_client` gate from tasks_select,
+ * so the two cannot drift.
+ */
+describe('12 — replies on a to-do', () => {
+  it('a client reads the reply on a to-do they can see', async () => {
+    // Non-vacuous first: if this were empty, the assertion below would pass
+    // against a policy that hid everything, which is not what is being tested.
+    const rows = await asActor<{ id: string }>(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from task_comments where task_id = $1',
+      [f.taskAVisible]
+    )
+    expect(rows.map((r) => r.id)).toEqual([f.taskCommentAVisible])
+  })
+
+  it('a client cannot read the reply on an INTERNAL to-do', async () => {
+    const rows = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from task_comments where id = $1',
+      [f.taskCommentAInternal]
+    )
+    expect(rows).toHaveLength(0)
+  })
+
+  it('a client may reply on a to-do they can see', async () => {
+    const inserted = await asActor<{ id: string }>(
+      { kind: 'client', userId: f.clientUserA },
+      `insert into task_comments(client_id, task_id, author_id, body)
+       values ($1,$2,$3,'Done, thanks') returning id`,
+      [f.clientA, f.taskAVisible, f.clientUserA]
+    )
+    expect(inserted).toHaveLength(1)
+  })
+
+  it('a client cannot reply on an internal to-do', async () => {
+    // WITH CHECK refuses the row rather than raising, so this is a zero-row
+    // insert. Assert through the owner as well: a route could otherwise report
+    // success on a write that never happened.
+    const inserted = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      `insert into task_comments(client_id, task_id, author_id, body)
+       values ($1,$2,$3,'sneaking in') returning id`,
+      [f.clientA, f.taskAInternal, f.clientUserA]
+    ).catch(() => [] as unknown[])
+    expect(inserted).toHaveLength(0)
+
+    const { rows } = await ownerPool.query(
+      "select count(*)::int as n from task_comments where body = 'sneaking in'"
+    )
+    expect(rows[0].n).toBe(0)
+  })
+
+  it('nobody can rewrite a reply, staff included', async () => {
+    await asActor(
+      { kind: 'staff', userId: f.staffUser },
+      `update task_comments set body = 'rewritten' where id = $1`,
+      [f.taskCommentAVisible]
+    ).catch(() => [])
+
+    const { rows } = await ownerPool.query(
+      'select body from task_comments where id = $1',
+      [f.taskCommentAVisible]
+    )
+    expect(rows[0].body).toBe('Replying to the visible one')
+  })
+})
+
+/**
+ * The password hub is the one client-visible table a CLIENT may also write.
+ *
+ * That is the feature — she asked for them to fill their own logins in — so
+ * the interesting assertions are about the edges of that permission rather
+ * than about reading. A client may create and correct a row in their own
+ * workspace, and may not aim one at somebody else's, in either direction:
+ * inserting into B, or updating their own row to belong to B. The second is
+ * the one a USING-only policy would allow, and it is invariant 13 exactly.
+ */
+describe('13 — the password hub', () => {
+  it('a client reads their own stored logins', async () => {
+    const rows = await asActor<{ id: string }>(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from client_credentials'
+    )
+    expect(rows.map((r) => r.id)).toEqual([f.credentialA])
+  })
+
+  it('a client may add and correct a login in their own workspace', async () => {
+    const inserted = await asActor<{ id: string }>(
+      { kind: 'client', userId: f.clientUserA },
+      `insert into client_credentials(client_id, label, username, secret_cipher)
+       values ($1,'TikTok','@a','v1.x.y.z') returning id`,
+      [f.clientA]
+    )
+    expect(inserted).toHaveLength(1)
+
+    const updated = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      `update client_credentials set username = '@a-corrected' where id = $1
+       returning id`,
+      [inserted[0].id]
+    )
+    expect(updated).toHaveLength(1)
+  })
+
+  it("a client cannot add a login to another client's workspace", async () => {
+    const inserted = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      `insert into client_credentials(client_id, label, secret_cipher)
+       values ($1,'Instagram','v1.stolen') returning id`,
+      [f.clientB]
+    ).catch(() => [] as unknown[])
+    expect(inserted).toHaveLength(0)
+
+    const { rows } = await ownerPool.query(
+      "select count(*)::int as n from client_credentials where secret_cipher = 'v1.stolen'"
+    )
+    expect(rows[0].n).toBe(0)
+  })
+
+  it('a client cannot move their own login into another workspace', async () => {
+    /*
+     * The WITH CHECK direction. Two gates hold it, and this asserts the
+     * PROPERTY rather than either one of them.
+     *
+     * Mutation-verified against bd_portal_test, and the result was not what
+     * writing the test predicted: replacing the update policy's WITH CHECK
+     * with `true` does not let the move through, because Postgres applies
+     * client_credentials_select to the NEW row of an UPDATE as well. Weakening
+     * the select policy alone does not let it through either. Only weakening
+     * both does — which is the run that proves this test can fail at all.
+     *
+     * No RETURNING clause, deliberately: with one, the statement errors on the
+     * row it cannot read back and the assertion would pass against a table
+     * with no update policy whatsoever.
+     */
+    await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'update client_credentials set client_id = $1 where id = $2',
+      [f.clientB, f.credentialA]
+    ).catch(() => [])
+
+    const { rows } = await ownerPool.query(
+      'select client_id from client_credentials where id = $1',
+      [f.credentialA]
+    )
+    expect(rows[0].client_id).toBe(f.clientA)
+  })
+
+  it("a client cannot read another client's stored login by its exact id", async () => {
+    const rows = await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'select id from client_credentials where id = $1',
+      [f.credentialB]
+    )
+    expect(rows).toHaveLength(0)
+  })
+})
+
 describe('client logos', () => {
 /**
  * The logo route is the first place a stored key becomes a file read via a

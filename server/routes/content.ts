@@ -72,6 +72,37 @@ contentRoutes.get('/', async (c) => {
         visibleToClient: contentItems.visibleToClient,
         createdAt: contentItems.createdAt,
         updatedAt: contentItems.updatedAt,
+        /*
+         * The most recent decision, so a DECLINED post can be told apart from
+         * one nobody has looked at yet.
+         *
+         * Sofia asked for a traffic light — "approved or scheduled green,
+         * pending orange, red is declined" — and `status` cannot express the
+         * third colour. Asking for changes moves a post back to `in_progress`,
+         * which is exactly where a fresh draft sits, so on status alone a post
+         * the client REJECTED looks identical to one nobody has sent yet.
+         *
+         * Derived, never stored: content_approvals is the append-only record
+         * and this reads the top of it. Storing a `declined` flag beside it
+         * would be a second account of the same fact, and the two would
+         * disagree the first time one was corrected.
+         *
+         * Explicit alias and literal column names — interpolating
+         * `${contentApprovals.contentItemId}` renders it UNQUALIFIED, "id"
+         * would bind to the wrong table and every row would come back with the
+         * same answer and no error. Failure Mode 2.
+         *
+         * The subquery runs under the caller's own policies, so a client sees
+         * the decision history of items they can see and nothing else.
+         */
+        lastDecision: sql<
+          'approved' | 'changes_requested' | null
+        >`(
+          select ca.decision from content_approvals ca
+           where ca.content_item_id = content_items.id
+           order by ca.decided_at desc
+           limit 1
+        )`,
       })
       .from(contentItems)
       .where(eq(contentItems.clientId, clientId))

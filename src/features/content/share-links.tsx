@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link2, Loader2 } from 'lucide-react'
+import { Link2, Loader2, Share2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, formatShortDate, linkState, localDayOf, type ShareLink } from '@/lib/api'
 import { copyText } from '@/lib/copy-text'
@@ -178,6 +178,166 @@ export function ShareLinks({
               })}
             </ul>
           )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+/**
+ * "Send this preview to the client" — the whole feed grid, as a link.
+ *
+ * Sofia, looking at the Feed Preview page: "when u click on feed preview tab
+ * can we have a button that send that preview to client". The capability
+ * already existed and was reachable from exactly one place — the Share menu on
+ * the client page — which is not where anybody is standing when they decide
+ * the grid looks right. So this is the same popover, moved into a component,
+ * and BOTH screens now render it.
+ *
+ * Extracted rather than copied on purpose. A second implementation of "mint a
+ * feed link" is a second set of wording about what the link exposes, and the
+ * two would disagree the first time either was corrected — which matters here
+ * because one of those sentences is the warning that anyone holding the link
+ * can open it.
+ */
+export function FeedShareButton({
+  clientId,
+  label = 'Send preview',
+  variant = 'default',
+}: {
+  clientId: string
+  /** The page decides the wording; the behaviour is the same everywhere. */
+  label?: string
+  variant?: 'default' | 'outline'
+}) {
+  const queryClient = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [fresh, setFresh] = useState<string | null>(null)
+  const now = new Date()
+
+  // Only while the popover is open. Without the gate every page load fetched
+  // share links nobody had asked to see.
+  const { data } = useQuery({
+    queryKey: ['feed-shares', clientId],
+    queryFn: () =>
+      api.get<{ links: ShareLink[] }>(`/shares/client/${clientId}/feed`),
+    enabled: open,
+  })
+
+  const mint = useMutation({
+    mutationFn: () =>
+      api.post<{ url: string }>(`/shares/client/${clientId}/feed`, {}),
+    onSuccess: async (result) => {
+      setFresh(result.url)
+      const ok = await copyText(result.url)
+      toast[ok ? 'success' : 'error'](
+        ok
+          ? 'Feed preview link copied. It cannot be shown again.'
+          : 'Link created — copy it from the box, it cannot be shown again.'
+      )
+      await queryClient.invalidateQueries({
+        queryKey: ['feed-shares', clientId],
+      })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const revoke = useMutation({
+    mutationFn: (id: string) => api.post(`/shares/${id}/revoke`, {}),
+    onSuccess: async () => {
+      toast.success('Link revoked.')
+      await queryClient.invalidateQueries({
+        queryKey: ['feed-shares', clientId],
+      })
+    },
+    onError: (err: Error) => toast.error(err.message),
+  })
+
+  const live = (data?.links ?? []).filter((l) => linkState(l, now) === 'live')
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next)
+        if (!next) setFresh(null)
+      }}
+    >
+      <PopoverTrigger asChild>
+        <Button size='sm' variant={variant}>
+          <Share2 />
+          {label}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align='end' className='w-80 crate-card'>
+        <div className='space-y-3'>
+          <div>
+            <p className='display text-sm'>Share the feed preview</p>
+            <p className='text-xs text-muted-foreground'>
+              A read-only grid of what is coming up. No sign-in, and anyone
+              with the link can open it.
+            </p>
+            {/*
+              Said out loud, because the grid she is looking at and the grid
+              they get are not the same one. Feed Preview shows her everything
+              including internal concepts; a share link shows only what is
+              already shared with the client. Without this she sends nine cells
+              and they open seven, and the first she hears of it is them asking.
+            */}
+            <p className='mt-1 text-xs text-muted-foreground'>
+              Only posts already shared with the client appear — internal ones
+              are left out.
+            </p>
+          </div>
+
+          {fresh && (
+            <>
+              <Input readOnly value={fresh} className='font-mono text-xs' />
+              <p className='text-xs text-muted-foreground'>
+                Copy it now — it cannot be displayed again.
+              </p>
+            </>
+          )}
+
+          <Button
+            size='sm'
+            className='w-full'
+            onClick={() => mint.mutate()}
+            disabled={mint.isPending}
+          >
+            {mint.isPending && <Loader2 className='animate-spin' />}
+            {live.length ? 'Create another link' : 'Create a link'}
+          </Button>
+
+          {live.length > 0 && (
+            <ul className='space-y-1.5 text-xs'>
+              {live.map((l) => (
+                <li key={l.id} className='flex items-center gap-2'>
+                  <span className='min-w-0 flex-1 truncate'>
+                    {l.useCount === 0
+                      ? 'Not opened yet'
+                      : `Opened ${l.useCount} time${l.useCount === 1 ? '' : 's'}`}
+                    , expires {formatShortDate(localDayOf(l.expiresAt))}
+                  </span>
+                  <Button
+                    size='sm'
+                    variant='ghost'
+                    className='h-6 shrink-0 px-2 text-xs'
+                    onClick={() => revoke.mutate(l.id)}
+                    disabled={revoke.isPending}
+                  >
+                    Revoke
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <div className='crate-rule' />
+          <p className='text-xs text-muted-foreground'>
+            Need them to see invoices and files too? Give them a login from the
+            client&rsquo;s Overview tab, or on the Seats page.
+          </p>
         </div>
       </PopoverContent>
     </Popover>

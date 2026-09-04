@@ -5,7 +5,7 @@ import { withTenant, type Tx } from '../db/index.js'
 import { env } from '../env.js'
 import { logger } from '../logger.js'
 import { stripe, stripeEnabled, toStripeAmount } from '../lib/stripe.js'
-import { clients, invoicePayments, invoices } from '../db/schema.js'
+import { clients, invoicePayments, invoices, systemMeta } from '../db/schema.js'
 import { audit, recordActivity } from '../lib/audit.js'
 import { requireAuth, requireStaff } from '../middleware/session.js'
 
@@ -125,7 +125,103 @@ invoiceRoutes.get('/', async (c) => {
   return c.json({ invoices: rows })
 })
 
-/** One invoice with its receipts. */
+/* ------------------------------------------------ the document's fixed half */
+
+/**
+ * How to pay her, and on what terms. One row per key in `system_meta`.
+ *
+ * Agency-wide rather than per invoice: it is the same sort code on every one,
+ * and asking her to retype it each time is how a wrong account number ends up
+ * on a document somebody pays against.
+ *
+ * NOT an environment variable and NOT a constant in this repository — the repo
+ * is PUBLIC. It is not a credential (an account number is printed on every
+ * invoice she sends) but there is no reason to publish it, which is the same
+ * argument `deploy.config.sh` is gitignored under.
+ *
+ * `system_meta` carries no RLS because it holds nothing belonging to a tenant.
+ * The guard list in `db/guard.ts` deliberately does not name it.
+ */
+const INVOICE_SETTING_KEYS = {
+  paymentMethod: 'invoice.payment_method',
+  paymentTerms: 'invoice.payment_terms',
+  footer: 'invoice.footer',
+} as const
+
+export type InvoiceSettings = Record<keyof typeof INVOICE_SETTING_KEYS, string>
+
+async function loadInvoiceSettings(tx: Tx): Promise<InvoiceSettings> {
+  const rows = await tx
+    .select({ key: systemMeta.key, value: systemMeta.value })
+    .from(systemMeta)
+  const byKey = new Map(rows.map((r) => [r.key, r.value]))
+  return {
+    paymentMethod: byKey.get(INVOICE_SETTING_KEYS.paymentMethod) ?? '',
+    paymentTerms: byKey.get(INVOICE_SETTING_KEYS.paymentTerms) ?? '',
+    footer: byKey.get(INVOICE_SETTING_KEYS.footer) ?? '',
+  }
+}
+
+/**
+ * Readable by a CLIENT, not just staff.
+ *
+ * This is the block that tells them where to send the money. Gating it to
+ * staff would produce an invoice with an empty Payment Method box for the only
+ * person who needs to read it.
+ */
+invoiceRoutes.get('/settings', async (c) => {
+  const settings = await withTenant(c.get('tenant'), loadInvoiceSettings)
+  return c.json({ settings })
+})
+
+const settingsSchema = z.object({
+  paymentMethod: z.string().max(1000).optional(),
+  paymentTerms: z.string().max(2000).optional(),
+  footer: z.string().max(500).optional(),
+})
+
+invoiceRoutes.patch('/settings', requireStaff, async (c) => {
+  const parsed = settingsSchema.safeParse(await c.req.json().catch(() => null))
+  if (!parsed.success) return c.json({ error: 'Invalid request' }, 400)
+
+  const settings = await withTenant(c.get('tenant'), async (tx) => {
+    for (const [field, key] of Object.entries(INVOICE_SETTING_KEYS)) {
+      const value = parsed.data[field as keyof typeof INVOICE_SETTING_KEYS]
+      if (value === undefined) continue
+      // Upsert on the unique key, so saving twice does not accumulate rows.
+      await tx
+        .insert(systemMeta)
+        .values({ key, value: value.trim() })
+        .onConflictDoUpdate({
+          target: systemMeta.key,
+          set: { value: value.trim(), updatedAt: new Date() },
+        })
+    }
+    return loadInvoiceSettings(tx)
+  })
+
+  await withTenant(c.get('tenant'), (tx) =>
+    audit(tx, {
+      actorId: c.get('user')?.id ?? null,
+      action: 'invoice.settings.update',
+      entity: 'system_meta',
+      // The values are printed on every invoice, but an audit row is not the
+      // place to keep a second copy of a bank account number.
+      meta: { fields: Object.keys(parsed.data) },
+    })
+  )
+
+  return c.json({ settings })
+})
+
+/**
+ * One invoice with its receipts, plus everything the printable document needs.
+ *
+ * `billingAddress` and the settings block ride along rather than being fetched
+ * by the document view separately: an invoice that renders in three requests
+ * shows a header, then a body, then a payment block, and printing it mid-way
+ * produces a document missing whichever part had not arrived.
+ */
 invoiceRoutes.get('/:id', async (c) => {
   const id = c.req.param('id')
 
@@ -135,6 +231,7 @@ invoiceRoutes.get('/:id', async (c) => {
         id: invoices.id,
         clientId: invoices.clientId,
         clientName: clients.name,
+        clientBillingAddress: clients.billingAddress,
         dealId: invoices.dealId,
         number: invoices.number,
         status: invoices.status,
@@ -159,7 +256,9 @@ invoiceRoutes.get('/:id', async (c) => {
       .where(eq(invoicePayments.invoiceId, id))
       .orderBy(asc(invoicePayments.paidOn))
 
-    return { invoice, payments }
+    const settings = await loadInvoiceSettings(tx)
+
+    return { invoice, payments, settings }
   })
 
   if (!detail) return c.json({ error: 'Not found' }, 404)
@@ -172,7 +271,17 @@ const createSchema = z.object({
   /** Integer pence. The client sends pence so nothing is parsed twice. */
   amountPence: z.number().int().positive('An invoice needs an amount.'),
   currency: z.string().length(3).default('GBP'),
-  description: z.string().max(500).nullish(),
+  /*
+   * The itemised description, which is why this is 4000 and not 500.
+   *
+   * Her real invoices carry a paragraph and a numbered list under one line
+   * item — "Development of a high-performance 10-page website", then the ten
+   * pages, then five bullets of strategic importance. At 500 characters the
+   * document could only ever hold the heading, which would have made the
+   * printable invoice a worse version of the one she already writes by hand.
+   * Line breaks are preserved and rendered as typed.
+   */
+  description: z.string().max(4000).nullish(),
   dueOn: z.string().date().nullish(),
   notes: z.string().max(4000).nullish(),
   /** Raise it as a draft, or issue it immediately. */
@@ -247,7 +356,17 @@ invoiceRoutes.post('/', requireStaff, async (c) => {
 
 const updateSchema = z.object({
   amountPence: z.number().int().positive().optional(),
-  description: z.string().max(500).nullish(),
+  /*
+   * The itemised description, which is why this is 4000 and not 500.
+   *
+   * Her real invoices carry a paragraph and a numbered list under one line
+   * item — "Development of a high-performance 10-page website", then the ten
+   * pages, then five bullets of strategic importance. At 500 characters the
+   * document could only ever hold the heading, which would have made the
+   * printable invoice a worse version of the one she already writes by hand.
+   * Line breaks are preserved and rendered as typed.
+   */
+  description: z.string().max(4000).nullish(),
   dueOn: z.string().date().nullish(),
   notes: z.string().max(4000).nullish(),
   status: z.enum(INVOICE_STATUSES).optional(),

@@ -1,13 +1,28 @@
-import { and, asc, desc, eq, isNull } from 'drizzle-orm'
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { withTenant } from '../db/index.js'
-import { clients, files, links, noticePosts, tasks } from '../db/schema.js'
+import {
+  clientCredentials,
+  clients,
+  files,
+  links,
+  noticePosts,
+  taskComments,
+  tasks,
+} from '../db/schema.js'
 import { user } from '../db/auth-schema.js'
 import { audit } from '../lib/audit.js'
+import { env } from '../env.js'
 import { requireAuth, requireStaff } from '../middleware/session.js'
+import {
+  decryptSecret,
+  encryptSecret,
+  secretIsSet,
+  secretsAvailable,
+} from '../lib/secrets.js'
 import { storage } from '../lib/storage.js'
-import { resolveClientId } from '../lib/resolve-client.js'
+import { isUuid, resolveClientId } from '../lib/resolve-client.js'
 
 export const portalRoutes = new Hono()
 
@@ -84,8 +99,35 @@ portalRoutes.get('/', async (c) => {
         .from(files)
         .where(eq(files.clientId, clientId))
         .orderBy(asc(files.sortOrder), asc(files.name)),
+      /*
+       * The to-dos, each carrying how many replies it has.
+       *
+       * A correlated subquery with an EXPLICIT ALIAS and literal column names.
+       * Interpolating `${taskComments.taskId}` here would render it
+       * unqualified, `"task_id"` would bind to the outer row, and every count
+       * would come back the same wrong number with no error — Failure Mode 2,
+       * which read as "the dashboard counts are all zero" for a week.
+       *
+       * Counted rather than joined so a to-do with no replies still appears,
+       * and cheap enough at an agency's volume that a second round trip to
+       * fetch thread lengths would be the more expensive option.
+       */
       tx
-        .select()
+        .select({
+          id: tasks.id,
+          clientId: tasks.clientId,
+          title: tasks.title,
+          done: tasks.done,
+          dueDate: tasks.dueDate,
+          assigneeId: tasks.assigneeId,
+          visibleToClient: tasks.visibleToClient,
+          sortOrder: tasks.sortOrder,
+          createdAt: tasks.createdAt,
+          replies: sql<number>`(
+            select count(*)::int from task_comments tc
+             where tc.task_id = tasks.id
+          )`,
+        })
         .from(tasks)
         .where(eq(tasks.clientId, clientId))
         .orderBy(asc(tasks.sortOrder), asc(tasks.title)),
@@ -487,3 +529,371 @@ export function canSeePortal(
   if (user.isStaff) return true
   return client.portalEnabled
 }
+
+/* --------------------------------------------------- replies on a to-do */
+
+/**
+ * The thread on one to-do.
+ *
+ * Sofia asked to "reply to next steps" twice. A post in that panel opened its
+ * detail dialog, which has had a comment thread since phase 2; a to-do had a
+ * deadline and a Done button and nowhere to say anything, so half the panel
+ * could be discussed in the product and half of it moved to WhatsApp.
+ *
+ * Read under the CALLER's own context, which is the whole access decision: a
+ * to-do a client cannot see is not found, and its replies are unreachable
+ * both here and at the database (migration 0021 composes the parent clause).
+ */
+portalRoutes.get('/tasks/:id/comments', async (c) => {
+  const taskId = c.req.param('id')
+  if (!isUuid(taskId)) return c.json({ error: 'Not found' }, 404)
+
+  const result = await withTenant(c.get('tenant'), async (tx) => {
+    const [task] = await tx
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+      .limit(1)
+    if (!task) return null
+
+    const comments = await tx
+      .select({
+        id: taskComments.id,
+        body: taskComments.body,
+        createdAt: taskComments.createdAt,
+        authorId: taskComments.authorId,
+        authorName: user.name,
+      })
+      .from(taskComments)
+      .leftJoin(user, eq(user.id, taskComments.authorId))
+      .where(eq(taskComments.taskId, taskId))
+      .orderBy(asc(taskComments.createdAt))
+
+    return comments
+  })
+
+  if (!result) return c.json({ error: 'Not found' }, 404)
+  return c.json({ comments: result })
+})
+
+const taskCommentSchema = z.object({ body: z.string().min(1).max(4000) })
+
+/**
+ * Reply, from either side.
+ *
+ * NOT `requireStaff`, deliberately — a thread only she can write to is a
+ * notice board, and there is already one of those. The client's own context is
+ * what authorises the write, and the WITH CHECK arm on task_comments_insert is
+ * what makes "reply to an internal to-do" return nothing rather than 403,
+ * because the to-do itself is not supposed to be known to exist.
+ *
+ * No elevation here, unlike ticking a task off. Ticking writes to `tasks`,
+ * which is staff-write-only; this table is client-writable by design, so the
+ * insert runs under the caller and the policy decides. Reaching for
+ * `withTenant({isStaff: true})` because a permissions error appeared is
+ * Failure Mode 4 in reverse and would let a client write into any workspace.
+ */
+portalRoutes.post('/tasks/:id/comments', async (c) => {
+  const taskId = c.req.param('id')
+  if (!isUuid(taskId)) return c.json({ error: 'Not found' }, 404)
+
+  const parsed = taskCommentSchema.safeParse(await c.req.json().catch(() => null))
+  if (!parsed.success) return c.json({ error: 'Write something first.' }, 400)
+
+  const currentUser = c.get('user')!
+
+  const created = await withTenant(c.get('tenant'), async (tx) => {
+    const [task] = await tx
+      .select({ id: tasks.id, clientId: tasks.clientId })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+      .limit(1)
+    if (!task) return null
+
+    const [row] = await tx
+      .insert(taskComments)
+      .values({
+        clientId: task.clientId,
+        taskId: task.id,
+        authorId: currentUser.id,
+        body: parsed.data.body.trim(),
+      })
+      .returning()
+    return row
+  })
+
+  if (!created) return c.json({ error: 'Not found' }, 404)
+  return c.json({ comment: created }, 201)
+})
+
+/**
+ * Remove a reply. Staff only, and there is no edit at all.
+ *
+ * A reply is a thing somebody said; rewriting it after the other side has read
+ * it makes the thread unciteable, which is the same reasoning that leaves
+ * content_approvals and invoice_payments without an UPDATE policy. Removing
+ * one posted in error is a different act and she is the one who does it.
+ */
+portalRoutes.delete('/tasks/:taskId/comments/:id', requireStaff, async (c) => {
+  const removed = await withTenant(c.get('tenant'), (tx) =>
+    tx
+      .delete(taskComments)
+      .where(eq(taskComments.id, c.req.param('id')))
+      .returning({ id: taskComments.id })
+  )
+  if (!removed.length) return c.json({ error: 'Not found' }, 404)
+  return c.json({ ok: true })
+})
+
+/* ------------------------------------------------------- the password hub */
+
+/**
+ * Where a client's social logins live, instead of in a WhatsApp thread.
+ *
+ * Sofia: "can we put a section for password hub - client can fill in social
+ * media passwords". The agency cannot post to a client's Instagram without the
+ * login, so those credentials already exist somewhere — today that somewhere
+ * is a chat message on two phones, in both of their cloud backups, searchable
+ * by anyone who picks either one up. That is the thing being replaced, and it
+ * is the bar this has to clear rather than some ideal that never gets built.
+ *
+ * The secret is encrypted before it reaches Postgres (server/lib/secrets.ts),
+ * so a nightly pg_dump copied to a laptop — which this repo's own runbook tells
+ * you to do — does not contain anybody's password. It is never included in a
+ * list payload either: revealing one is its own request and writes an audit
+ * row naming who looked.
+ */
+const CREDENTIALS_UNCONFIGURED = {
+  error:
+    'The password hub is not set up yet. It needs CREDENTIALS_SECRET on the ' +
+    'server before anything can be stored — passwords are encrypted at rest ' +
+    'and there is deliberately no option to save one in plain text.',
+} as const
+
+/** Metadata only. The secret never appears here, set or not. */
+const credentialColumns = {
+  id: clientCredentials.id,
+  clientId: clientCredentials.clientId,
+  label: clientCredentials.label,
+  username: clientCredentials.username,
+  notes: clientCredentials.notes,
+  sortOrder: clientCredentials.sortOrder,
+  updatedAt: clientCredentials.updatedAt,
+}
+
+portalRoutes.get('/credentials', async (c) => {
+  const clientId = await resolveClientId(c)
+  if (!clientId) return c.json({ error: 'No workspace available' }, 404)
+
+  const rows = await withTenant(c.get('tenant'), (tx) =>
+    tx
+      .select({
+        ...credentialColumns,
+        // A boolean, not a masked string of the right length: a row of dots
+        // that matches tells anyone glancing at the screen how long the
+        // password is, which is the one thing worth knowing about a password
+        // you cannot see.
+        secretCipher: clientCredentials.secretCipher,
+      })
+      .from(clientCredentials)
+      .where(eq(clientCredentials.clientId, clientId))
+      .orderBy(asc(clientCredentials.sortOrder), asc(clientCredentials.label))
+  )
+
+  return c.json({
+    clientId,
+    configured: secretsAvailable(env.CREDENTIALS_SECRET),
+    credentials: rows.map(({ secretCipher, ...rest }) => ({
+      ...rest,
+      hasSecret: secretIsSet(secretCipher),
+    })),
+  })
+})
+
+const credentialSchema = z.object({
+  label: z.string().min(1).max(80),
+  username: z.string().max(200).nullish(),
+  secret: z.string().max(500).nullish(),
+  notes: z.string().max(2000).nullish(),
+})
+
+/**
+ * PATCH written separately with NO defaults, and one extra rule.
+ *
+ * `secret` absent means "leave the stored one alone"; `secret: null` means
+ * "clear it"; a string replaces it. Three states, because the second and third
+ * are different acts and `.partial()` on the create schema could express
+ * neither — Failure Mode 1 is exactly this shape.
+ */
+export const credentialPatchSchema = z.object({
+  label: z.string().min(1).max(80).optional(),
+  username: z.string().max(200).nullish(),
+  secret: z.string().max(500).nullish(),
+  notes: z.string().max(2000).nullish(),
+})
+
+portalRoutes.post('/credentials', async (c) => {
+  const clientId = await resolveClientId(c)
+  if (!clientId) return c.json({ error: 'No workspace available' }, 404)
+
+  const parsed = credentialSchema.safeParse(await c.req.json().catch(() => null))
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.issues[0]?.message ?? 'Invalid request' }, 400)
+  }
+  const { label, username, secret, notes } = parsed.data
+
+  // Refuse rather than store it in the clear. 503, because this is a missing
+  // server configuration and not something the caller did wrong.
+  if (secret && !secretsAvailable(env.CREDENTIALS_SECRET)) {
+    return c.json(CREDENTIALS_UNCONFIGURED, 503)
+  }
+
+  const created = await withTenant(c.get('tenant'), (tx) =>
+    tx
+      .insert(clientCredentials)
+      .values({
+        clientId,
+        label: label.trim(),
+        username: username?.trim() || null,
+        secretCipher: secret
+          ? encryptSecret(secret, env.CREDENTIALS_SECRET)
+          : null,
+        notes: notes?.trim() || null,
+        sortOrder: 999,
+        updatedBy: c.get('user')!.id,
+      })
+      .returning(credentialColumns)
+  )
+
+  if (!created.length) return c.json({ error: 'Not found' }, 404)
+  return c.json({ credential: created[0] }, 201)
+})
+
+portalRoutes.patch('/credentials/:id', async (c) => {
+  const id = c.req.param('id')
+  if (!isUuid(id)) return c.json({ error: 'Not found' }, 404)
+
+  const parsed = credentialPatchSchema.safeParse(
+    await c.req.json().catch(() => null)
+  )
+  if (!parsed.success) {
+    return c.json({ error: parsed.error.issues[0]?.message ?? 'Invalid request' }, 400)
+  }
+  const patch = parsed.data
+
+  if (patch.secret && !secretsAvailable(env.CREDENTIALS_SECRET)) {
+    return c.json(CREDENTIALS_UNCONFIGURED, 503)
+  }
+
+  const updated = await withTenant(c.get('tenant'), (tx) =>
+    tx
+      .update(clientCredentials)
+      .set({
+        ...(patch.label === undefined ? {} : { label: patch.label.trim() }),
+        ...(patch.username === undefined
+          ? {}
+          : { username: patch.username?.trim() || null }),
+        ...(patch.notes === undefined
+          ? {}
+          : { notes: patch.notes?.trim() || null }),
+        // Absent leaves the stored secret alone; null clears it.
+        ...(patch.secret === undefined
+          ? {}
+          : {
+              secretCipher: patch.secret
+                ? encryptSecret(patch.secret, env.CREDENTIALS_SECRET)
+                : null,
+            }),
+        updatedBy: c.get('user')!.id,
+        updatedAt: new Date(),
+      })
+      .where(eq(clientCredentials.id, id))
+      .returning(credentialColumns)
+  )
+
+  if (!updated.length) return c.json({ error: 'Not found' }, 404)
+  return c.json({ credential: updated[0] })
+})
+
+portalRoutes.delete('/credentials/:id', async (c) => {
+  const id = c.req.param('id')
+  if (!isUuid(id)) return c.json({ error: 'Not found' }, 404)
+
+  const removed = await withTenant(c.get('tenant'), (tx) =>
+    tx
+      .delete(clientCredentials)
+      .where(eq(clientCredentials.id, id))
+      .returning({ id: clientCredentials.id })
+  )
+  if (!removed.length) return c.json({ error: 'Not found' }, 404)
+  return c.json({ ok: true })
+})
+
+/**
+ * Show me the password.
+ *
+ * Its own request rather than a field on the list, which is the difference
+ * between a password that is on screen because someone asked for it and one
+ * that is in every response body, the browser cache and the network tab of
+ * whoever was sitting next to her.
+ *
+ * The audit row is written under an ELEVATED context on purpose. `audit_log`
+ * is staff-only, and a client revealing their own password under their own
+ * context would have the insert refused and take the whole transaction — and
+ * therefore the reveal — down with it. That is Failure Mode 4 exactly, and it
+ * is why this is two transactions rather than one: authority is established
+ * under the caller, the bookkeeping runs elevated.
+ */
+portalRoutes.post('/credentials/:id/reveal', async (c) => {
+  const id = c.req.param('id')
+  if (!isUuid(id)) return c.json({ error: 'Not found' }, 404)
+  if (!secretsAvailable(env.CREDENTIALS_SECRET)) {
+    return c.json(CREDENTIALS_UNCONFIGURED, 503)
+  }
+
+  const currentUser = c.get('user')!
+
+  const [row] = await withTenant(c.get('tenant'), (tx) =>
+    tx
+      .select({
+        id: clientCredentials.id,
+        clientId: clientCredentials.clientId,
+        label: clientCredentials.label,
+        secretCipher: clientCredentials.secretCipher,
+      })
+      .from(clientCredentials)
+      .where(eq(clientCredentials.id, id))
+      .limit(1)
+  )
+  if (!row) return c.json({ error: 'Not found' }, 404)
+
+  const secret = decryptSecret(row.secretCipher, env.CREDENTIALS_SECRET)
+
+  await withTenant({ userId: currentUser.id, isStaff: true }, (tx) =>
+    audit(tx, {
+      actorId: currentUser.id,
+      action: 'credential.reveal',
+      entity: 'client_credential',
+      entityId: row.id,
+      // The label and the workspace, never the secret. An audit trail that
+      // records what it was watching is not an audit trail.
+      meta: { clientId: row.clientId, label: row.label },
+    })
+  )
+
+  if (row.secretCipher && secret === null) {
+    // A row encrypted under a previous key is a real state, and it needs a
+    // sentence rather than a blank box: nothing is broken, the key changed,
+    // and the password has to be typed in again.
+    return c.json(
+      {
+        error:
+          'This password cannot be opened with the current key — it was saved ' +
+          'under a previous one. Ask them for it again and save it here.',
+      },
+      409
+    )
+  }
+
+  return c.json({ secret })
+})

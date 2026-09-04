@@ -24,6 +24,7 @@ import { Route as authAcceptInvitationInvitationIdRouteImport } from './routes/(
 import { Route as shareShareTokenRouteImport } from './routes/(share)/share/$token'
 import { Route as AuthenticatedClientsClientIdRouteImport } from './routes/_authenticated/clients_.$clientId'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
+import { Route as AuthenticatedInvoicesInvoiceIdRouteImport } from './routes/_authenticated/invoices/$invoiceId'
 import { Route as AuthenticatedPortalIndexRouteImport } from './routes/_authenticated/portal/index'
 import { Route as AuthenticatedPortalCalendarRouteImport } from './routes/_authenticated/portal/calendar'
 import { Route as AuthenticatedPortalFeedRouteImport } from './routes/_authenticated/portal/feed'
@@ -114,6 +115,12 @@ const AuthenticatedErrorsErrorRoute =
     path: '/errors/$error',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedInvoicesInvoiceIdRoute =
+  AuthenticatedInvoicesInvoiceIdRouteImport.update({
+    id: '/invoices/$invoiceId',
+    path: '/invoices/$invoiceId',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedPortalIndexRoute =
   AuthenticatedPortalIndexRouteImport.update({
     id: '/portal/',
@@ -195,6 +202,7 @@ export interface FileRoutesByFullPath {
   '/share/$token': typeof shareShareTokenRoute
   '/clients/$clientId': typeof AuthenticatedClientsClientIdRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
+  '/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
   '/portal/calendar': typeof AuthenticatedPortalCalendarRoute
   '/portal/feed': typeof AuthenticatedPortalFeedRoute
   '/portal/ideas': typeof AuthenticatedPortalIdeasRoute
@@ -221,6 +229,7 @@ export interface FileRoutesByTo {
   '/share/$token': typeof shareShareTokenRoute
   '/clients/$clientId': typeof AuthenticatedClientsClientIdRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
+  '/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
   '/portal/calendar': typeof AuthenticatedPortalCalendarRoute
   '/portal/feed': typeof AuthenticatedPortalFeedRoute
   '/portal/ideas': typeof AuthenticatedPortalIdeasRoute
@@ -250,6 +259,7 @@ export interface FileRoutesById {
   '/(share)/share/$token': typeof shareShareTokenRoute
   '/_authenticated/clients_/$clientId': typeof AuthenticatedClientsClientIdRoute
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
+  '/_authenticated/invoices/$invoiceId': typeof AuthenticatedInvoicesInvoiceIdRoute
   '/_authenticated/portal/calendar': typeof AuthenticatedPortalCalendarRoute
   '/_authenticated/portal/feed': typeof AuthenticatedPortalFeedRoute
   '/_authenticated/portal/ideas': typeof AuthenticatedPortalIdeasRoute
@@ -279,6 +289,7 @@ export interface FileRouteTypes {
     | '/share/$token'
     | '/clients/$clientId'
     | '/errors/$error'
+    | '/invoices/$invoiceId'
     | '/portal/calendar'
     | '/portal/feed'
     | '/portal/ideas'
@@ -305,6 +316,7 @@ export interface FileRouteTypes {
     | '/share/$token'
     | '/clients/$clientId'
     | '/errors/$error'
+    | '/invoices/$invoiceId'
     | '/portal/calendar'
     | '/portal/feed'
     | '/portal/ideas'
@@ -333,6 +345,7 @@ export interface FileRouteTypes {
     | '/(share)/share/$token'
     | '/_authenticated/clients_/$clientId'
     | '/_authenticated/errors/$error'
+    | '/_authenticated/invoices/$invoiceId'
     | '/_authenticated/portal/calendar'
     | '/_authenticated/portal/feed'
     | '/_authenticated/portal/ideas'
@@ -465,6 +478,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedErrorsErrorRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/invoices/$invoiceId': {
+      id: '/_authenticated/invoices/$invoiceId'
+      path: '/invoices/$invoiceId'
+      fullPath: '/invoices/$invoiceId'
+      preLoaderRoute: typeof AuthenticatedInvoicesInvoiceIdRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/portal/': {
       id: '/_authenticated/portal/'
       path: '/portal'
@@ -577,6 +597,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedClientsClientIdRoute: typeof AuthenticatedClientsClientIdRoute
   AuthenticatedErrorsErrorRoute: typeof AuthenticatedErrorsErrorRoute
+  AuthenticatedInvoicesInvoiceIdRoute: typeof AuthenticatedInvoicesInvoiceIdRoute
   AuthenticatedPortalCalendarRoute: typeof AuthenticatedPortalCalendarRoute
   AuthenticatedPortalFeedRoute: typeof AuthenticatedPortalFeedRoute
   AuthenticatedPortalIdeasRoute: typeof AuthenticatedPortalIdeasRoute
@@ -591,6 +612,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedClientsClientIdRoute: AuthenticatedClientsClientIdRoute,
   AuthenticatedErrorsErrorRoute: AuthenticatedErrorsErrorRoute,
+  AuthenticatedInvoicesInvoiceIdRoute: AuthenticatedInvoicesInvoiceIdRoute,
   AuthenticatedPortalCalendarRoute: AuthenticatedPortalCalendarRoute,
   AuthenticatedPortalFeedRoute: AuthenticatedPortalFeedRoute,
   AuthenticatedPortalIdeasRoute: AuthenticatedPortalIdeasRoute,

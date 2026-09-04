@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from '@tanstack/react-router'
 import {
   CreditCard,
+  FileText,
   Loader2,
   Paperclip,
   Plus,
@@ -391,6 +393,35 @@ function InvoiceRow({
       <span className='shrink-0 display text-base'>
         {formatPence(invoice.amountPence, invoice.currency)}
       </span>
+
+      {/*
+        The invoice as a document — her layout, printable, with the Pay button
+        on it.
+
+        Sofia sent a photo of a real Banana Digital invoice and asked whether
+        "stripe could generate invoices like this". It could not, so this
+        product does; see features/invoices/document.tsx. The link is offered
+        to BOTH audiences and only once the invoice is issued, because a draft
+        has no client-visible existence and rendering hers as a finished
+        document invites her to send one she has not agreed to charge yet.
+      */}
+      {invoice.issuedOn && (
+        <Button
+          size='sm'
+          variant='outline'
+          className='h-7 shrink-0 px-2 text-xs'
+          asChild
+        >
+          <Link
+            to='/invoices/$invoiceId'
+            params={{ invoiceId: invoice.id }}
+            title={`Open ${invoice.number} as a document`}
+          >
+            <FileText className='size-3' />
+            Invoice
+          </Link>
+        </Button>
+      )}
 
       {/*
         The client's half. Everything above this is read-only for them; this is

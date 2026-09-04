@@ -1,0 +1,33 @@
+-- What an invoice needs to look like the one she actually sends.
+--
+-- Sofia sent a picture of a Banana Digital invoice — headed block, BILL TO
+-- address, itemised description, totals, payment method, payment condition —
+-- and asked whether "stripe could generate invoices like this". Stripe's own
+-- hosted invoice cannot: it is Stripe's document with her logo on it. The
+-- document has to come from here, and two facts on it had nowhere to live.
+--
+-- 1. WHO IT IS BILLED TO. `clients.name` is "Souljah Ventures" — the name she
+--    calls them. The invoice needs "Souljah Ventures LDA, Souljah Promotions,
+--    One Sound Unification Festival Project, Lisbon, Portugal", which is a
+--    legal entity and an address, and is not the same string.
+--
+--    One free-text column rather than four structured ones. An address is
+--    lines, not fields: hers has a company, a trading name, a project and a
+--    country in it, and any schema that tried to model that would be wrong for
+--    the next client. It is printed verbatim and never parsed.
+--
+--    Client-visible, like every other column on `clients` — they may read
+--    their own row whole. That is fine here: it is their own address, and they
+--    are the ones who would notice it was wrong.
+--
+-- 2. HOW TO PAY, and on what terms. Both are agency-wide rather than per
+--    invoice — the same sort code on every one — so they go in `system_meta`,
+--    which already exists for exactly this and carries no RLS because it holds
+--    nothing belonging to a tenant. No migration is needed for that; it is a
+--    key/value row written by the settings route.
+--
+--    Deliberately NOT an environment variable and NOT a constant in the
+--    repository: this repo is PUBLIC, and an account number is not something
+--    to publish even though it is printed on every invoice she sends.
+
+ALTER TABLE clients ADD COLUMN billing_address text;

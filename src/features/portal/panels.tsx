@@ -7,6 +7,7 @@ import {
   Eye,
   EyeOff,
   FileText,
+  MessageSquare,
   Plus,
   Send,
   Trash2,
@@ -31,6 +32,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { safeHref } from '@/lib/safe-href'
+import { TaskThread } from './task-thread'
 
 function CardTitleRow({
   title,
@@ -449,6 +451,9 @@ export function TaskList({
   const [title, setTitle] = useState('')
   const [internal, setInternal] = useState(false)
   const [dueDate, setDueDate] = useState('')
+  /* One open thread at a time. Two expanded conversations in a panel this
+     narrow push everything else off the screen and neither is readable. */
+  const [threadOpen, setThreadOpen] = useState<string | null>(null)
 
   /*
    * Tasks feed the Next Steps panel as well as this one, so both keys have to
@@ -547,8 +552,8 @@ export function TaskList({
         ) : (
           <ul className='space-y-0.5'>
             {tasks.map((task) => (
-              <li
-                key={task.id}
+              <li key={task.id}>
+              <div
                 className='group flex items-center gap-2.5 rounded-md px-1.5 py-1.5 hover:bg-bd-cream'
               >
                 <Checkbox
@@ -626,6 +631,47 @@ export function TaskList({
                     </Button>
                   </span>
                 )}
+
+                {/*
+                  The same thread as the Next Steps panel, on the same to-do.
+                  
+                  Both places, because a to-do appears in both and it would be
+                  a strange product where the conversation about one of them
+                  existed on the panel at the top of the page and not on the
+                  list halfway down. Undated to-dos never reach Next Steps at
+                  all, so without this half of them would have no thread.
+                  
+                  Not hidden behind group-hover like the staff-only controls
+                  beside it: a client has to be able to find it, and a control
+                  that only appears on hover does not exist on a phone.
+                */}
+                <button
+                  type='button'
+                  onClick={() =>
+                    setThreadOpen((open) => (open === task.id ? null : task.id))
+                  }
+                  aria-expanded={threadOpen === task.id}
+                  aria-label={
+                    task.replies
+                      ? `${threadOpen === task.id ? 'Hide' : 'Show'} ${task.replies} ${task.replies === 1 ? 'reply' : 'replies'} on "${task.title}"`
+                      : `Reply to "${task.title}"`
+                  }
+                  className={cn(
+                    'flex shrink-0 items-center gap-1 rounded-full border-[1.5px] px-1.5 py-0.5',
+                    'text-[0.625rem] font-bold transition-colors',
+                    task.replies
+                      ? 'border-bd-ink bg-bd-yellow text-bd-ink hover:brightness-95'
+                      : 'border-bd-rule text-muted-foreground hover:border-bd-ink hover:text-bd-ink'
+                  )}
+                >
+                  <MessageSquare className='size-2.5' />
+                  {task.replies ? task.replies : 'Reply'}
+                </button>
+              </div>
+
+              {threadOpen === task.id && (
+                <TaskThread taskId={task.id} canModerate={canEdit} />
+              )}
               </li>
             ))}
           </ul>

@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, Film, Loader2, Plus, X } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   api,
+  approvalState,
   CONTENT_TYPES,
   formatBytes,
   formatTime,
@@ -44,7 +45,12 @@ import { useWorkspace, withClient } from '@/features/portal/use-workspace'
 import { WorkspaceSwitcher } from '@/features/portal/workspace-switcher'
 import { ContentDetailDialog } from './detail-dialog'
 import { HashtagEditor } from './hashtag-editor'
-import { TYPE_LABEL, TYPE_TONE } from './vocabulary'
+import {
+  APPROVAL_TONE,
+  approvalLabel,
+  TYPE_LABEL,
+  TYPE_STRIPE,
+} from './vocabulary'
 
 const MONTHS = [
   'January',
@@ -62,6 +68,20 @@ const MONTHS = [
 ]
 
 /** Monday-first, as her prototype had it. */
+/**
+ * What the four fills mean, in her words.
+ *
+ * 'Approved' covers scheduled and published as well — she asked for one green
+ * across all three, and from the calendar's point of view they are the same
+ * fact: nobody is waiting on anybody.
+ */
+const CALENDAR_LEGEND = [
+  { state: 'approved' as const, label: 'Approved or scheduled' },
+  { state: 'pending' as const, label: 'Waiting for approval' },
+  { state: 'declined' as const, label: 'Changes requested' },
+  { state: 'draft' as const, label: 'Not sent yet' },
+]
+
 const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 /**
@@ -229,10 +249,19 @@ export function ContentCalendar() {
                         onClick={() => setOpenId(item.id)}
                         className='flex w-full items-center gap-3 rounded-md border-[1.5px] border-bd-rule p-2 text-start'
                       >
+                        {/*
+                          The narrow layout gets the traffic light too.
+                          
+                          Colouring only the desktop grid would mean the one
+                          view she uses on her phone — the device this is most
+                          often opened on — is the one that cannot answer the
+                          question the colour exists for.
+                        */}
                         <span
                           className={cn(
-                            'flex size-9 shrink-0 flex-col items-center justify-center rounded border border-bd-ink text-[0.625rem] font-bold',
-                            TYPE_TONE[item.type]
+                            'flex size-9 shrink-0 flex-col items-center justify-center rounded border border-s-4 border-bd-ink text-[0.625rem] font-bold',
+                            APPROVAL_TONE[approvalState(item)],
+                            TYPE_STRIPE[item.type]
                           )}
                         >
                           {item.scheduledAt?.slice(8)}
@@ -245,6 +274,7 @@ export function ContentCalendar() {
                             {item.scheduledTime
                               ? `${formatTime(item.scheduledTime)} · ${TYPE_LABEL[item.type]}`
                               : TYPE_LABEL[item.type]}
+                            {` · ${approvalLabel(item)}`}
                           </span>
                         </span>
                       </button>
@@ -319,12 +349,26 @@ export function ContentCalendar() {
                                 e.stopPropagation()
                                 setOpenId(item.id)
                               }}
+                              /*
+                                Filled by APPROVAL state, striped by TYPE.
+                                
+                                Sofia asked for the calendar to answer "where
+                                is this up to" at a glance — green approved or
+                                scheduled, orange waiting, red declined — and
+                                the chips were coloured by content type, which
+                                answers a different question she can already
+                                see from the post itself. The type has not been
+                                thrown away: it is the stripe down the leading
+                                edge, so a Reel still reads as a Reel without
+                                competing with the signal that needs acting on.
+                              */
                               className={cn(
-                                'block w-full truncate rounded border border-bd-ink px-1 py-0.5 text-start',
-                                'text-[0.625rem] font-bold text-bd-ink hover:opacity-80',
-                                TYPE_TONE[item.type]
+                                'block w-full truncate rounded border border-s-4 border-bd-ink px-1 py-0.5 text-start',
+                                'text-[0.625rem] font-bold hover:opacity-80',
+                                APPROVAL_TONE[approvalState(item)],
+                                TYPE_STRIPE[item.type]
                               )}
-                              title={`${item.scheduledTime ? formatTime(item.scheduledTime) + ' ' : ''}${TYPE_LABEL[item.type]}: ${item.title}`}
+                              title={`${item.scheduledTime ? formatTime(item.scheduledTime) + ' ' : ''}${TYPE_LABEL[item.type]}: ${item.title} — ${approvalLabel(item)}`}
                             >
                               {item.scheduledTime && (
                                 <span className='font-extrabold'>
@@ -341,7 +385,31 @@ export function ContentCalendar() {
                 })}
               </div>
 
-              <p className='mt-3 text-xs text-muted-foreground italic'>
+              {/*
+                A legend, because a colour nobody has been told the meaning of
+                is decoration. Four swatches and four words is cheaper than
+                either side guessing, and it is the same vocabulary as the
+                pills on every other screen.
+              */}
+              <div className='mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5'>
+                {CALENDAR_LEGEND.map(({ state, label }) => (
+                  <span
+                    key={state}
+                    className='flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground'
+                  >
+                    <span
+                      aria-hidden
+                      className={cn(
+                        'size-2.5 rounded-full border-[1.5px] border-bd-ink',
+                        APPROVAL_TONE[state]
+                      )}
+                    />
+                    {label}
+                  </span>
+                ))}
+              </div>
+
+              <p className='mt-2 text-xs text-muted-foreground italic'>
                 {isStaff
                   ? 'Click a day to schedule a post, or a post to open it. Every post here is the same record as its entry in the Ideas Bank.'
                   : 'Click a post to review it and leave a comment.'}

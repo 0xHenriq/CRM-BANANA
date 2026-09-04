@@ -318,6 +318,26 @@ export type InvoicePayment = {
   createdAt: string
 }
 
+/**
+ * The fixed half of an invoice document: how to pay, and on what terms.
+ *
+ * Agency-wide, stored in `system_meta` rather than on each invoice — it is the
+ * same sort code every time, and retyping it is how a wrong account number
+ * reaches a document somebody pays against.
+ */
+export type InvoiceSettings = {
+  paymentMethod: string
+  paymentTerms: string
+  footer: string
+}
+
+/** Everything the printable invoice renders, in one response. */
+export type InvoiceDetail = {
+  invoice: Invoice & { clientBillingAddress: string | null }
+  payments: InvoicePayment[]
+  settings: InvoiceSettings
+}
+
 export function invoiceState(invoice: {
   status: InvoiceStatus
   amountPence: number
@@ -383,6 +403,8 @@ export type ClientDetail = {
     logoKey: string | null
     brief: string | null
     toneOfVoice: string | null
+    /** Who her invoices are made out to. Printed verbatim on the document. */
+    billingAddress: string | null
     portalEnabled: boolean
     archivedAt: string | null
     createdAt: string
@@ -475,6 +497,42 @@ export type PortalTask = {
   /** False marks internal work; clients never receive those rows at all. */
   visibleToClient: boolean
   sortOrder: number
+  /**
+   * How many replies the thread has.
+   *
+   * Counted server-side and carried on the row, so a to-do can say "2 replies"
+   * without opening it. A thread nobody knows is there is a thread nobody
+   * reads, which would make the feature exist and not work.
+   */
+  replies?: number
+}
+
+/** One reply on a to-do. Shaped like `ContentComment`, because it is one. */
+export type TaskComment = {
+  id: string
+  body: string
+  createdAt: string
+  authorId: string | null
+  authorName: string | null
+}
+
+/**
+ * A stored login for one of the client's own accounts.
+ *
+ * The password is NEVER on this object, set or not — `hasSecret` is a boolean
+ * and not a masked string, because a row of dots that matches the real length
+ * tells anyone glancing at the screen how long the password is. Revealing one
+ * is its own request and writes an audit row naming who looked.
+ */
+export type ClientCredential = {
+  id: string
+  clientId: string
+  label: string
+  username: string | null
+  notes: string | null
+  sortOrder: number
+  updatedAt: string
+  hasSecret: boolean
 }
 
 export type NoticePost = {
@@ -545,6 +603,47 @@ export type ContentItem = {
   visibleToClient: boolean
   createdAt: string
   updatedAt: string
+  /**
+   * The most recent decision on this post, or null if nobody has made one.
+   *
+   * Derived server-side from `content_approvals`, which is the append-only
+   * record. It exists because `status` cannot say "declined": asking for
+   * changes puts a post back at `in_progress`, which is exactly where a fresh
+   * draft sits, so on status alone a post the client REJECTED is
+   * indistinguishable from one nobody has sent yet.
+   */
+  lastDecision: 'approved' | 'changes_requested' | null
+}
+
+/**
+ * The traffic light. Sofia: "approved or scheduled green, pending orange, red
+ * is declined."
+ *
+ * Four states, not three. The fourth — `draft` — is everything nobody has been
+ * asked about yet, and it is deliberately colourless: giving a raw idea one of
+ * her three colours would mean every row on the Ideas Bank was lit up, and a
+ * screen where everything is a signal has no signals on it.
+ *
+ * The order of these checks is the whole function. `status` is asked first
+ * because it describes where the post is NOW; `lastDecision` is history, and a
+ * post that was declined and then resubmitted is pending again, not still red.
+ */
+export type ApprovalState = 'approved' | 'pending' | 'declined' | 'draft'
+
+export function approvalState(item: {
+  status: ContentStatus
+  lastDecision?: 'approved' | 'changes_requested' | null
+}): ApprovalState {
+  if (item.status === 'ready_for_review') return 'pending'
+  if (
+    item.status === 'approved' ||
+    item.status === 'scheduled' ||
+    item.status === 'published'
+  ) {
+    return 'approved'
+  }
+  // Back at idea or in_progress. Red only if that is where a DECISION put it.
+  return item.lastDecision === 'changes_requested' ? 'declined' : 'draft'
 }
 
 export type ContentComment = {
@@ -610,6 +709,8 @@ export type FeedCell = {
   title: string
   type: ContentType
   status: ContentStatus
+  /** See ContentItem.lastDecision. Always null on the public share page. */
+  lastDecision: 'approved' | 'changes_requested' | null
   scheduledAt: string | null
   /**
    * 'HH:MM:SS' as Postgres returns it, or null.
