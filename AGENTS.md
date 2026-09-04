@@ -274,7 +274,7 @@ npm run test:coverage
 
 The contract suite also binds the two copies of hashtag normalisation and the `canSeePortal` predicate. See invariant 17.
 
-Current counts: **106 component tests, 214 server tests.** If a change drops either number, you deleted a test.
+Current counts: **108 component tests, 313 server tests.** If a change drops either number, you deleted a test — or a suite stopped running. Both have happened; see Failure Mode 25.
 
 ### The Isolation Suite Covers Three Distinct Failure Modes
 
@@ -375,6 +375,21 @@ server/
     rate-limit.ts        In-process fixed-window limiter
   routes/                clients, deals, invoices, portal, content, media,
                          next-steps, seats, invitations
+    shares.ts            Mint/list/revoke share links. STAFF ONLY. Mounted at
+                         /api/shares — the paths inside are relative to that
+                         mount, because mounting at /api once made its
+                         `use('*', requireStaff)` apply to the WHOLE API and
+                         locked every client out of their own portal.
+    review.ts            The PUBLIC share-link surface. No auth middleware at
+                         all, by design. May never use withTenant — a test
+                         asserts the file does not contain the string.
+    stripe.ts            The Stripe webhook. Unauthenticated by necessity; the
+                         signature over the RAW body is its authentication.
+  lib/stripe.ts          The Stripe client, or null when unconfigured.
+  lib/review-tokens.ts   Mint/hash a share token; isLinkUsable (server copy).
+  lib/redact.ts          redactPath(). Its OWN module with no imports, because
+                         importing server/index.ts to test a pure function
+                         boots an HTTP server — see Failure Mode 25.
   __tests__/             isolation, contract, patch-schemas, media, fixtures
 
 src/
@@ -388,7 +403,7 @@ src/
   lib/hashtags.ts        The browser copy of the normaliser. Must stay
                          byte-identical in behaviour to the server one.
   lib/copy-text.ts       THE way this app copies to the clipboard.
-                         navigator.clipboard does NOT exist over plain HTTP.
+                         navigator.clipboard can reject even on HTTPS.
   lib/route-guards.ts    requireStaffRoute()
   hooks/use-current-user.ts   /api/me — the single authority on isStaff
   components/upload-button.tsx  THE way this app opens a file picker. A native
@@ -397,6 +412,15 @@ src/
                          colour as the fallback. The mark ITSELF is the upload
                          target when canEdit.
   features/
+    share/index.tsx           The public share page. Uses AuthLayout, never
+                              Header/Main — those need the sidebar.
+    settings/seats/           Who can sign in, invite, revoke, remove.
+    clients/tabs.ts           The client page's four tabs. Its own module: the
+                              route validates ?tab= against it, and importing
+                              it from the page component makes a cycle that
+                              collapses the router's types to `never`.
+    content/moodboard-lightbox.tsx  Click a tile to see the full image.
+    content/share-links.tsx   The Share popover on a post.
     portal/use-workspace.ts   Persisted workspace selection (shared, derived)
     content/                  Ideas Bank, Calendar, Feed, Moodboard,
                               moodboard-preview (strip, reused),
@@ -443,7 +467,7 @@ scripts/
 - **Local disk over object storage.** 416 GB free on VPS4.
 - **Derived state is never stored.** `overdue`, `paid` and `part paid` are computed from the payments and today's date; a deal's `overdue` likewise. Storing them would need something running at midnight to keep them honest, and a status that silently goes stale is worse than no status. Only what she DECIDES is persisted: `draft`/`sent`/`void`, `none`/`awaiting`/`paid`.
 - **Invoices, not a flag on the deal.** She bills a retainer in stages, so one deal carries many invoices and an invoice can be half settled. `deals.payment_status` remains as lightweight per-deal marking, but **invoices are the book** — anything totalling "owed" reads from them.
-- **`navigator.clipboard` is never called directly.** It exists only in a SECURE CONTEXT, and this application is served over plain HTTP. It works in dev, which is localhost, which is exactly how that reaches a deploy. Use `src/lib/copy-text.ts`.
+- **`navigator.clipboard` is never called directly.** The original reason has expired — the portal is HTTPS now, so it is present in production — and the rule stands on its remaining ones: it rejects when the document is not focused or permission is refused, the old bare-IP URL still forwards traffic that arrives over plain HTTP, and `copyText()` reports whether the text actually landed instead of throwing. A copy button that silently does nothing is the failure this exists to prevent. Use `src/lib/copy-text.ts`.
 - **A payment row IS the receipt.** A separate receipts table would hold the same facts twice. The row carries its own number and that is what the client quotes back.
 - **Clients are archived, never deleted.** A client is the parent of their contacts, deals, content and its assets, files, invoices, receipts, tasks and notes, all `ON DELETE CASCADE`, plus uploaded bytes that a database restore does not bring back. `archived_at` retires them from her screens instead, and Restore is one click. **Unpaid invoices stay visible on purpose** — tidying a client away must never hide money owed.
 - **Hashtags are an array, not a blob of text.** Thirty tags in a textarea cannot be counted, and Instagram rejects a post at thirty-one. Normalised on the way in: no hashes, no punctuation, deduped case-insensitively. Case is PRESERVED — the capitals are what make a long tag readable.
@@ -469,10 +493,61 @@ scripts/
 | 13 | A rule is judged on the row as it will BE, not on what the request mentions | Checking only the fields present in a PATCH leaves the other direction wide open. See Failure Mode 15 |
 | 14 | File inputs are `sr-only`, never `hidden` | `display:none` inputs do not reliably open a picker; the failure is completely silent |
 | 15 | Every staff-facing list that joins `clients` filters `isNull(clients.archivedAt)` | RLS deliberately still shows STAFF an archived client, or Restore could not read the row it restores. The filter cannot come from the policy — it must be in the query |
-| 16 | Browser APIs are feature-detected before use, never assumed | The site is plain HTTP, so every secure-context API is absent in production and present in dev. `navigator.clipboard` already shipped broken once |
+| 16 | Browser APIs are feature-detected before use, never assumed | `navigator.clipboard` shipped broken once: it is secure-context only, and the site was plain HTTP while dev was localhost, so it worked everywhere it was tested and nowhere it mattered. HTTPS closed that specific gap and not the class — an API present in your browser is not evidence about hers |
 | 17 | Logic duplicated across the client/server boundary is bound by a test in `contract.test.ts` | The server cannot import from `src` and the browser should not import from `server`, so some logic exists twice. Two copies that drift produce a UI that disagrees with what was saved. Both hashtag normalisers run over the same inputs there |
 | 18 | A query key rename is finished only when the OLD key has no references left | Keys are strings; the compiler cannot see them. Renaming one already left two mutations invalidating a key nothing read |
 | 19 | A client-role user may reach **nothing** belonging to a workspace whose `portal_enabled` is false, or whose client is archived | Enforced in `app_client_ids()` (migration 0014), which every client-visible policy goes through, and again in `resolveClientId`. It lived only in `canSeePortal` before, so the toggle closed the homepage and left the calendar, ideas bank, feed and moodboard fully readable. `invoices` and `invoice_payments` are the stated exception — money owed must not vanish |
+
+### Share Links (`review_links`)
+
+**What they are.** A bearer token in a URL that lets someone with NO ACCOUNT
+open one post, or one client's feed grid, and approve it. Whoever holds the
+link can approve — that is the property being chosen, and the UI says so beside
+the copy button.
+
+**The token.** 32 random bytes, base64url. Only its `sha256` is stored, so the
+API physically cannot re-display a link and a `backup.sh` dump contains no live
+approval credentials. Minting a replacement is one click. **256 bits of entropy
+is what makes guessing infeasible — not the rate limiter**, which protects the
+box from the traffic, a different job.
+
+**How authority is obtained.** `withReviewToken(tokenHash, {bump}, fn)` in
+`server/db/index.ts` is the ONLY way. It refuses to set any session variable
+until the hash redeems against a live, unrevoked, unexpired link belonging to a
+non-archived client. Compare with `withTenant`, which takes a context object it
+trusts — this one earns it.
+
+| Rule | Why |
+|---|---|
+| `review.ts` may never use `withTenant`, `c.get('tenant')` or `isStaff: true` | The single worst regression on this boundary is somebody "fixing" a permissions error by reaching for `withTenant`. A source-text test in `contract.test.ts` asserts the file does not contain those strings, with comments stripped first |
+| Redemption goes through `redeem_review_link()` | `review_links` is staff-only, so a plain `UPDATE` from an unauthenticated request matches zero rows. Written that way first; every valid link 404'd. A policy arm keyed to a GUC would be circular — the GUC is SET BY redemption |
+| Decisions go through `record_review_decision()` | Recording one is not a single insert: the item's status moves and an `activities` row is written, both staff-only. `content_approvals_insert` therefore gains NO review arm, which makes "a review context cannot insert an approval at all" a positive property the isolation suite asserts |
+| `AND visible_to_client` on both `content_items_select` review arms | LOAD-BEARING. It is what stops a token minted around the handler opening a raw Ideas Bank row, at the database rather than only in the route |
+| The asset arm composes: `content_item_id = app_review_content_id() AND content_item_id IN (SELECT id FROM content_items)` | Direct equality ALONE leaked. A token aimed at an unshared post could not read the post but COULD read its creative — migration 0006's bug through a new door, caught against a fixture called `secret-pitch-deck.png` |
+| `content_comments_*` is untouched | A link holder approves and leaves a note; that is all. Narrower than 0002's instruction permits is fine, wider is not |
+| Revoke, never DELETE | `content_approvals.review_link_id` is `ON DELETE SET NULL` under `CHECK num_nonnulls(actor_id, review_link_id) = 1`, so deleting a used link violates the check. Probed on all three cascade paths: deleting a link alone FAILS; deleting its content item or its client is fine |
+| The path is redacted from the log | A share URL IS a live approval credential and every request logs its path. `redactPath()` blanks it. **Caddy keeps its own access log outside this repo and must be checked separately.** `/api/shares/…` is deliberately NOT redacted — those are link ids, not credentials |
+
+### Stripe
+
+**What it is.** Hosted Checkout for what is OUTSTANDING on an invoice. No card
+number touches this server, which keeps the application out of PCI scope.
+
+**One endpoint, two audiences.** `POST /invoices/:id/checkout` serves her "send
+a payment request" button and the client's "Pay now". Which you get is decided
+by who is signed in. **The boundary is RLS, not a check in the handler** — a
+client asking about an unissued draft gets 404 because `invoices_select` gates
+on `issued_on`.
+
+| Rule | Why |
+|---|---|
+| A card payment goes through `recordPayment()` — the same function she uses by hand | One overpayment rule, one receipt sequence, one audit row. A second implementation for Stripe would be a second set of money rules that drift the first time one is corrected |
+| Amounts pass through untouched | Stripe wants the smallest currency unit, which is what this codebase already carries. There is no `* 100` anywhere for a float to spoil |
+| The webhook verifies the signature over the RAW body | Parsing and re-serialising changes key order and whitespace, and every signature then fails for reasons that look like a wrong secret |
+| No `STRIPE_WEBHOOK_SECRET` means REFUSE, never "trust for now" | An unverified webhook is an open endpoint that marks invoices paid |
+| The duplicate check runs BEFORE the money rules | Stripe redelivers until it gets a 2xx, so repeats are ORDINARY. Falling through to the overpayment refusal logged `CARD PAYMENT TAKEN THAT COULD NOT BE RECORDED` on every retry — a standing alarm about a non-event, which is the one she learns to ignore |
+| The partial unique index on `external_id` is the backstop | Two deliveries in flight at once, both reading before either writes. Code cannot settle that race. Partial, because a plain unique index would allow exactly ONE hand-entered payment across the agency where they all share NULL |
+| A session that completed but is not `paid` records nothing | A delayed payment method can complete without money arriving |
 
 ### Performance Requirements
 
@@ -502,6 +577,23 @@ Status codes: `401` unauthenticated, `403` wrong role, `404` invisible-or-absent
 ---
 
 ## Operational Tooling
+
+### Configuration Files You Must Create
+
+Two files are gitignored and neither is optional. Nothing works without them,
+and the failure looks like a bug rather than missing setup.
+
+| File | From | Holds |
+|---|---|---|
+| `.env` | `.env.example` | Database URLs, `BETTER_AUTH_SECRET`, Stripe keys |
+| `deploy.config.sh` | `deploy.config.example.sh` | Where production lives: SSH alias, app and web roots, data dir, health URL |
+
+`deploy.config.sh` is gitignored because **this repository is public**. The
+server's address, account name and directory layout are not credentials — SSH
+is key-only and Postgres is firewalled — but there is no reason to publish the
+floor plan. Every script sources it relative to its own location, so it resolves
+the same from a laptop, from cron on the server, and from a systemd timer, and
+`deploy.sh` rsyncs it to the host so the scripts that run THERE find it too.
 
 ### The SSH Tunnel (`npm run db:tunnel`)
 
@@ -555,7 +647,8 @@ chrome-devtools-axi console --type error
 - **Native modules must build on the host.** `sharp` from macOS will not load on Linux. Never rsync `node_modules`.
 - `.env` is excluded on purpose. Production secrets live only on the server.
 - Caddy cannot traverse `the deploy user’s home` (mode 0750) — that is why `dist/` is published to `$WEB_DIR`. Serving from the home directory returns **403**.
-- **The URL must not change.** `$PORTAL_URL` is shared with a real person.
+- **The URL must not change.** `https://portal.bananadigitallondon.com` is shared with a real person. The public URL is deliberately spelled out here while server paths and the bare IP are not: a customer-facing address is not infrastructure detail, and `deploy.config.sh` (gitignored) holds the things that are.
+- **The old bare-IP URL still forwards and must keep doing so.** Invitation and share links minted before the domain existed point at it. It cannot serve directly any more — cookies are `Secure`, so a session set over plain HTTP would never come back — so Caddy 302s it to HTTPS.
 
 ### Backups
 
@@ -608,10 +701,24 @@ row counts, which is how you find out the dump you were about to trust is empty
 
 ### The Ingress (Caddy on VPS4)
 
-**What it does.** Caddy listens on `:8100`, serves the built SPA from
-`$WEB_DIR`, and proxies `/api` and `/healthz` to the Node process on
-`127.0.0.1:4300`. **It is part of the application** and it has caused a full
-day of debugging that looked like an application bug and was not.
+**What it does.** Caddy terminates TLS for
+`portal.bananadigitallondon.com`, serves the built SPA from `$WEB_DIR`, and
+proxies `/api` and `/healthz` to the Node process on `127.0.0.1:4300`. **It is
+part of the application** and it has caused a full day of debugging that looked
+like an application bug and was not.
+
+**Three site blocks, and they are not interchangeable.**
+
+| Block | Serves | Notes |
+|---|---|---|
+| `portal.bananadigitallondon.com` | The portal, over HTTPS | Let's Encrypt, auto-renewed by Caddy. Also gets an automatic `:80` → `:443` redirect for this host only |
+| `:8100` | A 302 to the domain | The old bare-IP URL. It CANNOT serve directly — cookies are `Secure`, so a session set over plain HTTP is never sent back and login fails silently |
+| `:80` | An unrelated site | Not ours. A host-specific match beats a bare port match, which is why adding the domain did not disturb it |
+
+**The certificate came through TLS-ALPN-01, not HTTP-01.** `:80` has a
+catch-all for the other site, so the HTTP challenge had nowhere to land. Caddy
+fell back on its own because `:443` was free. Nothing needs configuring for
+this; know it so the log line is not mistaken for a fault.
 
 **When to look here.** When a request never reaches the server at all. If
 `journalctl` shows NO log line for the thing the user says is broken, the
@@ -621,13 +728,14 @@ application never saw it — suspect the browser or the ingress, not the code.
 ssh "$HOST" 'sudo cat /etc/caddy/Caddyfile'          # read it
 ssh "$HOST" 'sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile'
 ssh "$HOST" 'sudo systemctl reload caddy'            # apply; never restart blindly
-curl -s -D - -o /dev/null $PORTAL_URL/portal | grep -i cache-control
+curl -s -D - -o /dev/null https://portal.bananadigitallondon.com/portal | grep -i cache-control
+ssh "$HOST" 'sudo journalctl -u caddy --since "10 min ago" | grep -i certificate'
 ```
 
 **Common pitfalls.**
-- **`:80` on that box is a different site.** the same box on `:80` with no port
-  serves an unrelated application. Every URL given to a human MUST include
-  `:8100`, or they land somewhere else and no password will ever work.
+- **`:80` on that box is a different site.** The bare IP with no port serves an
+  unrelated application. Give humans the DOMAIN — never the IP, with or without
+  a port.
 - **A path matcher matches the REQUEST path, not what `try_files` rewrote to.**
   `header /index.html Cache-Control "no-cache"` matched literally nothing,
   because a browser asks for `/`, `/portal`, `/clients` — never `/index.html`.
@@ -906,31 +1014,6 @@ for a London agency.
 
 ---
 
-### Failure Mode 22: A refusal that records nothing
-
-**The bad behavior:** an upload is rejected with a 415 and the only trace is
-the request line — `POST /api/media/upload 415`. Nothing says what the file
-was, what it was sniffed as, or which screen sent it.
-
-**What happened:** she added a photo to a client's moodboard and it was
-refused. Answering "why" meant reading the timestamps of the requests either
-side of it to work out which screen she was on, then reproducing the pipeline
-against a matrix of real files to find which format it must have been. The
-answer — an iPhone HEIC — was a one-line lookup that took an hour, because the
-one place that knew it threw the fact away.
-
-**The correct behavior:** whatever decides to refuse something is the only code
-that knows why. It logs the decision and the evidence it decided on — here the
-target, the filename, the size, the sniffed type and the first bytes. Same rule
-as never discarding stderr in a verification script (Failure Mode 8): the
-message that explains the failure is the whole point.
-
-**And the message the human sees should name the file.** "That does not look
-like an image or a video we can handle" is a sentence about a file she cannot
-identify when she has selected four of them.
-
----
-
 ### Failure Mode 21: Hiding a thing from one list and calling it removed
 
 **The bad behavior:** You implement "archive" as a timestamp plus a filter on the one list you were looking at, verify that list, and report it done. The archived client stays on the pipeline board, in the dashboard's next steps, and anywhere else that joins `clients`. The feature's NAME promises removal and it delivers removal from a single screen — which is worse than not building it, because she now believes those clients are gone.
@@ -961,6 +1044,103 @@ database.
 
 ---
 
+### Failure Mode 22: A refusal that records nothing
+
+**The bad behavior:** an upload is rejected with a 415 and the only trace is
+the request line — `POST /api/media/upload 415`. Nothing says what the file
+was, what it was sniffed as, or which screen sent it.
+
+**What happened:** she added a photo to a client's moodboard and it was
+refused. Answering "why" meant reading the timestamps of the requests either
+side of it to work out which screen she was on, then reproducing the pipeline
+against a matrix of real files to find which format it must have been. The
+answer — an iPhone HEIC — was a one-line lookup that took an hour, because the
+one place that knew it threw the fact away.
+
+**The correct behavior:** whatever decides to refuse something is the only code
+that knows why. It logs the decision and the evidence it decided on — here the
+target, the filename, the size, the sniffed type and the first bytes. Same rule
+as never discarding stderr in a verification script (Failure Mode 8): the
+message that explains the failure is the whole point.
+
+**And the message the human sees should name the file.** "That does not look
+like an image or a video we can handle" is a sentence about a file she cannot
+identify when she has selected four of them.
+
+---
+
+### Failure Mode 23: Handing over a live `FileList` and then resetting the input
+
+**The bad behavior:** Passing `e.target.files` to a caller and then clearing the
+input so the same file can be chosen twice. A `FileList` is a LIVE VIEW of that
+input, so the reset empties the list the caller is holding. Consumers that read
+it synchronously are fine; every consumer that reads it asynchronously — and a
+TanStack mutation is asynchronous by definition — receives nothing.
+
+This shipped, and it broke **every upload in the application**. The failure mode
+is the worst kind: the mutation ran, iterated an empty array, sent NO REQUEST,
+and reported SUCCESS. The UI refetched and cheerfully showed the empty state.
+No error, no toast, no log line, nothing on the server. Her uploads were not
+failing; they were never happening.
+
+**The correct behavior:** Snapshot with `Array.from` BEFORE resetting, and hand
+over a plain `File[]` so the type makes the mistake unrepresentable. The same
+applies to `e.dataTransfer.files` on a drop handler — also a live view the
+browser may empty once the handler returns.
+
+### Failure Mode 24: Adding a storage-key column without registering it
+
+**The bad behavior:** Adding a column that holds a storage key — `fullKey`,
+`posterKey`, whatever comes next — without adding its name to the field list in
+`keysReferencedBy()` (`server/routes/media.ts`).
+
+That list is the only thing standing between a committed row and its bytes
+being deleted as unreferenced. The post-commit cleanup subtracts what the row
+references from what the upload produced; a key it cannot see is an orphan by
+definition. Adding `fullKey` without it deleted the original BEFORE the response
+was sent — the upload succeeded, the row pointed at a file, the file was gone.
+Caught by comparing what two URLs served: 274 bytes for the tile and 21 for the
+original, which is the length of `{"error":"Not found"}`.
+
+**The correct behavior:** A new key column is a TWO-PLACE change — the schema
+AND that list. Verify by fetching the bytes back, not by reading the insert.
+
+### Failure Mode 25: Importing `server/index.ts` from a test
+
+**The bad behavior:** Importing the app entrypoint to reach something exported
+from it. That module STARTS AN HTTP SERVER as a side effect, so the vitest
+worker tries to listen on `PORT` and dies of `EADDRINUSE` whenever a dev API is
+running.
+
+Vitest reported **"3 passed (4)"** and a green-looking 217 with **89 tests
+silently never run**. The suite's result depended on what was open in another
+terminal.
+
+**The correct behavior:** A pure function that a test needs lives in its own
+module that imports nothing and boots nothing — `server/lib/redact.ts` is the
+pattern. And READ THE FILE COUNT, not just the test count: `Test Files 3 passed
+(4)` is a failure wearing green.
+
+### Failure Mode 26: Adding a process-level handler without re-reading what it changes
+
+**The bad behavior:** Adding `process.on('unhandledRejection')` to survive an
+abandoned response — correct in itself — without following through to the code
+it changes the meaning of.
+
+Shutdown was `server.close(async () => { await closeDb(); process.exit(0) })`.
+A rejecting `pool.end()` used to take the process down: untidy, but it ENDED
+the shutdown. With rejections now survived, the same failure skips
+`process.exit` and leaves the process alive — so systemd waits its full
+`TimeoutStopSec` (90s here) before SIGKILL. Every deploy, silently slower, with
+nothing obviously wrong.
+
+**The correct behavior:** A handler that changes what happens to errors changes
+every path that was relying on an error to terminate. Grep for `process.exit`
+and for callbacks whose only exit is an awaited promise. Demonstrate the
+before-and-after rather than reasoning about it: with the old shutdown and the
+new handler, the process was still running 14 seconds after SIGTERM.
+
+
 ## Appendix A: Environment Variables
 
 | Variable | Purpose | Notes |
@@ -971,11 +1151,13 @@ database.
 | `PORT` | API port | 4300 |
 | `NODE_ENV` | `development` \| `production` \| `test` | Production serves `dist/` from Node if Caddy is absent |
 | `LOG_LEVEL` | pino level | `info` in production |
-| `COOKIE_SECURE` | `Secure` flag on session cookies | **`false` today — the site is HTTP.** Flip to `true` the moment it is HTTPS, or every login silently fails. |
+| `COOKIE_SECURE` | `Secure` flag on session cookies | **`true` in production** since the portal moved to HTTPS. It must stay in step with the scheme: `true` over HTTP makes every login fail silently, because the cookie is set and never sent back. |
 | `MAX_SEATS` | Seat cap | 10 |
 | `UPLOAD_DIR` | Where bytes land | `./.uploads` locally, `$DATA_DIR/uploads` on VPS4 |
 | `APP_URL` | Public origin | Better Auth derives callbacks and trusted origins from it |
 | `BETTER_AUTH_SECRET` | Session signing key | **Required in production.** Rotating it logs everyone out. |
+| `STRIPE_SECRET_KEY` | Card payments | Optional. Absent, the Pay buttons answer 503 naming what is missing and the rest of the portal is untouched. |
+| `STRIPE_WEBHOOK_SECRET` | Verifies webhook deliveries | Optional, and **belongs to the webhook endpoint, not the API keys page** — each endpoint has its own. Absent, the webhook refuses to run at all: an unverified webhook is an open endpoint that marks invoices paid. |
 
 ## Appendix B: Quick Reference
 
@@ -993,19 +1175,23 @@ database.
 | Rename a query key | Change it, then `grep -rn "'oldKey'" src/` and expect zero — invariant 18 |
 | Copy text to the clipboard | `copyText()` from `src/lib/copy-text.ts`. NEVER `navigator.clipboard` |
 | Open a file picker | `<UploadButton>`, or a native `<label htmlFor>`. NEVER a scripted `.click()` |
-| Retire a client | Archive it. There is no delete, and there must not be one |
+| Retire a client | Archive it. There is no delete AFFORDANCE and there must not be one — the button, the route and the label all say archive |
+| Actually destroy a client | Only on an explicit, in-conversation instruction from the human. Back up first, rehearse the DELETE inside a transaction and ROLLBACK, check for attached invoices, then commit. Bytes on disk are NOT removed by the cascade — hand the human the orphan list; Rule 1 still applies to you |
+| Set up deploys on a new machine | `cp deploy.config.example.sh deploy.config.sh` and fill it in. It is gitignored: this repo is PUBLIC, and the server address, account and directory layout are not published |
+| Test a share link end to end | Mint via `POST /api/shares/content/:id`, then fetch `/api/share/<token>` with NO cookie at all. It must work anonymously |
+| Test the Stripe webhook | Sign a payload with `stripe.webhooks.generateTestHeaderString({payload, secret})` and POST it. A forged signature MUST be 400 |
 | Drive the API without touching production | boot a second instance on `:4399` against `bd_portal_test` |
 | Find out why a request "did nothing" | `ssh "$HOST" journalctl --user -u bd-portal -n 50` — no line means it never arrived |
 | Deploy | `npm run deploy` |
 | Read production logs | `ssh "$HOST" journalctl --user -u bd-portal -n 50` |
 | Restart production | `ssh "$HOST" systemctl --user restart bd-portal.service` |
 | Check production health | `curl "$HEALTH_URL"` |
+| Check the certificate | `echo \| openssl s_client -connect portal.bananadigitallondon.com:443 2>/dev/null \| openssl x509 -noout -dates` |
 
 ## Appendix C: Current Known Limitations
 
 State these plainly when relevant. Do not paper over them.
 
-- **The site is HTTP.** Passwords cross the wire in plaintext. `COOKIE_SECURE=false` follows from this.
 - **No self-service password change.** Rotation requires `scripts/set-password.ts` on the server.
 - **No email.** Invitations are copyable links; nothing notifies a client that content awaits them except the in-app review queue.
 - **Backups sit on the same disk as the data.** They survive a mistake, not a disk failure. Copy the newest pair off the box after any session that mattered — see Backups above.
@@ -1013,7 +1199,6 @@ State these plainly when relevant. Do not paper over them.
 - **No per-client timezone.** `content_items.scheduled_time` is a bare wall-clock time and means her local reckoning. Correct for a London agency today; it is the thing to revisit before an international client.
 - **No platform model.** `content_type` is a FORMAT (video/reel/story/graphic/carousel), not a channel. There is no Instagram-vs-TikTok distinction and one caption and one hashtag set serve all destinations — the 30-tag warning names Instagram because that is the strictest, not because the post is bound to it. The Feed Preview is a hardcoded 3x3 Instagram grid.
 - **Approvals do not bind to an asset version.** `content_assets.version` and `content_approvals.version` are always 1. A client approves, the creative is replaced, and the approval row still says approved.
-- **`review_links` is schema only.** The table and its policy exist; there are no routes. Stakeholders outside the 10 seats cannot review anything.
 - **The seat cap counts client users.** `MAX_SEATS` is 10 across staff AND every client's users, because clients are modelled as members of the agency org.
 - **`audit_log` is write-only.** Every mutation writes one; nothing reads them back. There is no screen and no export.
 - **The Ideas Bank create form has no caption, hashtags or upload — deliberately.** It is quick capture for a backlog that includes pitches which never happen, and a caption box at that stage invites writing final copy for a post that may not exist. The calendar dialog takes all three. Do not "fix" this without asking.
