@@ -7,6 +7,7 @@ import { copyText } from '@/lib/copy-text'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Popover,
   PopoverContent,
@@ -32,6 +33,7 @@ export function ShareLinks({
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
   const [fresh, setFresh] = useState<string | null>(null)
+  const [recipient, setRecipient] = useState('')
   const now = new Date()
 
   const { data, isLoading } = useQuery({
@@ -41,7 +43,10 @@ export function ShareLinks({
   })
 
   const mint = useMutation({
-    mutationFn: () => api.post<{ url: string }>(`/shares/content/${contentItemId}`, {}),
+    mutationFn: () =>
+      api.post<{ url: string }>(`/shares/content/${contentItemId}`, {
+        label: recipient.trim() || null,
+      }),
     onSuccess: async (result) => {
       setFresh(result.url)
       const ok = await copyText(result.url)
@@ -67,13 +72,26 @@ export function ShareLinks({
   if (!canShare) return null
 
   const links = data?.links ?? []
+  // The ones that still open. The list below shows revoked and expired too —
+  // history is useful here — but only live ones are a reason not to mint.
+  const live = links.filter((l) => linkState(l, now) === 'live')
 
   return (
     <Popover
       open={open}
       onOpenChange={(next) => {
+        /*
+         * A freshly minted token SURVIVES a click outside.
+         *
+         * It used to be dropped here, and this is the likeliest source of the
+         * four never-opened links sitting in production: the token exists on
+         * screen exactly once, a stray click destroys it, and the only way
+         * back is to mint another. Now it stays until it is explicitly
+         * dismissed, and the label resets with it so the next one starts
+         * clean.
+         */
         setOpen(next)
-        if (!next) setFresh(null)
+        if (!next) setRecipient('')
       }}
     >
       <PopoverTrigger asChild>
@@ -93,17 +111,47 @@ export function ShareLinks({
           </div>
 
           {fresh && (
-            <div className='space-y-1.5'>
-              <Input readOnly value={fresh} className='font-mono text-xs' />
-              <p className='text-xs text-muted-foreground'>
-                Copy it now — it cannot be displayed again.
-              </p>
+            <div className='space-y-1.5 rounded-md border-[1.5px] border-bd-ink bg-bd-yellow/25 p-2'>
+              <Input readOnly value={fresh} className='bg-card font-mono text-xs' />
+              <p className='text-xs'>Copy it now — it cannot be shown again.</p>
+              <Button
+                size='sm'
+                variant='ghost'
+                className='h-6 w-full px-2 text-xs'
+                onClick={() => setFresh(null)}
+              >
+                Done — hide it
+              </Button>
             </div>
+          )}
+
+          {/* See the client-scope popover for why this is asked. */}
+          <div className='grid gap-1.5'>
+            <Label htmlFor={`post-share-label-${contentItemId}`} className='text-xs'>
+              Who is this for?
+            </Label>
+            <Input
+              id={`post-share-label-${contentItemId}`}
+              className='h-8'
+              placeholder='Nyall, or "the WhatsApp group"'
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+            />
+          </div>
+
+          {live.length > 0 && (
+            <p className='text-xs text-muted-foreground'>
+              {live.length === 1
+                ? 'There is already a live link'
+                : `There are already ${live.length} live links`}{' '}
+              for this post. Another does not replace them.
+            </p>
           )}
 
           <Button
             size='sm'
             className='w-full'
+            variant={live.length ? 'outline' : 'default'}
             onClick={() => mint.mutate()}
             disabled={mint.isPending}
           >
@@ -143,9 +191,13 @@ export function ShareLinks({
                     </span>
                     <span className='min-w-0 flex-1'>
                       {/*
-                        The thing she actually wants to know is whether they
-                        looked, so the count leads and the dates follow.
+                        Who it was for, then whether they looked, then the
+                        dates. Three rows of "Not opened yet" cannot be told
+                        apart, which is why nobody revokes any of them.
                       */}
+                      <span className='block truncate font-semibold'>
+                        {l.label ?? 'Unlabelled'}
+                      </span>
                       <span className='block'>
                         {l.useCount === 0
                           ? 'Not opened yet'
@@ -246,6 +298,7 @@ export function FeedShareButton({
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
   const [fresh, setFresh] = useState<string | null>(null)
+  const [recipient, setRecipient] = useState('')
   const now = new Date()
 
   // Only while the popover is open. Without the gate every page load fetched
@@ -262,7 +315,9 @@ export function FeedShareButton({
 
   const mint = useMutation({
     mutationFn: () =>
-      api.post<{ url: string }>(`/shares/client/${clientId}/${scope}`, {}),
+      api.post<{ url: string }>(`/shares/client/${clientId}/${scope}`, {
+        label: recipient.trim() || null,
+      }),
     onSuccess: async (result) => {
       setFresh(result.url)
       const ok = await copyText(result.url)
@@ -295,8 +350,20 @@ export function FeedShareButton({
     <Popover
       open={open}
       onOpenChange={(next) => {
+        /*
+         * A freshly minted token SURVIVES a dismissal.
+         *
+         * It used to be dropped here, and that is the likeliest source of the
+         * four never-opened links sitting in production: the token exists on
+         * screen exactly once, Escape or a stray click destroys it, and the
+         * only way back is to mint another — which adds a second live
+         * credential nobody can tell from the first.
+         *
+         * It stays until "Done — hide it". The recipient field resets so the
+         * next one starts clean.
+         */
         setOpen(next)
-        if (!next) setFresh(null)
+        if (!next) setRecipient('')
       }}
     >
       <PopoverTrigger asChild>
@@ -328,17 +395,80 @@ export function FeedShareButton({
           </div>
 
           {fresh && (
-            <>
-              <Input readOnly value={fresh} className='font-mono text-xs' />
-              <p className='text-xs text-muted-foreground'>
-                Copy it now — it cannot be displayed again.
-              </p>
-            </>
+            <div className='space-y-1.5 rounded-md border-[1.5px] border-bd-ink bg-bd-yellow/25 p-2'>
+              <Input readOnly value={fresh} className='bg-card font-mono text-xs' />
+              <div className='flex items-center justify-between gap-2'>
+                <p className='text-xs'>
+                  Copy it now — it cannot be shown again.
+                </p>
+                <Button
+                  size='sm'
+                  variant='ghost'
+                  className='h-6 shrink-0 px-2 text-xs'
+                  onClick={async () => {
+                    const ok = await copyText(fresh)
+                    toast[ok ? 'success' : 'error'](
+                      ok ? 'Copied.' : 'Copy failed — select it and copy by hand.'
+                    )
+                  }}
+                >
+                  Copy again
+                </Button>
+              </div>
+              <Button
+                size='sm'
+                variant='ghost'
+                className='h-6 w-full px-2 text-xs'
+                onClick={() => setFresh(null)}
+              >
+                Done — hide it
+              </Button>
+            </div>
+          )}
+
+          {/*
+            WHO it is for, asked before it is minted.
+
+            Without it the list below is rows of "Not opened yet, expires
+            4 Oct" that cannot be told apart, so revoking one is a guess and
+            nobody revokes anything — which is how production reached eight
+            live links. It also lets an approval that arrives through this one
+            say who it was addressed to instead of "Someone".
+          */}
+          <div className='grid gap-1.5'>
+            <Label htmlFor={`share-label-${scope}`} className='text-xs'>
+              Who is this for?
+            </Label>
+            <Input
+              id={`share-label-${scope}`}
+              className='h-8'
+              placeholder='Nyall, or "the WhatsApp group"'
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+            />
+          </div>
+
+          {/*
+            Demoted once a live link exists, and it says why.
+
+            "Create another link" as the primary action is an invitation to
+            press it, and each press issues another key to the same door. The
+            second one is occasionally what she wants — a separate link she can
+            revoke without breaking the first — so this explains rather than
+            blocks.
+          */}
+          {live.length > 0 && (
+            <p className='text-xs text-muted-foreground'>
+              {live.length === 1 ? 'There is already a live link' : `There are already ${live.length} live links`}
+              {' '}for this. Another one is only useful if you want to revoke
+              them separately — it does not replace the others.
+            </p>
           )}
 
           <Button
             size='sm'
             className='w-full'
+            variant={live.length ? 'outline' : 'default'}
             onClick={() => mint.mutate()}
             disabled={mint.isPending}
           >
@@ -350,11 +480,18 @@ export function FeedShareButton({
             <ul className='space-y-1.5 text-xs'>
               {live.map((l) => (
                 <li key={l.id} className='flex items-center gap-2'>
-                  <span className='min-w-0 flex-1 truncate'>
-                    {l.useCount === 0
-                      ? 'Not opened yet'
-                      : `Opened ${l.useCount} time${l.useCount === 1 ? '' : 's'}`}
-                    , expires {formatShortDate(localDayOf(l.expiresAt))}
+                  <span className='min-w-0 flex-1'>
+                    <span className='block truncate font-semibold'>
+                      {/* Rows minted before labels existed, and any she left
+                          blank. Better than inventing a name for them. */}
+                      {l.label ?? 'Unlabelled'}
+                    </span>
+                    <span className='block truncate text-muted-foreground'>
+                      {l.useCount === 0
+                        ? 'Not opened yet'
+                        : `Opened ${l.useCount} time${l.useCount === 1 ? '' : 's'}`}
+                      , expires {formatShortDate(localDayOf(l.expiresAt))}
+                    </span>
                   </span>
                   <Button
                     size='sm'

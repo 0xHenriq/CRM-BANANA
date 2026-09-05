@@ -637,6 +637,14 @@ export const reviewLinks = pgTable(
      * backup dump cannot contain a live approval credential — and that the API
      * physically cannot re-display a link, which is why the UI says so.
      */
+    /**
+     * Her note about who this was sent to. Staff-only, like the rest of the row.
+     *
+     * The list of links was unactionable without it — three rows all reading
+     * "Not opened yet" — which is why production accumulated eight live ones.
+     * See migration 0027.
+     */
+    label: text('label'),
     tokenHash: text('token_hash').notNull().unique(),
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
     createdBy: text('created_by').references(() => user.id, {

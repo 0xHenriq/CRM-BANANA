@@ -140,6 +140,11 @@ export type InviteResult =
 /** A share link as the staff list sees it. The token is never among these. */
 export type ShareLink = {
   id: string
+  /**
+   * Who she said it was for. Null on links minted before labels existed and
+   * on any she left blank — the list shows "Unlabelled" rather than guessing.
+   */
+  label: string | null
   scope: 'content_item' | 'feed'
   contentItemId: string | null
   expiresAt: string
@@ -720,6 +725,14 @@ export type ContentComment = {
 
 export type ContentApproval = {
   id: string
+  /**
+   * Who the share link was addressed to, when she labelled it.
+   *
+   * Null for a decision made by a signed-in user, for an unlabelled link, and
+   * for ANY link when the reader is a client — `review_links` is staff-only,
+   * so the join returns nothing and the UI says "via share link".
+   */
+  linkLabel?: string | null
   decision: 'approved' | 'changes_requested'
   note: string | null
   decidedAt: string

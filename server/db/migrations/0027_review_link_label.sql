@@ -1,0 +1,44 @@
+-- Who a share link is for.
+--
+-- The problem, in production numbers
+-- ----------------------------------
+-- Ten links minted, eight of them still live, four never opened by anybody.
+-- That is not somebody carefully managing eight recipients: it is a button
+-- that mints a new bearer credential every time it is pressed, sitting next to
+-- a list in which every row reads "Not opened yet, expires 4 Oct" and is
+-- therefore indistinguishable from every other row.
+--
+-- Three separate flaws produced it, and one column fixes the root of all of
+-- them:
+--
+--   * The list cannot be acted on. Revoking one of three identical entries is
+--     a guess, so nobody revokes anything and they accumulate.
+--   * "Create another link" is the primary action even when a live link
+--     already exists, so pressing it twice — because you were not sure the
+--     copy worked — silently issues a second key to the same door.
+--   * The token is displayed once and destroyed when the popover closes, so
+--     losing it means minting again. The four never-opened links are almost
+--     certainly this.
+--
+-- Why a label rather than a smaller fix
+-- ------------------------------------
+-- The token CANNOT be re-displayed — only its sha256 is stored, deliberately,
+-- so a database dump carries no live approval credentials. That property is
+-- worth keeping, and it means the product can never help her find a link she
+-- has already sent. What it CAN do is tell her what each one was for.
+--
+-- With a label the list becomes "Nyall — opened 3 times — Revoke", which is a
+-- thing you can act on; a second mint can say "you already have one for
+-- Nyall"; and an approval that arrives through a link can be attributed to it
+-- instead of reading "Someone approved this" — the weakest provenance in the
+-- product, on a decision that gates publication.
+--
+-- Nullable, because every existing row predates it and inventing a name for
+-- them would be worse than showing none. The UI reads null as "Unlabelled".
+--
+-- NOT client-visible, and it does not need to be: `review_links` is staff-only
+-- and stays that way. A client reading their own approval history gets NULL
+-- from the join and falls through to "Someone", which is the right answer —
+-- the label is her note about who she sent it to, not a fact about them.
+
+ALTER TABLE "review_links" ADD COLUMN "label" text;

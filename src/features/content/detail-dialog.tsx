@@ -820,9 +820,19 @@ export function ContentDetailDialog({
                         {/* A link decision genuinely has no actor — the
                             CHECK on content_approvals allows one or the
                             other — so it is named for what it was rather
-                            than falling through to "Someone". */}
+                            than falling through to "Someone".
+
+                            Named for WHO it was sent to when she labelled it.
+                            The link cannot say who actually clicked; whoever
+                            holds it can approve, and that is the property
+                            being chosen. It can say who it was addressed to,
+                            which is the question anyone asks next. Clients get
+                            null from the join — the label is her note, not
+                            theirs — and see the plain wording. */}
                         · {a.viaShareLink
-                          ? 'via share link'
+                          ? a.linkLabel
+                            ? `via the link for ${a.linkLabel}`
+                            : 'via share link'
                           : (a.actorName ?? 'Someone')}{' '}
                         ·{' '}
                         {/* "1 Sep", not en-GB's "1 Sept". The same date is

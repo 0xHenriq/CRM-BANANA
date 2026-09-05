@@ -8,6 +8,7 @@ import {
   contentAssets,
   contentComments,
   contentItems,
+  reviewLinks,
 } from '../db/schema.js'
 import { user } from '../db/auth-schema.js'
 import { audit, hhmm, recordActivity } from '../lib/audit.js'
@@ -215,9 +216,25 @@ contentRoutes.get('/:id', async (c) => {
          * "Someone approved this", which is worse than not having it.
          */
         viaShareLink: sql<boolean>`${contentApprovals.reviewLinkId} is not null`,
+        /*
+         * WHO the link was for, when she said.
+         *
+         * "Someone approved this" was the weakest provenance in the product,
+         * on the decision that gates publication. A link cannot tell you who
+         * actually clicked — whoever holds it can approve, and that is the
+         * property being chosen — but it can tell you who it was ADDRESSED to,
+         * which is the question anyone asks next.
+         *
+         * A LEFT JOIN to a STAFF-ONLY table, deliberately. For a client this
+         * returns NULL and the UI falls through to "Someone": the label is her
+         * private note about who she sent it to, not a fact the recipient is
+         * owed. RLS enforces that rather than a filter here.
+         */
+        linkLabel: reviewLinks.label,
       })
       .from(contentApprovals)
       .leftJoin(user, eq(user.id, contentApprovals.actorId))
+      .leftJoin(reviewLinks, eq(reviewLinks.id, contentApprovals.reviewLinkId))
       .where(eq(contentApprovals.contentItemId, id))
       .orderBy(desc(contentApprovals.decidedAt))
 

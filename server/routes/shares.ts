@@ -37,6 +37,7 @@ const linkUrl = (token: string) => `${env.APP_URL}/share/${token}`
 /** Everything except the token, which cannot be re-displayed by design. */
 const linkColumns = {
   id: reviewLinks.id,
+  label: reviewLinks.label,
   scope: reviewLinks.scope,
   contentItemId: reviewLinks.contentItemId,
   expiresAt: reviewLinks.expiresAt,
@@ -48,6 +49,12 @@ const linkColumns = {
 
 const mintSchema = z.object({
   days: z.number().int().min(1).max(365).optional(),
+  /**
+   * Who this one is for. Trimmed before the length check so "   " is not a
+   * label — an empty string would defeat the point, which is telling two
+   * otherwise identical rows apart.
+   */
+  label: z.string().trim().max(80).nullish(),
 })
 
 /**
@@ -90,6 +97,7 @@ shareRoutes.post('/content/:id', async (c) => {
         clientId: item.clientId,
         contentItemId: item.id,
         scope: 'content_item',
+        label: parsed.data.label || null,
         tokenHash,
         expiresAt,
         createdBy: actorId,
@@ -177,6 +185,7 @@ shareRoutes.post('/client/:id/:scope', async (c) => {
         clientId: client.id,
         contentItemId: null,
         scope,
+        label: parsed.data.label || null,
         tokenHash,
         expiresAt,
         createdBy: actorId,
