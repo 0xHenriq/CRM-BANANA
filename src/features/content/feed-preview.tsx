@@ -90,8 +90,17 @@ export function FeedPreview() {
       </Header>
 
       <Main>
+        {/*
+          Named, now that a post can say where it goes.
+
+          This grid has always been an Instagram profile — three across,
+          newest first — and calling it "3×3 grid mock up" let it quietly
+          stand for every network at once. A TikTok plan does not look like
+          this, and until migration 0024 there was no way for the product to
+          know the difference, so the label had to stay vague.
+        */}
         <PageHead
-          eyebrow='3×3 grid mock up'
+          eyebrow='Instagram · 3×3 grid mock up'
           title='Feed Preview'
           stamp={{ top: 'GRID', big: '9', bottom: 'POST' }}
           /*

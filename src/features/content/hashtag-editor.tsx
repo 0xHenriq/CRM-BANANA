@@ -6,6 +6,7 @@ import {
   normaliseHashtags,
   parseHashtagInput,
 } from '@/lib/hashtags'
+import { type Platform } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,10 +26,19 @@ import { Label } from '@/components/ui/label'
  * all three are how a person ends a tag.
  */
 export function HashtagEditor({
+  platforms,
   value,
   onChange,
   readOnly = false,
 }: {
+  /**
+   * Where the post is going, so the limit can name whose rule it is.
+   *
+   * Optional: an empty or absent list means nobody has said, and the warning
+   * then behaves exactly as it always did — Instagram is the strictest, and an
+   * unstated destination might be Instagram.
+   */
+  platforms?: Platform[] | null
   value: string[]
   onChange: (next: string[]) => void
   readOnly?: boolean
@@ -174,9 +184,22 @@ export function HashtagEditor({
       />
 
       {over && (
+        /*
+          Whose rule this is, said accurately.
+          
+          Thirty is INSTAGRAM's ceiling, and until a post could say where it
+          was going this warning had to name Instagram whether or not the post
+          was bound for it. It still shows for a post with no platforms set —
+          Instagram is the strictest and an unstated destination might be it —
+          but a post going only to TikTok is told the truth: it is over
+          Instagram's limit, and Instagram is not where it is going.
+        */
         <p className='text-xs text-destructive'>
           Instagram allows {HASHTAG_LIMIT}. The {value.length - HASHTAG_LIMIT}{' '}
-          in red will be rejected.
+          in red will be rejected
+          {platforms && platforms.length > 0 && !platforms.includes('instagram')
+            ? ' there — this post is not going to Instagram, so it may be fine.'
+            : '.'}
         </p>
       )}
     </div>

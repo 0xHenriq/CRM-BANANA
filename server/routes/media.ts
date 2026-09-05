@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream'
 import { asc, eq, sql, desc } from 'drizzle-orm'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
@@ -824,6 +825,42 @@ export function contentDisposition(filename: string): string {
  * be got wrong. parseRange and contentDisposition are already exported for
  * tests, so a third is in keeping.
  */
+/**
+ * A Node read stream as a REAL web stream, rather than a cast that says so.
+ *
+ * This was `stream as unknown as ReadableStream`, which type-checks by
+ * assertion and works right up until the client goes away mid-body. Then
+ * undici finishes the response it is holding and calls `close()` on a
+ * controller that the abort already closed:
+ *
+ *   TypeError [ERR_INVALID_STATE]: Invalid state: ReadableStream is already
+ *   closed   at ReadableByteStreamController.close (node:internal/webstreams…)
+ *
+ * It is thrown from a microtask with no request context around it, so it is an
+ * UNCAUGHT EXCEPTION and the process exits — every other request in flight
+ * dies with it, and systemd restarts into a cold pool. Observed here on a
+ * 935ms asset response whose browser was closed while it was being written;
+ * the everyday version is somebody scrubbing a video and navigating away,
+ * which is exactly what range requests exist to support.
+ *
+ * `Readable.toWeb` builds the stream Node intends: cancelling it destroys the
+ * file handle, and there is no second close to race. The double `as unknown
+ * as` was the tell — a cast that has to go through `unknown` is a cast that
+ * knows it is wrong.
+ *
+ * HONESTLY: this removes the mechanism the stack trace names, and it is not
+ * proven against the crash. The failure was seen once and would not reproduce
+ * — 40 aborted downloads of a 5.8 MB original and 14 throttled browser
+ * teardowns mid-body left the process up on the OLD code as well. What IS
+ * verified is that the response is unchanged: the full body hashes identically
+ * to the file on disk, and a Range request still answers 206 with a slice that
+ * matches the same offsets of that body. Treat a recurrence as this bug still
+ * being open rather than as a new one.
+ */
+function webStream(node: NodeJS.ReadableStream): ReadableStream {
+  return Readable.toWeb(node as Readable) as ReadableStream
+}
+
 export async function streamKey(
   c: Context,
   key: string,
@@ -877,8 +914,7 @@ export async function streamKey(
 
   if (range) {
     const { start, end } = range
-    const stream = storage.read(key, { start, end })
-    return c.body(stream as unknown as ReadableStream, 206, {
+    return c.body(webStream(storage.read(key, { start, end })), 206, {
       ...extra,
       'Content-Type': mime ?? 'application/octet-stream',
       'Content-Length': String(end - start + 1),
@@ -889,7 +925,7 @@ export async function streamKey(
   }
 
 
-  return c.body(storage.read(key) as unknown as ReadableStream, 200, {
+  return c.body(webStream(storage.read(key)), 200, {
     ...extra,
     'Content-Type': mime ?? 'application/octet-stream',
     'Content-Length': String(total),

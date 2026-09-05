@@ -1,4 +1,10 @@
-import { approvalState, type ApprovalState, type ContentStatus, type ContentType } from '@/lib/api'
+import {
+  approvalState,
+  type ApprovalState,
+  type ContentStatus,
+  type ContentType,
+  type Platform,
+} from '@/lib/api'
 
 /**
  * Her vocabulary and her colours, kept out of the component files so fast
@@ -122,4 +128,42 @@ export const TYPE_STRIPE: Record<ContentType, string> = {
   story: 'border-s-tag-story',
   graphic: 'border-s-tag-graphic',
   carousel: 'border-s-tag-carousel',
+}
+
+/**
+ * The networks, as she says them.
+ *
+ * Sentence case with the brand's own capitalisation — "TikTok", not "Tiktok".
+ * These are read on a chip a centimetre wide, and a network spelled the way
+ * nobody spells it is the sort of detail that makes a tool feel like it was
+ * built by someone who does not do this job.
+ */
+export const PLATFORM_LABEL: Record<Platform, string> = {
+  tiktok: 'TikTok',
+  instagram: 'Instagram',
+  facebook: 'Facebook',
+  youtube: 'YouTube',
+  linkedin: 'LinkedIn',
+  pinterest: 'Pinterest',
+  x: 'X',
+  threads: 'Threads',
+}
+
+/**
+ * Two letters, for the places a word will not fit.
+ *
+ * The calendar chip and a grid tile have room for a badge and not a name.
+ * Deliberately not the brand glyphs: this product has one visual language —
+ * her crate palette — and eight logos in eight house styles would be the first
+ * thing to make it look like a dashboard template.
+ */
+export const PLATFORM_SHORT: Record<Platform, string> = {
+  tiktok: 'TT',
+  instagram: 'IG',
+  facebook: 'FB',
+  youtube: 'YT',
+  linkedin: 'LI',
+  pinterest: 'PT',
+  x: 'X',
+  threads: 'TH',
 }

@@ -137,8 +137,25 @@ shareRoutes.get('/content/:id', async (c) => {
 })
 
 /** A read-only link to one client's feed grid. */
-shareRoutes.post('/client/:id/feed', async (c) => {
+/**
+ * The client-scoped share links, in one handler.
+ *
+ * `feed`, `moodboard` and `ideas` differ by one word in an insert and one word
+ * in an audit row. Written as three handlers they would differ by that — and,
+ * within a month, by whether the archived check is still there, which is the
+ * one line here doing any work.
+ */
+const CLIENT_SCOPES = ['feed', 'moodboard', 'ideas'] as const
+type ClientScope = (typeof CLIENT_SCOPES)[number]
+
+const isClientScope = (v: string): v is ClientScope =>
+  (CLIENT_SCOPES as readonly string[]).includes(v)
+
+shareRoutes.post('/client/:id/:scope', async (c) => {
   const clientId = c.req.param('id')
+  const scope = c.req.param('scope')
+  // An unknown scope is a 404 rather than a 400: the route is not a thing.
+  if (!isClientScope(scope)) return c.json({ error: 'Not found' }, 404)
   const parsed = mintSchema.safeParse(await c.req.json().catch(() => ({})))
   if (!parsed.success) return c.json({ error: 'Invalid request' }, 400)
 
@@ -159,7 +176,7 @@ shareRoutes.post('/client/:id/feed', async (c) => {
       .values({
         clientId: client.id,
         contentItemId: null,
-        scope: 'feed',
+        scope,
         tokenHash,
         expiresAt,
         createdBy: actorId,
@@ -171,7 +188,7 @@ shareRoutes.post('/client/:id/feed', async (c) => {
       action: 'share.mint',
       entity: 'review_link',
       entityId: row.id,
-      meta: { scope: 'feed', clientId: client.id, expiresAt },
+      meta: { scope, clientId: client.id, expiresAt },
     })
 
     return row
@@ -179,20 +196,26 @@ shareRoutes.post('/client/:id/feed', async (c) => {
 
   if (!result) return c.json({ error: 'Not found' }, 404)
 
-  logger.info({ linkId: result.id, scope: 'feed' }, 'share link minted')
+  logger.info({ linkId: result.id, scope }, 'share link minted')
   return c.json({ link: result, url: linkUrl(token), days: REVIEW_LINK_DAYS }, 201)
 })
 
 /** Every link for one client's feed. */
-shareRoutes.get('/client/:id/feed', async (c) => {
+shareRoutes.get('/client/:id/:scope', async (c) => {
+  const scope = c.req.param('scope')
+  if (!isClientScope(scope)) return c.json({ error: 'Not found' }, 404)
+
   const links = await withTenant(c.get('tenant'), (tx) =>
     tx
       .select(linkColumns)
       .from(reviewLinks)
+      // Scoped to the ONE view being asked about. Listing every client-scoped
+      // link here would show the moodboard's links on the feed's popover, and
+      // "Revoke" would then revoke something the reader was not looking at.
       .where(
         and(
           eq(reviewLinks.clientId, c.req.param('id')),
-          eq(reviewLinks.scope, 'feed')
+          eq(reviewLinks.scope, scope)
         )
       )
       .orderBy(desc(reviewLinks.createdAt))

@@ -280,7 +280,7 @@ npm run test:coverage
 
 The contract suite also binds the two copies of hashtag normalisation and the `canSeePortal` predicate. See invariant 17.
 
-Current counts: **113 component tests, 344 server tests.** If a change drops either number, you deleted a test — or a suite stopped running. Both have happened; see Failure Mode 25.
+Current counts: **113 component tests, 349 server tests.** If a change drops either number, you deleted a test — or a suite stopped running. Both have happened; see Failure Mode 25.
 
 ### The Isolation Suite Covers Three Distinct Failure Modes
 
@@ -467,7 +467,7 @@ scripts/
 |---|---|---|
 | `clients` | A client account. `portalEnabled` opens their workspace; `archivedAt` retires it without deleting anything; `logoKey` is their mark. | `server/db/schema.ts` |
 | `client_access` | Which workspaces a client-role user may see. The root of the visibility graph. | `server/db/schema.ts` |
-| `content_items` | **Both** the Ideas Bank and the Calendar. Unscheduled = idea; dated = calendar. `caption` is the post copy; `hashtags` is a normalised `text[]`. | `server/db/schema.ts` |
+| `content_items` | **Both** the Ideas Bank and the Calendar. Unscheduled = idea; dated = calendar. `caption` is the post copy; `hashtags` is a normalised `text[]`; `platforms` is WHERE it goes, which `type` (a format) cannot say. | `server/db/schema.ts` |
 | `content_assets` | Uploaded media for an item. First asset (by `sortOrder`) fills the feed cell. | `server/db/schema.ts` |
 | `content_approvals` | Append-only decision record. No UPDATE/DELETE policy exists. | `server/db/schema.ts` |
 | `tasks` | To-dos, with `visibleToClient` separating internal work and `dueDate` for deadlines. | `server/db/schema.ts` |
@@ -550,7 +550,8 @@ no affordance, which is the same thing on a Tuesday afternoon.
 ### Share Links (`review_links`)
 
 **What they are.** A bearer token in a URL that lets someone with NO ACCOUNT
-open one post, or one client's feed grid, and approve it. Whoever holds the
+open one post and approve it, or look at one of three client-wide views: the
+feed grid, the moodboard, or the concepts waiting on a decision. Whoever holds the
 link can approve — that is the property being chosen, and the UI says so beside
 the copy button.
 
@@ -575,6 +576,8 @@ trusts — this one earns it.
 | The asset arm composes: `content_item_id = app_review_content_id() AND content_item_id IN (SELECT id FROM content_items)` | Direct equality ALONE leaked. A token aimed at an unshared post could not read the post but COULD read its creative — migration 0006's bug through a new door, caught against a fixture called `secret-pitch-deck.png` |
 | `content_comments_*` is untouched | A link holder approves and leaves a note; that is all. Narrower than 0002's instruction permits is fine, wider is not |
 | Revoke, never DELETE | `content_approvals.review_link_id` is `ON DELETE SET NULL` under `CHECK num_nonnulls(actor_id, review_link_id) = 1`, so deleting a used link violates the check. Probed on all three cascade paths: deleting a link alone FAILS; deleting its content item or its client is fine |
+| A client-scoped link (`feed`, `moodboard`, `ideas`) sets ONE session variable — the client — and the three views differ only in the payload built from it | The rows a link can read are decided once, in `app_review_client_id()`, rather than three times. Widening what a link OPENS must never widen what it READS: adding the moodboard needed a new arm on `moodboard_items`, and adding ideas needed nothing at all, because the feed arm already granted exactly those rows |
+| `CLIENT_SCOPES` in `db/index.ts` is a SET, not `scope !== 'content_item'` | A scope added later that is not client-wide would otherwise inherit the client variable by default, and the default on this boundary has to be the narrow one |
 | The path is redacted from the log | A share URL IS a live approval credential and every request logs its path. `redactPath()` blanks it. **Caddy keeps its own access log outside this repo and must be checked separately.** `/api/shares/…` is deliberately NOT redacted — those are link ids, not credentials |
 
 ### Stripe
@@ -1334,6 +1337,53 @@ and "gone from GitHub" are different claims. Contact GitHub Support to force a
 gc if the difference matters.
 
 
+### Failure Mode 31: A branch that cannot run
+
+**The bad behavior:** the public "concepts waiting" page filtered on
+`state === 'pending' || state === 'declined'` and styled a red tile for the
+declined case.
+
+**What happened:** it could never render. `content_approvals` has no review arm
+at all — a link holder records a decision through a SECURITY DEFINER function
+and can read no decision history — so `lastDecision` is absent under every
+review context and `approvalState` can only ever answer pending, approved or
+draft there. The red branch was dead, and dead code that handles a case reads
+as a case that IS handled: the next person to wonder "does the shared page show
+declined posts?" would have answered yes from the source.
+
+**The correct behavior:** when reusing a predicate across a security boundary,
+work out which of its inputs survive the crossing. Then write the branch you
+can actually reach and say in a comment why the others cannot. Verified by
+looking at the rendered page and counting tiles, not by reading the filter.
+
+---
+
+### Failure Mode 32: A cast through `unknown` in a hot path
+
+**The bad behavior:** `c.body(storage.read(key) as unknown as ReadableStream)`
+— handing a Node stream to something that wants a web stream, and silencing the
+compiler with a double cast.
+
+**What happened:** an uncaught `TypeError: Invalid state: ReadableStream is
+already closed`, thrown from inside undici when a client went away mid-body, on
+a 935ms asset response whose browser was closed. It is thrown from a microtask
+with no request context, so it is an uncaught EXCEPTION: the process exits,
+every other request in flight dies with it, and systemd restarts into a cold
+pool. Every image and video in the product goes through this path.
+
+**The correct behavior:** `Readable.toWeb()`. A cast that has to go through
+`unknown` is a cast that knows it is wrong, and in a streaming path the thing
+it is wrong about is who closes the stream.
+
+**And be honest about what is proven.** This removes the mechanism the stack
+names; it is NOT verified against the crash, which was seen once and would not
+reproduce — 40 aborted downloads of a 5.8 MB original and 14 throttled browser
+teardowns left the process up on the OLD code too. What IS verified is that the
+response did not change: the full body hashes identically to the file on disk,
+and a Range request still answers 206 with a slice matching the same offsets.
+A recurrence is this bug still open, not a new one.
+
+
 ## Appendix A: Environment Variables
 
 | Variable | Purpose | Notes |
@@ -1374,7 +1424,7 @@ gc if the difference matters.
 | Retire a client | Archive it. There is no delete AFFORDANCE and there must not be one — the button, the route and the label all say archive |
 | Actually destroy a client | Only on an explicit, in-conversation instruction from the human. Back up first, rehearse the DELETE inside a transaction and ROLLBACK, check for attached invoices, then commit. Bytes on disk are NOT removed by the cascade — hand the human the orphan list; Rule 1 still applies to you |
 | Set up deploys on a new machine | `cp deploy.config.example.sh deploy.config.sh` and fill it in. It is gitignored: this repo is PUBLIC, and the server address, account and directory layout are not published |
-| Test a share link end to end | Mint via `POST /api/shares/content/:id`, then fetch `/api/share/<token>` with NO cookie at all. It must work anonymously |
+| Test a share link end to end | Mint via `POST /api/shares/content/:id` or `POST /api/shares/client/:id/{feed,moodboard,ideas}`, then fetch `/api/share/<token>` with NO cookie at all. It must work anonymously |
 | Test the Stripe webhook | Sign a payload with `stripe.webhooks.generateTestHeaderString({payload, secret})` and POST it. A forged signature MUST be 400 |
 | Drive the API without touching production | boot a second instance on `:4399` against `bd_portal_test` |
 | Find out why a request "did nothing" | `ssh "$HOST" journalctl --user -u bd-portal -n 50` — no line means it never arrived |
@@ -1406,7 +1456,19 @@ State these plainly when relevant. Do not paper over them.
   every command answered `Required at pageId`. The UI here was verified with
   Playwright instead. Nothing in this project has been verified on Safari or
   iOS, and the print output was checked in Chrome only.
-- **No platform model.** `content_type` is a FORMAT (video/reel/story/graphic/carousel), not a channel. There is no Instagram-vs-TikTok distinction and one caption and one hashtag set serve all destinations — the 30-tag warning names Instagram because that is the strictest, not because the post is bound to it. The Feed Preview is a hardcoded 3x3 Instagram grid.
+- **One caption per post, across every platform it is aimed at.** `platforms`
+  (migration 0024) says WHERE a post goes and `content_type` says what FORM it
+  takes, which is the distinction that was missing — but the caption and the
+  hashtag set are still shared across destinations. A post going to LinkedIn
+  and TikTok gets one piece of copy. Per-platform copy is the next thing to
+  ask for and is a real schema change, not a screen.
+- **Nothing is published for her.** `platforms` is what "could this act like a
+  content calendar that pushes Live to their actual social media" needs to
+  exist at all — a row now says where Live is — but there is no integration
+  behind it. "Mark as published" is her telling the system, not the system
+  telling Instagram.
+- **The Feed Preview is Instagram's grid**, and now says so. A TikTok plan does
+  not look like a 3x3 profile, and there is no equivalent preview for one.
 - **Approvals do not bind to an asset version.** `content_assets.version` and `content_approvals.version` are always 1. A client approves, the creative is replaced, and the approval row still says approved.
 - **The seat cap counts client users.** `MAX_SEATS` is 10 across staff AND every client's users, because clients are modelled as members of the agency org.
 - **`audit_log` is write-only.** Every mutation writes one; nothing reads them back. There is no screen and no export.

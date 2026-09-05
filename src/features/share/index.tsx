@@ -9,11 +9,16 @@ import {
   formatTime,
   localDayOf,
   type ContentType,
+  approvalState,
+  type ContentStatus,
+  type Platform,
 } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
+import { safeHref } from '@/lib/safe-href'
+import { cn } from '@/lib/utils'
 import { AuthLayout } from '@/features/auth/auth-layout'
 import { TypePill } from '@/features/content/pills'
 
@@ -67,6 +72,32 @@ type SharePayload =
         status: string
         caption: string | null
       }[]
+    }
+  | {
+      scope: 'moodboard'
+      client: { name: string } | null
+      items: {
+        id: string
+        caption: string | null
+        /** Prototype-era rows hold a pasted address instead of stored bytes. */
+        url: string | null
+        hasImage: boolean
+      }[]
+    }
+  | {
+      scope: 'ideas'
+      client: { name: string } | null
+      items: {
+        id: string
+        title: string
+        type: ContentType
+        status: ContentStatus
+        caption: string | null
+        scheduledAt: string | null
+        platforms: Platform[]
+      }[]
+      /** The asset per item, from the same query the app's own grid uses. */
+      cells: { itemId: string; assetId: string; assetKind: 'image' | 'video' }[]
     }
 
 /**
@@ -136,6 +167,136 @@ export function SharePage() {
             </p>
           </CardContent>
         </Card>
+      </AuthLayout>
+    )
+  }
+
+  if (data.scope === 'moodboard') {
+    return (
+      <AuthLayout>
+        <div className='w-full max-w-3xl'>
+          <p className='mb-1 text-center text-xs tracking-[0.16em] text-muted-foreground uppercase'>
+            {data.client?.name ?? 'Brand'} moodboard
+          </p>
+          <h1 className='mb-4 text-center display text-3xl'>The look</h1>
+          {data.items.length === 0 ? (
+            <p className='text-center text-sm text-muted-foreground'>
+              Nothing pinned yet.
+            </p>
+          ) : (
+            /* A masonry, like the board itself. A moodboard read as a uniform
+               grid of squares is a different document — the shapes are part of
+               what she is showing. */
+            <div className='columns-2 gap-3 sm:columns-3'>
+              {data.items.map((item) => {
+                const src = item.hasImage
+                  ? `/api/share/${token}/moodboard/${item.id}`
+                  : safeHref(item.url)
+                if (!src) return null
+                return (
+                  <figure key={item.id} className='mb-3 break-inside-avoid'>
+                    <img
+                      src={src}
+                      alt={item.caption ?? 'Moodboard reference'}
+                      loading='lazy'
+                      className='w-full rounded border-2 border-bd-ink'
+                    />
+                    {item.caption && (
+                      <figcaption className='mt-1 text-xs text-muted-foreground'>
+                        {item.caption}
+                      </figcaption>
+                    )}
+                  </figure>
+                )
+              })}
+            </div>
+          )}
+          <p className='mt-6 text-center text-xs text-muted-foreground'>
+            Shared by Banana Digital. Anyone with this link can open it.
+          </p>
+        </div>
+      </AuthLayout>
+    )
+  }
+
+  if (data.scope === 'ideas') {
+    /*
+     * PENDING only, and that is a property of the boundary rather than a
+     * choice about layout.
+     *
+     * Her own decision grid shows pending AND declined, because both are in
+     * her queue. This page cannot show declined and must not pretend it can:
+     * `content_approvals` has no review arm at all (migration 0016 — a link
+     * holder can record a decision through a SECURITY DEFINER function but can
+     * read no decision history), so `lastDecision` is absent under every
+     * review context and `approvalState` can only ever answer pending,
+     * approved or draft here.
+     *
+     * A first version branched on `declined` and styled a red tile for it. It
+     * would never have rendered. A branch that cannot run is worse than no
+     * branch: it reads as a case that is handled.
+     *
+     * It is also the right answer for the audience. The page is addressed to
+     * the client — "waiting on you" — and a concept they have already sent
+     * back is waiting on HER.
+     */
+    const assets = new Map(data.cells.map((c) => [c.itemId, c]))
+    const waiting = data.items.filter((i) => approvalState(i) === 'pending')
+    return (
+      <AuthLayout>
+        <div className='w-full max-w-3xl'>
+          <p className='mb-1 text-center text-xs tracking-[0.16em] text-muted-foreground uppercase'>
+            {data.client?.name ?? 'Your'} concepts
+          </p>
+          <h1 className='mb-4 text-center display text-3xl'>
+            Waiting on you
+          </h1>
+          {waiting.length === 0 ? (
+            <p className='text-center text-sm text-muted-foreground'>
+              Nothing is waiting on a decision right now.
+            </p>
+          ) : (
+            <ul className='grid grid-cols-2 gap-3 sm:grid-cols-3'>
+              {waiting.map((item) => {
+                const asset = assets.get(item.id)
+                return (
+                  <li key={item.id}>
+                    <div className='relative aspect-square overflow-hidden rounded border-2 border-bd-ink bg-bd-sand'>
+                      {asset ? (
+                        <img
+                          src={`/api/share/${token}/assets/${asset.assetId}`}
+                          alt={item.title}
+                          loading='lazy'
+                          className='size-full object-cover'
+                        />
+                      ) : (
+                        <span className='flex size-full items-center justify-center text-[0.625rem] font-bold tracking-[0.1em] uppercase'>
+                          {item.type}
+                        </span>
+                      )}
+                      {/* One state can reach this page — see `waiting` above. */}
+                      <span
+                        className={cn(
+                          'absolute top-1 left-1 rounded-full border-[1.5px] border-bd-ink px-1.5 py-0.5',
+                          'bg-pay-awaiting text-[0.5625rem] font-bold text-bd-ink'
+                        )}
+                      >
+                        Waiting
+                      </span>
+                    </div>
+                    <p className='mt-1 truncate text-xs font-semibold'>
+                      {item.title}
+                    </p>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+          <p className='mt-6 text-center text-xs text-muted-foreground'>
+            Open the post links Banana Digital sent you to approve or ask for
+            changes. Anyone with this link can see this page.
+          </p>
+        </div>
       </AuthLayout>
     )
   }

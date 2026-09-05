@@ -1,0 +1,54 @@
+-- Two more things a link can open: the moodboard, and the ideas awaiting a look.
+--
+-- Read 0016_review_links.sql first. Everything there still holds; this widens
+-- WHAT a client-scoped link shows without changing how one is earned.
+--
+-- Why
+-- ---
+-- She asked, in her words, for "almost like a web page they can just view all
+-- of it on". That was deliberately not built as stated — the client page
+-- carries invoices, deal values and her private activity timeline, and a
+-- bearer link to it would hand all three to whoever the recipient forwards it
+-- to. What she is actually reaching for is narrower and safe: the two screens
+-- that exist to be LOOKED at by somebody who has not signed in. A moodboard is
+-- a pitch document. A grid of concepts awaiting a look is the thing you send
+-- when you want an opinion before you build anything.
+--
+-- Shape
+-- -----
+-- Both are CLIENT-scoped, exactly like `feed`: no single item, so
+-- `content_item_id` stays NULL and the CHECK is widened rather than rewritten.
+-- Nothing about redemption changes — `withReviewToken` still refuses a hash
+-- that does not resolve to a live, unrevoked, unexpired link on a non-archived
+-- client, and it still sets no session variable until it does.
+--
+-- The rename
+-- ----------
+-- `app_review_feed_client_id()` now answers for three scopes, and a function
+-- whose name says "feed" sitting inside the policy that decides what a
+-- stranger can read is the kind of misleading label this repository has paid
+-- for before. It becomes `app_review_client_id()` — "the client this
+-- client-scoped link opens" — and every policy that used the old name is
+-- recreated against the new one in this file. The old function is dropped, not
+-- aliased: two names for one rule is how the two come apart.
+--
+-- What is NOT widened
+-- -------------------
+--   * `AND visible_to_client` stays on the content_items arm. It is what stops
+--     an ideas link opening a raw Ideas Bank row, and it is LOAD-BEARING — the
+--     internal concepts, the rejected pitches and anything she has not chosen
+--     to show are all on the other side of it.
+--   * `content_comments` is still untouched, per 0002's narrower-is-fine rule.
+--   * `moodboard_items` gains SELECT only. A link holder looks; they do not
+--     add, caption or delete.
+
+-- THIS FILE ONLY ADDS THE VALUES, and that is not tidiness.
+--
+-- Postgres refuses to USE an enum value in the same transaction that added it,
+-- and drizzle runs each migration file inside one. Putting the CHECK and the
+-- policies here would fail with "unsafe use of new value of enum type" — so
+-- the rest is 0026, which runs in its own transaction with the values already
+-- committed.
+
+ALTER TYPE "review_scope" ADD VALUE IF NOT EXISTS 'moodboard';--> statement-breakpoint
+ALTER TYPE "review_scope" ADD VALUE IF NOT EXISTS 'ideas';

@@ -599,6 +599,25 @@ export type ContentStatus = (typeof CONTENT_STATUSES)[number]
  * its assets fill the feed preview. The prototype kept two stores that never
  * spoke, so approving an idea did nothing to the calendar.
  */
+/**
+ * The networks a post can be aimed at — the browser's copy of the server's
+ * `PLATFORMS`. Order is hers: TikTok, Instagram, Facebook are the three this
+ * agency actually runs, and the rest are there so a new client is a tick
+ * rather than a deploy.
+ */
+export const PLATFORMS = [
+  'tiktok',
+  'instagram',
+  'facebook',
+  'youtube',
+  'linkedin',
+  'pinterest',
+  'x',
+  'threads',
+] as const
+
+export type Platform = (typeof PLATFORMS)[number]
+
 export type ContentItem = {
   id: string
   clientId: string
@@ -610,6 +629,14 @@ export type ContentItem = {
   scheduledTime: string | null
   caption: string | null
   hashtags: string[]
+  /**
+   * Which networks this is for. EMPTY MEANS UNSPECIFIED, not "none".
+   *
+   * Every row that existed before migration 0024 has an empty array, so the UI
+   * says "not set" rather than inventing a default — guessing Instagram for
+   * two hundred historical rows would be a lie that looks like data.
+   */
+  platforms: Platform[]
   feedOrder: number | null
   visibleToClient: boolean
   createdAt: string

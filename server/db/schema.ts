@@ -128,7 +128,12 @@ export const invoiceStatus = pgEnum('invoice_status', [
  * two different RLS arms, so the scope is stored rather than inferred from
  * whether content_item_id happens to be null.
  */
-export const reviewScope = pgEnum('review_scope', ['content_item', 'feed'])
+export const reviewScope = pgEnum('review_scope', [
+  'content_item',
+  'feed',
+  'moodboard',
+  'ideas',
+])
 
 export const approvalDecision = pgEnum('approval_decision', [
   'approved',
@@ -560,6 +565,20 @@ export const contentItems = pgTable(
      * null, so "no hashtags" has exactly one representation.
      */
     hashtags: text('hashtags')
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    /**
+     * Which networks this post is for. Empty means nobody has said yet.
+     *
+     * Distinct from `type`, which is a FORMAT: a Reel is a Reel on Instagram,
+     * on Facebook, and as a video on TikTok. An array because one post goes to
+     * several — repurposing a Reel to TikTok is the ordinary week here, and a
+     * single-value column would force a second row carrying the same creative,
+     * caption and approval. See migration 0024 for why this is text[] rather
+     * than an enum.
+     */
+    platforms: text('platforms')
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),

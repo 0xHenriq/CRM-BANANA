@@ -29,6 +29,30 @@ export const CONTENT_TYPES = [
 ] as const
 
 /**
+ * The networks a post can be aimed at.
+ *
+ * Her three first, in her order — the seeded link stack is TikTok, Instagram,
+ * Facebook, and that is the agency's actual working set. The remaining five
+ * are the ones a London social agency is next asked for; they cost nothing to
+ * carry and mean a new client does not need a deploy.
+ *
+ * The allowlist lives HERE rather than in the database on purpose (migration
+ * 0024): networks come and go — Threads did not exist, Twitter became X — and
+ * appending to this array is a deploy where appending to a Postgres enum is a
+ * migration. The column is `text[]`; this is what constrains it.
+ */
+export const PLATFORMS = [
+  'tiktok',
+  'instagram',
+  'facebook',
+  'youtube',
+  'linkedin',
+  'pinterest',
+  'x',
+  'threads',
+] as const
+
+/**
  * Her four statuses, plus the two the prototype implied but could not express.
  * A post that is approved and dated is `scheduled`; one that has gone out is
  * `published`.
@@ -68,6 +92,7 @@ contentRoutes.get('/', async (c) => {
         scheduledTime: contentItems.scheduledTime,
         caption: contentItems.caption,
         hashtags: contentItems.hashtags,
+        platforms: contentItems.platforms,
         feedOrder: contentItems.feedOrder,
         visibleToClient: contentItems.visibleToClient,
         createdAt: contentItems.createdAt,
@@ -123,6 +148,17 @@ contentRoutes.get('/', async (c) => {
  * database.
  */
 const hashtagSchema = z.array(z.string().max(140)).max(HASHTAG_LIMIT * 4)
+
+/**
+ * Deduped and ordered as PLATFORMS is, so two rows carrying the same networks
+ * carry them in the same order. The API is the only thing constraining this
+ * column — see migration 0024 — so it refuses anything not on the list rather
+ * than storing a typo that every screen then has to render.
+ */
+const platformSchema = z
+  .array(z.enum(PLATFORMS))
+  .max(PLATFORMS.length)
+  .transform((list) => PLATFORMS.filter((p) => list.includes(p)))
 
 
 contentRoutes.get('/:id', async (c) => {
@@ -208,6 +244,7 @@ const createSchema = z.object({
     .nullish(),
   caption: z.string().max(4000).nullish(),
   hashtags: hashtagSchema.optional(),
+  platforms: platformSchema.optional(),
 })
 
 /**
@@ -228,6 +265,7 @@ const patchSchema = z.object({
     .nullish(),
   caption: z.string().max(4000).nullish(),
   hashtags: hashtagSchema.optional(),
+  platforms: platformSchema.optional(),
   feedOrder: z.number().int().nullish(),
 })
 
@@ -500,6 +538,7 @@ export function duplicateFields(source: {
   type: (typeof CONTENT_TYPES)[number]
   caption: string | null
   hashtags: string[]
+  platforms: string[]
 }) {
   return {
     title: `${source.title} (copy)`.slice(0, 200),
@@ -509,6 +548,20 @@ export function duplicateFields(source: {
     // again with a new date, and retyping thirty tags is the reason she would
     // stop using the button.
     hashtags: source.hashtags,
+    /*
+     * Carried too, and it is the same argument as the hashtags.
+     *
+     * Duplicating exists for the repurpose: the same post again with a new
+     * date, and usually the same destinations. Dropping the platforms would
+     * make every copy read as "nobody has said where this goes" — which is a
+     * real state that means something, so manufacturing it here would be a
+     * lie about a row she just told the system everything about.
+     *
+     * Adding a column to `content_items` is a TWO-PLACE change when a copy
+     * path exists. Same shape as `keysReferencedBy` in media.ts, and the same
+     * failure: a field the copier cannot see is a field the copy loses.
+     */
+    platforms: source.platforms,
     status: 'idea' as const,
     scheduledAt: null,
     scheduledTime: null,

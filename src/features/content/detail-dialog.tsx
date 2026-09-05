@@ -18,15 +18,18 @@ import {
   CONTENT_STATUSES,
   CONTENT_TYPES,
   formatTime,
+  PLATFORMS,
   type ContentDetail,
   type ContentItem,
   type ContentStatus,
   type ContentType,
+  type Platform,
   formatShortDate,
   localDayOf,
   postText,
 } from '@/lib/api'
 import { copyText } from '@/lib/copy-text'
+import { cn } from '@/lib/utils'
 import { uploadMedia } from '@/lib/upload'
 import { useCurrentUser } from '@/hooks/use-current-user'
 import { Button } from '@/components/ui/button'
@@ -50,9 +53,9 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { UploadButton } from '@/components/upload-button'
 import { HashtagEditor } from './hashtag-editor'
-import { ApprovalOverduePill, StatusPill, TypePill } from './pills'
+import { ApprovalOverduePill, PlatformBadges, StatusPill, TypePill } from './pills'
 import { ShareLinks } from './share-links'
-import { STATUS_LABEL, TYPE_LABEL } from './vocabulary'
+import { PLATFORM_LABEL, STATUS_LABEL, TYPE_LABEL } from './vocabulary'
 
 /**
  * One dialog for both the Ideas Bank and the Calendar, because they are the
@@ -116,6 +119,51 @@ export function ContentDetailDialog({
       api.patch(`/content/${itemId}`, body),
     onSuccess: invalidate,
     onError: (err: Error) => toast.error(err.message),
+  })
+
+  /**
+   * The platform toggles, applied to the screen before the server answers.
+   *
+   * These are the one control here pressed three times in a row — she picks
+   * Instagram, TikTok and Facebook for a post and moves on — and every other
+   * mutation in this dialog goes through `invalidate()`, which awaits FIVE
+   * refetches before the chip changes colour. Measured at 2.1 seconds per
+   * tick, which for a toggle reads as "did that work?".
+   *
+   * Optimistic on the EXACT key the dialog reads, `['content-item', itemId]`,
+   * and nothing else. Failure Mode 5 is optimistic updates landing on a cache
+   * entry nothing renders; the way to not do that is to write to the entry
+   * this component is subscribed to and let the invalidation behind it settle
+   * everything else.
+   *
+   * Rolls back on error, or a refused write leaves the chip lit until the next
+   * refetch — a lie about where the post is going, which is worse than a slow
+   * toggle.
+   */
+  const setPlatforms = useMutation({
+    mutationFn: (platforms: Platform[]) =>
+      api.patch(`/content/${itemId}`, { platforms }),
+    onMutate: async (platforms) => {
+      const key = ['content-item', itemId]
+      await queryClient.cancelQueries({ queryKey: key })
+      const previous = queryClient.getQueryData<ContentDetail>(key)
+      if (previous) {
+        queryClient.setQueryData<ContentDetail>(key, {
+          ...previous,
+          item: { ...previous.item, platforms },
+        })
+      }
+      return { previous }
+    },
+    onError: (err: Error, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(['content-item', itemId], context.previous)
+      }
+      toast.error(err.message)
+    },
+    // Everything else this changes — the Ideas Bank badges, the grids — still
+    // goes through the shared helper. It just no longer gates the chip.
+    onSettled: invalidate,
   })
 
   const addComment = useMutation({
@@ -211,6 +259,7 @@ export function ContentDetailDialog({
               <DialogDescription asChild>
                 <div className='flex flex-wrap items-center gap-2 pt-1'>
                   <TypePill type={item.type} />
+                  <PlatformBadges platforms={item.platforms} />
                   {/*
                     The decision list is ordered newest first by the API, so
                     its head IS `lastDecision`. Derived here rather than added
@@ -352,9 +401,61 @@ export function ContentDetailDialog({
                 </div>
                 <div className='sm:col-span-3'>
                   <HashtagEditor
+                    platforms={item.platforms}
                     value={item.hashtags ?? []}
                     onChange={(next) => patch.mutate({ hashtags: next })}
                   />
+                </div>
+
+                {/*
+                  WHERE it goes, which `type` has never been able to say.
+
+                  A Reel is a Reel on Instagram, on Facebook, and as a video on
+                  TikTok — so the format has been carrying a question it cannot
+                  answer, and the two places that quietly assumed Instagram (the
+                  3x3 grid, the 30-tag ceiling) were guessing.
+
+                  Toggles rather than a multi-select: there are eight, she uses
+                  three, and picking two of three should be two clicks and not a
+                  dropdown that has to be opened, scrolled and dismissed.
+                  Saving on each toggle, because the state IS the value — there
+                  is nothing to confirm.
+                */}
+                <div className='grid gap-1.5 sm:col-span-3'>
+                  <Label>Posting to</Label>
+                  <div className='flex flex-wrap gap-1.5'>
+                    {PLATFORMS.map((p) => {
+                      const on = (item.platforms ?? []).includes(p)
+                      return (
+                        <button
+                          key={p}
+                          type='button'
+                          aria-pressed={on}
+                          onClick={() => {
+                            const current = item.platforms ?? []
+                            setPlatforms.mutate(
+                              (on
+                                ? current.filter((x) => x !== p)
+                                : [...current, p]) as Platform[]
+                            )
+                          }}
+                          className={cn(
+                            'rounded-full border-[1.5px] px-2.5 py-0.5 text-xs font-bold transition-colors',
+                            on
+                              ? 'border-bd-ink bg-bd-yellow text-bd-ink'
+                              : 'border-bd-rule text-muted-foreground hover:border-bd-ink hover:text-bd-ink'
+                          )}
+                        >
+                          {PLATFORM_LABEL[p]}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <p className='text-xs text-muted-foreground'>
+                    {(item.platforms ?? []).length === 0
+                      ? 'Not set. The feed preview is Instagram, and the 30-tag limit is Instagram’s — say where this goes and both stop guessing.'
+                      : 'One post, one approval, however many destinations.'}
+                  </p>
                 </div>
                 <div className='flex flex-wrap items-center justify-between gap-2 sm:col-span-3'>
                   <p className='text-xs text-muted-foreground'>

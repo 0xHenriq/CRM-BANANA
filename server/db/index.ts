@@ -64,7 +64,8 @@ export type ReviewContext = {
   linkId: string
   clientId: string
   contentItemId: string | null
-  scope: 'content_item' | 'feed'
+  /** Widened by migration 0025; `CLIENT_SCOPES` below says which are client-wide. */
+  scope: 'content_item' | 'feed' | 'moodboard' | 'ideas'
   useCount: number
   lastUsedAt: Date | null
   /** From the redeeming function, not from a select — `clients` stays closed. */
@@ -99,6 +100,21 @@ export type ReviewContext = {
  * app.review_feed_client_id ONLY for a feed one, so a link cannot reach the
  * other scope's policy arm.
  */
+/**
+ * The scopes that open a WHOLE CLIENT rather than one post.
+ *
+ * `feed`, `moodboard` and `ideas` all resolve to "everything of this client's
+ * that a stranger holding the link may see", and the policies express that as
+ * `client_id = app_review_client_id()`. An item-scoped link sets no client at
+ * all, so its arm can only ever match the one post it names.
+ *
+ * A set rather than `scope !== 'content_item'`: a scope added later that is
+ * NOT client-wide would otherwise be granted the client GUC by default, and
+ * the default on this boundary has to be the narrow one. Adding a scope should
+ * mean deciding, not inheriting.
+ */
+const CLIENT_SCOPES = new Set(['feed', 'moodboard', 'ideas'])
+
 export async function withReviewToken<T>(
   tokenHash: string,
   opts: { bump: boolean },
@@ -137,7 +153,7 @@ export async function withReviewToken<T>(
         set_config('app.is_staff', 'false', true),
         set_config('app.review_link_id', ${row.id}, true),
         set_config('app.review_content_id', ${row.content_item_id ?? ''}, true),
-        set_config('app.review_feed_client_id', ${row.scope === 'feed' ? row.client_id : ''}, true)
+        set_config('app.review_feed_client_id', ${CLIENT_SCOPES.has(row.scope) ? row.client_id : ''}, true)
     `)
 
     return fn(tx, {

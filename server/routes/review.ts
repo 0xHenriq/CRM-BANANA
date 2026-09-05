@@ -2,7 +2,12 @@ import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { withReviewToken, type ReviewContext, type Tx } from '../db/index.js'
-import { contentApprovals, contentAssets, contentItems } from '../db/schema.js'
+import {
+  contentApprovals,
+  contentAssets,
+  contentItems,
+  moodboardItems,
+} from '../db/schema.js'
 import { hashReviewToken } from '../lib/review-tokens.js'
 import { logger } from '../logger.js'
 import { rateLimit } from '../middleware/rate-limit.js'
@@ -127,6 +132,62 @@ async function loadSharedIdeas(tx: Tx, review: ReviewContext) {
     .orderBy(asc(contentItems.createdAt))
 }
 
+/**
+ * The moodboard, for a link minted to show it.
+ *
+ * Her pitch document. She sends a moodboard to somebody who has not signed in
+ * far more often than she sends a post — it is the thing a new client is shown
+ * before there is a client — and until now the only way was to export the
+ * images and attach them, which strips the order she arranged them in.
+ *
+ * `url` rides along for the prototype-era rows that hold a pasted address
+ * instead of stored bytes; everything since holds a `storage_key` and is
+ * streamed through the token route below.
+ */
+async function loadMoodboardPayload(tx: Tx, review: ReviewContext) {
+  const items = await tx
+    .select({
+      id: moodboardItems.id,
+      caption: moodboardItems.caption,
+      url: moodboardItems.url,
+      hasImage: sql<boolean>`${moodboardItems.storageKey} is not null`,
+    })
+    .from(moodboardItems)
+    .where(eq(moodboardItems.clientId, review.clientId))
+    .orderBy(asc(moodboardItems.sortOrder), asc(moodboardItems.createdAt))
+  return { items }
+}
+
+/**
+ * The concepts waiting on an opinion, as the app's own decision grid sees them.
+ *
+ * Two queries because the screen uses two: the items carry what a tile says,
+ * and `selectFeedCells` carries which asset fills it. Filtering to "pending or
+ * declined" is deliberately NOT done here — the same predicate lives in
+ * `approvalState` on the client, and duplicating it in SQL would give the
+ * shared page and her own page two chances to disagree about which posts are
+ * waiting. RLS has already removed everything internal.
+ */
+async function loadIdeasPayload(tx: Tx, review: ReviewContext) {
+  const [items, cells] = await Promise.all([
+    tx
+      .select({
+        id: contentItems.id,
+        title: contentItems.title,
+        type: contentItems.type,
+        status: contentItems.status,
+        caption: contentItems.caption,
+        scheduledAt: contentItems.scheduledAt,
+        platforms: contentItems.platforms,
+      })
+      .from(contentItems)
+      .where(eq(contentItems.clientId, review.clientId))
+      .orderBy(asc(contentItems.scheduledAt), asc(contentItems.createdAt)),
+    selectFeedCells(tx, review.clientId),
+  ])
+  return { items, cells: cells.rows }
+}
+
 async function loadFeedPayload(tx: Tx, review: ReviewContext) {
   /*
    * The SAME query the Feed Preview screen uses, not a second one.
@@ -163,6 +224,20 @@ reviewRoutes.get('/:token', async (c) => {
         client,
         ...(await loadFeedPayload(tx, review)),
         ideas: await loadSharedIdeas(tx, review),
+      }
+    }
+    if (review.scope === 'moodboard') {
+      return {
+        scope: 'moodboard' as const,
+        client,
+        ...(await loadMoodboardPayload(tx, review)),
+      }
+    }
+    if (review.scope === 'ideas') {
+      return {
+        scope: 'ideas' as const,
+        client,
+        ...(await loadIdeasPayload(tx, review)),
       }
     }
     const item = await loadItemPayload(tx, review)
@@ -212,6 +287,33 @@ reviewRoutes.post('/:token/decision', async (c) => {
 
   logger.info({ decision: parsed.data.decision }, 'decision recorded via share link')
   return c.json({ ok: true, status: result.new_status })
+})
+
+/**
+ * A moodboard tile's bytes.
+ *
+ * Its own route for the same reason the asset one is: GET /api/media/moodboard
+ * is behind `requireAuth` and should stay there. The 400px tile, not the
+ * original — a shared board is a page of thumbnails, and the full-size images
+ * are a different decision she has not made.
+ *
+ * `bump: false`, like the asset route: eight tiles must not read as eight
+ * views of the board.
+ */
+reviewRoutes.get('/:token/moodboard/:itemId', async (c) => {
+  const tokenHash = hashReviewToken(c.req.param('token'))
+
+  const tile = await withReviewToken(tokenHash, { bump: false }, async (tx) => {
+    const [row] = await tx
+      .select({ storageKey: moodboardItems.storageKey })
+      .from(moodboardItems)
+      .where(eq(moodboardItems.id, c.req.param('itemId')))
+      .limit(1)
+    return row ?? null
+  })
+
+  if (!tile?.storageKey) return c.json(gone, 404)
+  return streamKey(c, tile.storageKey, 'image/webp')
 })
 
 /**

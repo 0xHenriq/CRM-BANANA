@@ -6,9 +6,11 @@ import {
   api,
   CONTENT_STATUSES,
   CONTENT_TYPES,
+  PLATFORMS,
   type ContentItem,
   type ContentStatus,
   type ContentType,
+  type Platform,
 } from '@/lib/api'
 import { useWorkspace, withClient } from '@/features/portal/use-workspace'
 import { WorkspaceSwitcher } from '@/features/portal/workspace-switcher'
@@ -50,9 +52,10 @@ import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
 import { ContentDetailDialog } from './detail-dialog'
+import { FeedShareButton } from './share-links'
 import { PostGrid } from './post-grid'
-import { ApprovalOverduePill, StatusPill, TypePill } from './pills'
-import { STATUS_LABEL, TYPE_LABEL } from './vocabulary'
+import { ApprovalOverduePill, PlatformBadges, StatusPill, TypePill } from './pills'
+import { PLATFORM_LABEL, STATUS_LABEL, TYPE_LABEL } from './vocabulary'
 
 type SortKey = 'title' | 'type' | 'scheduledAt' | 'status'
 
@@ -66,6 +69,7 @@ export function IdeasBank() {
   const [openId, setOpenId] = useState<string | null>(null)
   const [typeFilter, setTypeFilter] = useState<ContentType | 'all'>('all')
   const [statusFilter, setStatusFilter] = useState<ContentStatus | 'all'>('all')
+  const [platformFilter, setPlatformFilter] = useState<Platform | 'all'>('all')
   const [sort, setSort] = useState<{ key: SortKey; asc: boolean }>({
     key: 'scheduledAt',
     asc: true,
@@ -157,6 +161,10 @@ export function IdeasBank() {
     if (typeFilter !== 'all') list = list.filter((i) => i.type === typeFilter)
     if (statusFilter !== 'all')
       list = list.filter((i) => i.status === statusFilter)
+    // "Show me everything going to TikTok this month" — the question a social
+    // media manager asks when one network's plan needs looking at on its own.
+    if (platformFilter !== 'all')
+      list = list.filter((i) => (i.platforms ?? []).includes(platformFilter))
 
     // The prototype defined a .type-pill class and a "sortable table" and
     // shipped neither. This is that table.
@@ -182,7 +190,7 @@ export function IdeasBank() {
       }
       return String(a[sort.key]).localeCompare(String(b[sort.key])) * dir
     })
-  }, [data, typeFilter, statusFilter, sort])
+  }, [data, typeFilter, statusFilter, platformFilter, sort])
 
   /**
    * Which of the rows on screen can be sent.
@@ -238,7 +246,27 @@ export function IdeasBank() {
           eyebrow='Concept backlog'
           title='Ideas Bank'
           stamp={{ top: 'IDEA', big: '★', bottom: 'BANK' }}
-          actions={isStaff ? <NewIdeaDialog clientId={clientId} /> : undefined}
+          actions={
+            isStaff ? (
+              <div className='flex items-center gap-2'>
+                {/*
+                  "Here is what I am thinking — what do you reckon?" A link to
+                  the concepts waiting, for the client who will look at a page
+                  and never sign in to a portal. Same popover as the feed
+                  preview, a different scope.
+                */}
+                {clientId && (
+                  <FeedShareButton
+                    clientId={clientId}
+                    scope='ideas'
+                    variant='outline'
+                    label='Share concepts'
+                  />
+                )}
+                <NewIdeaDialog clientId={clientId} />
+              </div>
+            ) : undefined
+          }
         />
 
         {/*
@@ -302,13 +330,33 @@ export function IdeasBank() {
             </SelectContent>
           </Select>
 
-          {(typeFilter !== 'all' || statusFilter !== 'all') && (
+          <Select
+            value={platformFilter}
+            onValueChange={(v) => setPlatformFilter(v as Platform | 'all')}
+          >
+            <SelectTrigger className='h-8 w-40' aria-label='Filter by platform'>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='all'>All platforms</SelectItem>
+              {PLATFORMS.map((p) => (
+                <SelectItem key={p} value={p}>
+                  {PLATFORM_LABEL[p]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {(typeFilter !== 'all' ||
+            statusFilter !== 'all' ||
+            platformFilter !== 'all') && (
             <Button
               size='sm'
               variant='ghost'
               onClick={() => {
                 setTypeFilter('all')
                 setStatusFilter('all')
+                setPlatformFilter('all')
               }}
             >
               Clear
@@ -530,7 +578,13 @@ function IdeaRow({
       )}
       <TableCell className='font-semibold'>{item.title}</TableCell>
       <TableCell>
-        <TypePill type={item.type} />
+        {/* Beside the format, not in a column of its own: they answer the two
+            halves of one question — what it is, and where it goes — and an
+            eighth column would push the date off a laptop screen. */}
+        <div className='flex flex-wrap items-center gap-1.5'>
+          <TypePill type={item.type} />
+          <PlatformBadges platforms={item.platforms} />
+        </div>
       </TableCell>
       <TableCell className='text-sm text-muted-foreground'>
         {item.scheduledAt ?? '—'}

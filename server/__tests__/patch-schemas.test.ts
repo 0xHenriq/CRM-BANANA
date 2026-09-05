@@ -126,12 +126,27 @@ describe('duplicating a post resets what it must', () => {
     type: 'carousel' as const,
     caption: 'Shop the drop',
     hashtags: ['AutumnRange', 'LDN'],
+    platforms: ['instagram', 'tiktok'],
   }
 
   it('starts the copy as an unreviewed, unshared idea', () => {
     const copy = duplicateFields(approvedAndShared)
     expect(copy.status).toBe('idea')
     expect(copy.visibleToClient).toBe(false)
+  })
+
+  it('keeps the work: caption, hashtags and destinations', () => {
+    /*
+     * The three fields the copy exists to save her retyping. `platforms` was
+     * added to the table without being added here first, and the copier only
+     * carries what it can see — so every duplicate would have come back
+     * reading "nobody has said where this goes", which is a real state that
+     * means something and would have been manufactured out of nothing.
+     */
+    const copy = duplicateFields(approvedAndShared)
+    expect(copy.caption).toBe('Shop the drop')
+    expect(copy.hashtags).toEqual(['AutumnRange', 'LDN'])
+    expect(copy.platforms).toEqual(['instagram', 'tiktok'])
   })
 
   it('takes the copy off the calendar and out of the feed', () => {

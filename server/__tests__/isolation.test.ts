@@ -1285,6 +1285,73 @@ describe('10 — share links', () => {
     }
   })
 
+  /*
+   * The two scopes migration 0025 added. Both are CLIENT-scoped, so both set
+   * the same GUC a feed link sets — which is the point of the test: widening
+   * what a link can OPEN must not widen what it can READ.
+   */
+  it('a moodboard link reads that client\'s tiles', async () => {
+    // Non-vacuous first. Without rows here every assertion below passes by
+    // having nothing to find.
+    const rows = await asReviewer<{ client_id: string }>(
+      { linkId: f.reviewLinkFeedA, feedClientId: f.clientA },
+      'select client_id from moodboard_items'
+    )
+    expect(rows.length).toBeGreaterThan(0)
+    expect(rows.every((r) => r.client_id === f.clientA)).toBe(true)
+  })
+
+  it("a moodboard link reads NO other client's tiles", async () => {
+    const rows = await asReviewer(
+      { linkId: f.reviewLinkFeedA, feedClientId: f.clientA },
+      'select id from moodboard_items where client_id = $1',
+      [f.clientB]
+    )
+    expect(rows).toHaveLength(0)
+  })
+
+  it('a moodboard link cannot add, change or remove a tile', async () => {
+    // SELECT only — a link holder looks at the board. The policies for the
+    // other three verbs have no review arm at all, so these affect nothing.
+    for (const statement of [
+      `insert into moodboard_items(client_id, storage_key) values ('${f.clientA}','uploads/injected.webp')`,
+      `update moodboard_items set caption = 'rewritten' where client_id = '${f.clientA}'`,
+      `delete from moodboard_items where client_id = '${f.clientA}'`,
+    ]) {
+      await asReviewer(
+        { linkId: f.reviewLinkFeedA, feedClientId: f.clientA },
+        statement
+      ).catch(() => [])
+    }
+    const { rows } = await ownerPool.query(
+      `select count(*)::int as n from moodboard_items
+        where client_id = $1 and (caption = 'rewritten' or storage_key = 'uploads/injected.webp')`,
+      [f.clientA]
+    )
+    expect(rows[0].n).toBe(0)
+    const { rows: still } = await ownerPool.query(
+      'select count(*)::int as n from moodboard_items where client_id = $1',
+      [f.clientA]
+    )
+    expect(still[0].n).toBeGreaterThan(0)
+  })
+
+  it('an ideas link still cannot open an INTERNAL concept', async () => {
+    /*
+     * The whole reason `AND visible_to_client` stays on the content_items
+     * review arm. An ideas-scoped link is minted to show the concepts awaiting
+     * an opinion; the Ideas Bank ALSO holds raw backlog and rejected pitches,
+     * and those are on the other side of that clause. Sharing a view must
+     * never widen the rows the view is built from.
+     */
+    const rows = await asReviewer(
+      { linkId: f.reviewLinkFeedA, feedClientId: f.clientA },
+      'select id from content_items where id = $1',
+      [f.contentAHidden]
+    )
+    expect(rows).toHaveLength(0)
+  })
+
   it('a malformed GUC returns NULL rather than raising 22P02', async () => {
     // A policy that throws invites the next person to "fix" the policy.
     const rows = await asActorRaw<{ a: string | null; b: string | null }>(
@@ -1294,7 +1361,10 @@ describe('10 — share links', () => {
         'app.review_content_id': 'not-a-uuid',
         'app.review_feed_client_id': '¯\\_(ツ)_/¯',
       },
-      'select app_review_content_id() as a, app_review_feed_client_id() as b'
+      // `app_review_client_id`, renamed from ..._feed_client_id by migration
+      // 0026 once three scopes started using it. The GUC keeps its old name on
+      // purpose — see that file.
+      'select app_review_content_id() as a, app_review_client_id() as b'
     )
     expect(rows[0].a).toBeNull()
     expect(rows[0].b).toBeNull()

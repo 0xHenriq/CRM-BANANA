@@ -200,12 +200,45 @@ export function ShareLinks({
  * because one of those sentences is the warning that anyone holding the link
  * can open it.
  */
+/** What a client-scoped link opens. Mirrors CLIENT_SCOPES on the server. */
+export type ShareScope = 'feed' | 'moodboard' | 'ideas'
+
+/**
+ * The sentence each scope needs, because they are not the same promise.
+ *
+ * A feed preview is a plan; a moodboard is a pitch; a page of concepts is a
+ * request for an opinion. Sending all three under one line of copy would make
+ * the warning that actually matters — anyone holding the link can open it —
+ * read as boilerplate.
+ */
+const SCOPE_COPY: Record<ShareScope, { title: string; what: string; caveat?: string }> = {
+  feed: {
+    title: 'Share the feed preview',
+    what: 'A read-only grid of what is coming up.',
+    caveat:
+      'Only posts already shared with the client appear — internal ones are left out.',
+  },
+  moodboard: {
+    title: 'Share the moodboard',
+    what: 'The whole board, as a page. Nothing on it can be changed.',
+  },
+  ideas: {
+    title: 'Share the concepts waiting',
+    what: 'The posts that need a decision, as pictures.',
+    caveat:
+      'Only concepts already shared with the client appear — the raw backlog is left out.',
+  },
+}
+
 export function FeedShareButton({
   clientId,
+  scope = 'feed',
   label = 'Send preview',
   variant = 'default',
 }: {
   clientId: string
+  /** Which view the link opens. See SCOPE_COPY. */
+  scope?: ShareScope
   /** The page decides the wording; the behaviour is the same everywhere. */
   label?: string
   variant?: 'default' | 'outline'
@@ -218,15 +251,18 @@ export function FeedShareButton({
   // Only while the popover is open. Without the gate every page load fetched
   // share links nobody had asked to see.
   const { data } = useQuery({
-    queryKey: ['feed-shares', clientId],
+    // The scope is in the key AND the path: a moodboard link listed under the
+    // feed's popover would put "Revoke" next to something the reader is not
+    // looking at.
+    queryKey: ['feed-shares', clientId, scope],
     queryFn: () =>
-      api.get<{ links: ShareLink[] }>(`/shares/client/${clientId}/feed`),
+      api.get<{ links: ShareLink[] }>(`/shares/client/${clientId}/${scope}`),
     enabled: open,
   })
 
   const mint = useMutation({
     mutationFn: () =>
-      api.post<{ url: string }>(`/shares/client/${clientId}/feed`, {}),
+      api.post<{ url: string }>(`/shares/client/${clientId}/${scope}`, {}),
     onSuccess: async (result) => {
       setFresh(result.url)
       const ok = await copyText(result.url)
@@ -236,7 +272,7 @@ export function FeedShareButton({
           : 'Link created — copy it from the box, it cannot be shown again.'
       )
       await queryClient.invalidateQueries({
-        queryKey: ['feed-shares', clientId],
+        queryKey: ['feed-shares', clientId, scope],
       })
     },
     onError: (err: Error) => toast.error(err.message),
@@ -247,7 +283,7 @@ export function FeedShareButton({
     onSuccess: async () => {
       toast.success('Link revoked.')
       await queryClient.invalidateQueries({
-        queryKey: ['feed-shares', clientId],
+        queryKey: ['feed-shares', clientId, scope],
       })
     },
     onError: (err: Error) => toast.error(err.message),
@@ -272,22 +308,23 @@ export function FeedShareButton({
       <PopoverContent align='end' className='w-80 crate-card'>
         <div className='space-y-3'>
           <div>
-            <p className='display text-sm'>Share the feed preview</p>
+            <p className='display text-sm'>{SCOPE_COPY[scope].title}</p>
             <p className='text-xs text-muted-foreground'>
-              A read-only grid of what is coming up. No sign-in, and anyone
-              with the link can open it.
+              {SCOPE_COPY[scope].what} No sign-in, and anyone with the link can
+              open it.
             </p>
             {/*
-              Said out loud, because the grid she is looking at and the grid
-              they get are not the same one. Feed Preview shows her everything
-              including internal concepts; a share link shows only what is
-              already shared with the client. Without this she sends nine cells
-              and they open seven, and the first she hears of it is them asking.
+              Said out loud, because what she is looking at and what they get
+              are not the same thing. Her screens show everything including
+              internal work; a share link shows only what is already shared
+              with the client. Without this she sends nine cells and they open
+              seven, and the first she hears of it is them asking.
             */}
-            <p className='mt-1 text-xs text-muted-foreground'>
-              Only posts already shared with the client appear — internal ones
-              are left out.
-            </p>
+            {SCOPE_COPY[scope].caveat && (
+              <p className='mt-1 text-xs text-muted-foreground'>
+                {SCOPE_COPY[scope].caveat}
+              </p>
+            )}
           </div>
 
           {fresh && (

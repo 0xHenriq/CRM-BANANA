@@ -1,0 +1,44 @@
+-- Which network a post is FOR.
+--
+-- The gap this closes
+-- -------------------
+-- `content_type` is a FORMAT — video, reel, story, graphic, carousel — and it
+-- has been carrying the weight of a question it cannot answer. A Reel is a
+-- Reel on Instagram, on Facebook and (as a video) on TikTok, and this agency
+-- runs all three: the seeded link stack is TikTok, Instagram, Facebook, in her
+-- order. Nothing in the product knew which of them a given post was destined
+-- for, so:
+--
+--   * the Feed Preview is a 3x3 Instagram grid and says "3x3 grid mock up",
+--     which is only true for the posts that are going to Instagram
+--   * the 30-hashtag warning names Instagram because Instagram is the
+--     strictest, not because the post was bound to it
+--   * "could this act like a content calendar that pushes Live to their actual
+--     social media" — her words, marked not urgent — cannot even be designed
+--     until a row says where Live is
+--
+-- An ARRAY, not a column
+-- ----------------------
+-- One post goes to more than one network. Repurposing a Reel to TikTok is the
+-- normal week here, not the exception, and a single-value column would force a
+-- second row for the same creative, the same caption and the same approval —
+-- which is precisely the "two stores that never spoke" mistake `content_items`
+-- was created to end. One row, one decision, many destinations.
+--
+-- TEXT[], not an enum
+-- -------------------
+-- `content_type` is a pgEnum because those five are hers and are not going to
+-- change. Networks are not like that: Threads did not exist, Twitter became X,
+-- and the next client may be on YouTube or LinkedIn. The allowlist is a zod
+-- enum in the API (`PLATFORMS` in server/routes/content.ts) so adding one is a
+-- deploy rather than a migration, and `hashtags` on this same table already
+-- establishes text[] with server-side normalisation as the shape for a list
+-- whose values are vocabulary rather than structure.
+--
+-- Empty means UNSPECIFIED, not "none". Every row that exists today gets '{}',
+-- and the UI reads that as "not set yet" rather than inventing a default —
+-- guessing Instagram for two hundred historical rows would be a lie that looks
+-- like data.
+
+ALTER TABLE "content_items"
+  ADD COLUMN "platforms" text[] NOT NULL DEFAULT '{}'::text[];

@@ -21,6 +21,7 @@ import { ConfigDrawer } from '@/components/config-drawer'
 import { Header } from '@/components/layout/header'
 import { Main } from '@/components/layout/main'
 import { PageHead } from '@/components/layout/page-head'
+import { FeedShareButton } from './share-links'
 import { QueryError } from '@/components/layout/query-error'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { ThemeSwitch } from '@/components/theme-switch'
@@ -117,14 +118,31 @@ export function Moodboard() {
           stamp={{ top: 'MOOD', big: '❦', bottom: 'BOARD' }}
           actions={
             isStaff ? (
-              <UploadButton
-                label='Add images'
-                icon={<ImagePlus />}
-                accept='image/*'
-                pending={upload.isPending}
-                progress={progress}
-                onFiles={(files) => upload.mutate(files)}
-              />
+              <div className='flex items-center gap-2'>
+                {/*
+                  A moodboard is the thing she sends to somebody who has not
+                  signed in — a new client, a collaborator, the person paying —
+                  more often than she sends anything else here. Before this the
+                  only route was exporting the images and attaching them, which
+                  loses the order she arranged them in and the shapes she chose.
+                */}
+                {clientId && (
+                  <FeedShareButton
+                    clientId={clientId}
+                    scope='moodboard'
+                    variant='outline'
+                    label='Share board'
+                  />
+                )}
+                <UploadButton
+                  label='Add images'
+                  icon={<ImagePlus />}
+                  accept='image/*'
+                  pending={upload.isPending}
+                  progress={progress}
+                  onFiles={(files) => upload.mutate(files)}
+                />
+              </div>
             ) : undefined
           }
         />

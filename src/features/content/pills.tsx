@@ -5,11 +5,14 @@ import {
   type ApprovalState,
   type ContentStatus,
   type ContentType,
+  type Platform,
 } from '@/lib/api'
 import {
   APPROVAL_STATE_LABEL,
   APPROVAL_TONE,
   approvalLabel,
+  PLATFORM_LABEL,
+  PLATFORM_SHORT,
   TYPE_LABEL,
   TYPE_TONE,
 } from './vocabulary'
@@ -105,5 +108,49 @@ export function ApprovalOverduePill({
     <Pill tone='bg-destructive text-destructive-foreground'>
       Approval not received
     </Pill>
+  )
+}
+
+/**
+ * Where a post is going, as a row of two-letter badges.
+ *
+ * Outlined rather than filled, and deliberately quiet: this product already
+ * spends its colour on two things that mean something — the type fill and the
+ * approval traffic light — and a third coloured vocabulary would make all
+ * three decorative. The destination is a fact about the post, not a state
+ * anybody has to act on.
+ *
+ * Renders NOTHING when the list is empty. Empty means "nobody has said yet",
+ * and a chip reading "not set" on every historical row would be the loudest
+ * thing on a screen full of rows that are perfectly fine.
+ *
+ * The full name rides along for screen readers and on hover, because two
+ * letters are a code you have to be taught.
+ */
+export function PlatformBadges({
+  platforms,
+  className,
+}: {
+  platforms: Platform[] | null | undefined
+  className?: string
+}) {
+  const list = platforms ?? []
+  if (list.length === 0) return null
+  return (
+    <span className={cn('inline-flex flex-wrap items-center gap-1', className)}>
+      {list.map((p) => (
+        <span
+          key={p}
+          title={PLATFORM_LABEL[p]}
+          className={cn(
+            'inline-flex items-center rounded border-[1.5px] border-bd-rule px-1 py-0.5',
+            'text-[0.5625rem] font-bold tracking-[0.06em] text-bd-graphite uppercase'
+          )}
+        >
+          <span aria-hidden>{PLATFORM_SHORT[p]}</span>
+          <span className='sr-only'>{PLATFORM_LABEL[p]}</span>
+        </span>
+      ))}
+    </span>
   )
 }
