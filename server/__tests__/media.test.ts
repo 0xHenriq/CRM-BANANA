@@ -7,6 +7,7 @@ import {
   sniffMime,
 } from '../lib/media.js'
 import {
+  assetVariantKey,
   contentDisposition,
   humanSize,
   imageTypeForKey,
@@ -499,5 +500,85 @@ describe('imageTypeForKey', () => {
     expect(imageTypeForKey('c1/a.mp4')).toBeNull()
     expect(imageTypeForKey('c1/a.pdf')).toBeNull()
     expect(imageTypeForKey('c1/noextension')).toBeNull()
+  })
+})
+
+/**
+ * Which bytes a variant resolves to.
+ *
+ * This shipped broken and looked fine, which is why it is pinned here. The
+ * public share route ignored the variant and always returned `storage_key`.
+ * Every fixture in this project is a PNG, and a PNG original in an `<img>`
+ * renders — so the shared feed preview appeared to work. Production's assets
+ * are ALL `video/mp4`, and the grid was handing an `<img>` an MP4: every tile
+ * a broken image, on the one link she sends to clients.
+ *
+ * A video has no thumbnail, which is the case worth asserting: `thumb` must
+ * fall through to the poster rather than to the original, or the fix would
+ * have moved the bug one step along.
+ */
+describe('assetVariantKey', () => {
+  const video = {
+    storageKey: 'uploads/reel.mp4',
+    thumbKey: null,
+    posterKey: 'uploads/reel-poster.webp',
+    mime: 'video/mp4',
+  }
+  const photo = {
+    storageKey: 'uploads/shot.png',
+    thumbKey: 'uploads/shot-thumb.webp',
+    posterKey: null,
+    mime: 'image/png',
+  }
+
+  it('gives a video a POSTER, never the mp4, for either derived variant', () => {
+    // The whole bug in two assertions: an <img> asking for a picture of a
+    // video must not be handed the video.
+    expect(assetVariantKey(video, 'poster')).toEqual({
+      key: 'uploads/reel-poster.webp',
+      mime: 'image/webp',
+    })
+    expect(assetVariantKey(video, 'thumb')).toEqual({
+      key: 'uploads/reel-poster.webp',
+      mime: 'image/webp',
+    })
+  })
+
+  it('gives an image its thumbnail, and falls back for poster', () => {
+    expect(assetVariantKey(photo, 'thumb')).toEqual({
+      key: 'uploads/shot-thumb.webp',
+      mime: 'image/webp',
+    })
+    // An image has no poster frame; the thumbnail is the honest stand-in.
+    expect(assetVariantKey(photo, 'poster')).toEqual({
+      key: 'uploads/shot-thumb.webp',
+      mime: 'image/webp',
+    })
+  })
+
+  it('keeps the original type only for the original', () => {
+    expect(assetVariantKey(video, 'original')).toEqual({
+      key: 'uploads/reel.mp4',
+      mime: 'video/mp4',
+    })
+    expect(assetVariantKey(photo, 'original')).toEqual({
+      key: 'uploads/shot.png',
+      mime: 'image/png',
+    })
+  })
+
+  it('falls back to the original when nothing derived exists', () => {
+    // A row from before thumbnails were generated, or one whose derivation
+    // failed. Serving something is better than a 404 on a picture.
+    const bare = {
+      storageKey: 'uploads/bare.png',
+      thumbKey: null,
+      posterKey: null,
+      mime: 'image/png',
+    }
+    expect(assetVariantKey(bare, 'thumb')).toEqual({
+      key: 'uploads/bare.png',
+      mime: 'image/png',
+    })
   })
 })

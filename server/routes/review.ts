@@ -11,7 +11,12 @@ import {
 import { hashReviewToken } from '../lib/review-tokens.js'
 import { logger } from '../logger.js'
 import { rateLimit } from '../middleware/rate-limit.js'
-import { selectFeedCells, streamKey } from './media.js'
+import {
+  assetVariantKey,
+  selectFeedCells,
+  streamKey,
+  variantSchema,
+} from './media.js'
 
 /**
  * The share-link surface. Deliberately unauthenticated.
@@ -224,6 +229,18 @@ reviewRoutes.get('/:token', async (c) => {
         client,
         ...(await loadFeedPayload(tx, review)),
         ideas: await loadSharedIdeas(tx, review),
+        /*
+         * The look, under the plan.
+         *
+         * A feed preview answers "what is coming", and the first thing anyone
+         * receiving it asks next is "and what will it look like" — which is
+         * the board she has already built. Costs nothing in access terms: a
+         * feed link is client-scoped and sets the same session variable the
+         * moodboard policy reads, so this is a payload change and not a
+         * widening. Empty for a client with no board, and the page then omits
+         * the section rather than putting a heading over nothing.
+         */
+        moodboard: (await loadMoodboardPayload(tx, review)).items,
       }
     }
     if (review.scope === 'moodboard') {
@@ -330,10 +347,29 @@ reviewRoutes.get('/:token/moodboard/:itemId', async (c) => {
 reviewRoutes.get('/:token/assets/:assetId', async (c) => {
   const tokenHash = hashReviewToken(c.req.param('token'))
 
+  /*
+   * VARIANTS, the same three the authenticated route serves.
+   *
+   * This route used to hand back `storage_key` whatever was asked for — the
+   * ORIGINAL. For a photo that happens to look right, so it read as working.
+   * Her feed is Reels: every asset in production is `video/mp4` with a poster
+   * frame and no thumbnail, and the shared grid puts each cell in an `<img>`.
+   * An `<img>` pointed at an MP4 renders as a broken image with the alt text
+   * showing, which is exactly what she saw — and it means this link has never
+   * once worked for the account it was built for.
+   *
+   * The variant logic is the authenticated route's, deliberately identical:
+   * the grid she looks at and the grid she sends have to resolve the same
+   * bytes, and that has already been the subject of one bug here.
+   */
+  const variant = variantSchema.parse(c.req.query('variant'))
+
   const asset = await withReviewToken(tokenHash, { bump: false }, async (tx) => {
     const [row] = await tx
       .select({
         storageKey: contentAssets.storageKey,
+        thumbKey: contentAssets.thumbKey,
+        posterKey: contentAssets.posterKey,
         mime: contentAssets.mime,
       })
       .from(contentAssets)
@@ -343,7 +379,11 @@ reviewRoutes.get('/:token/assets/:assetId', async (c) => {
   })
 
   if (!asset) return c.json(gone, 404)
-  // The same helper the authenticated route uses, so range requests — and
-  // therefore video seeking — behave identically.
-  return streamKey(c, asset.storageKey, asset.mime)
+
+  // The SAME resolver the authenticated route uses. Two copies is how this
+  // route came to ignore the variant in the first place.
+  const { key, mime } = assetVariantKey(asset, variant)
+  // And the same streaming helper, so range requests — and therefore video
+  // seeking — behave identically.
+  return streamKey(c, key, mime)
 })

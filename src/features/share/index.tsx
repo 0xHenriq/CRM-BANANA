@@ -63,6 +63,12 @@ type SharePayload =
         scheduledTime: string | null
         feedOrder: number | null
         assetId: string
+        /**
+         * `selectFeedCells` has always returned this; the type simply never
+         * declared it, so the grid could not tell a Reel from a photo and put
+         * both in an `<img>`. Her feed is entirely video.
+         */
+        assetKind: 'image' | 'video'
       }[]
       /** Shared ideas with no date yet. Internal ones cannot reach here. */
       ideas: {
@@ -71,6 +77,13 @@ type SharePayload =
         type: ContentType
         status: string
         caption: string | null
+      }[]
+      /** The board, so the link shows the look as well as the plan. */
+      moodboard: {
+        id: string
+        caption: string | null
+        url: string | null
+        hasImage: boolean
       }[]
     }
   | {
@@ -111,6 +124,24 @@ type SharePayload =
  * arrives here as the same 404, on purpose. Telling the difference would make
  * the endpoint an oracle for guessing tokens.
  */
+/**
+ * The bytes a GRID CELL should show, which is not the original.
+ *
+ * `assetUrl()` does this for the signed-in app; the public page needs the same
+ * decision and did not have it. A video's original is an MP4, and an `<img>`
+ * pointed at an MP4 renders as a broken image with the alt text showing —
+ * which is what a shared feed preview looked like for an account whose posts
+ * are all Reels. A poster frame is extracted on upload precisely so a video
+ * has something to be a picture of.
+ */
+function shareTileUrl(
+  token: string,
+  assetId: string,
+  kind: 'image' | 'video'
+): string {
+  return `/api/share/${token}/assets/${assetId}?variant=${kind === 'video' ? 'poster' : 'thumb'}`
+}
+
 export function SharePage() {
   const { token } = useParams({ from: '/(share)/share/$token' })
   const queryClient = useQueryClient()
@@ -264,7 +295,7 @@ export function SharePage() {
                     <div className='relative aspect-square overflow-hidden rounded border-2 border-bd-ink bg-bd-sand'>
                       {asset ? (
                         <img
-                          src={`/api/share/${token}/assets/${asset.assetId}`}
+                          src={shareTileUrl(token, asset.assetId, asset.assetKind)}
                           alt={item.title}
                           loading='lazy'
                           className='size-full object-cover'
@@ -324,7 +355,7 @@ export function SharePage() {
                     >
                       {cell.assetId ? (
                         <img
-                          src={`/api/share/${token}/assets/${cell.assetId}`}
+                          src={shareTileUrl(token, cell.assetId, cell.assetKind)}
                           alt={cell.title}
                           loading='lazy'
                           className='size-full object-cover'
@@ -349,6 +380,42 @@ export function SharePage() {
               </p>
             </CardContent>
           </Card>
+
+          {/*
+            The look, under the plan.
+
+            The grid says what is coming; the board says what it will feel
+            like, and the person opening this link wants both. A masonry rather
+            than squares, because the shapes she chose are part of what she is
+            showing — cropping a moodboard to a uniform grid makes it a
+            different document.
+
+            Absent, not empty, for a client with no board.
+          */}
+          {data.moodboard.length > 0 && (
+            <Card className='mt-4 crate-card'>
+              <CardContent className='py-5'>
+                <p className='mb-3 pb-1 display text-sm crate-rule'>The look</p>
+                <div className='columns-2 gap-2 sm:columns-3'>
+                  {data.moodboard.map((tile) => {
+                    const src = tile.hasImage
+                      ? `/api/share/${token}/moodboard/${tile.id}`
+                      : safeHref(tile.url)
+                    if (!src) return null
+                    return (
+                      <img
+                        key={tile.id}
+                        src={src}
+                        alt={tile.caption ?? 'Moodboard reference'}
+                        loading='lazy'
+                        className='mb-2 w-full break-inside-avoid rounded border-2 border-bd-ink'
+                      />
+                    )
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/*
             What is still being considered, under what is already booked.
@@ -430,6 +497,9 @@ export function SharePage() {
                         controls
                         playsInline
                         preload='metadata'
+                        /* The extracted frame, so the player is not a black
+                           rectangle until somebody presses play. */
+                        poster={`/api/share/${token}/assets/${a.id}?variant=poster`}
                         className='w-full rounded border-2 border-bd-ink'
                         src={`/api/share/${token}/assets/${a.id}`}
                       />

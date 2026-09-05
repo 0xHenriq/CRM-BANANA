@@ -272,7 +272,7 @@ npm run test:coverage
 | Tenancy isolation | `server/__tests__/isolation.test.ts` | Cross-tenant, class confusion, fail-closed |
 | API/client contract | `server/__tests__/contract.test.ts` | Deal stages match on both sides; money arithmetic |
 | Patch schemas | `server/__tests__/patch-schemas.test.ts` | PATCH bodies invent no fields; duplicate resets; schedule invariants |
-| Media | `server/__tests__/media.test.ts` | Magic-number sniffing, range arithmetic, download headers, size messages, `imageTypeForKey` |
+| Media | `server/__tests__/media.test.ts` | Magic-number sniffing, range arithmetic, download headers, size messages, `imageTypeForKey`, and `assetVariantKey` — which bytes a variant resolves to |
 | Secrets | `server/__tests__/secrets.test.ts` | The password hub's AES-256-GCM: round trip, tamper detection, wrong key, refusing to run unconfigured. Pure — no database, no server |
 | URL safety | `src/lib/safe-href.test.ts` | `javascript:`/`data:` refused; `//evil.com` is not an internal path |
 | Components | `src/**/*.test.tsx` | Sign-in, config drawer, search palette, client logo, hashtag editor |
@@ -280,7 +280,7 @@ npm run test:coverage
 
 The contract suite also binds the two copies of hashtag normalisation and the `canSeePortal` predicate. See invariant 17.
 
-Current counts: **113 component tests, 349 server tests.** If a change drops either number, you deleted a test — or a suite stopped running. Both have happened; see Failure Mode 25.
+Current counts: **113 component tests, 353 server tests.** If a change drops either number, you deleted a test — or a suite stopped running. Both have happened; see Failure Mode 25.
 
 ### The Isolation Suite Covers Three Distinct Failure Modes
 
@@ -1382,6 +1382,34 @@ teardowns left the process up on the OLD code too. What IS verified is that the
 response did not change: the full body hashes identically to the file on disk,
 and a Range request still answers 206 with a slice matching the same offsets.
 A recurrence is this bug still open, not a new one.
+
+
+### Failure Mode 33: Fixtures that cannot express the production case
+
+**The bad behavior:** the public share route ignored `?variant=` and always
+served `storage_key` — the original. Two routes, two answers to "which bytes
+is this picture", and only one of them right.
+
+**What happened:** nothing, for months, because every fixture and every
+seeded asset in this project is a PNG, and a PNG original in an `<img>`
+renders. Production's assets are ALL `video/mp4` with a poster frame and no
+thumbnail, so the shared feed preview handed an `<img>` an MP4 and every tile
+was a broken image with the alt text showing. The one link she sends to clients
+had never worked, on the one account it was built for, and the browser
+verification that "images render, 0 broken" was true of the test data and
+false of hers.
+
+**The correct behavior:** two things.
+
+Seed the shape production actually has. `ffmpeg -f lavfi -i color=...` makes a
+two-second mp4 in a second, the upload pipeline extracts a real poster from it,
+and the bug is then reproducible in one request. A fixture that cannot express
+the failing case is a fixture that guarantees a green suite.
+
+And when the same decision is made in two routes, extract it. `assetVariantKey`
+is now one function both call, with the video case pinned — asserting that
+`thumb` on a video falls through to the POSTER and not to the mp4, because
+fixing it the shallow way would have moved the bug one step along.
 
 
 ## Appendix A: Environment Variables

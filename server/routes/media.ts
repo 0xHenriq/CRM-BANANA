@@ -936,7 +936,51 @@ export async function streamKey(
   })
 }
 
-const variantSchema = z.enum(['original', 'thumb', 'poster']).catch('original')
+/**
+ * Exported so the PUBLIC share route parses the same three names.
+ *
+ * A second copy is how the two routes come to disagree about what `poster`
+ * means, and they must not: the grid she looks at and the grid she sends
+ * resolve their bytes through this.
+ */
+export const variantSchema = z
+  .enum(['original', 'thumb', 'poster'])
+  .catch('original')
+
+export type AssetVariant = z.infer<typeof variantSchema>
+
+/**
+ * Which stored object a variant resolves to, and what type it is.
+ *
+ * A pure function because it was written twice — once here and once, wrongly,
+ * in the public share route, which ignored the variant entirely and always
+ * returned `storage_key`. For a photo that reads as working. For a VIDEO it
+ * hands an `<img>` an `video/mp4`, and every tile in a shared feed preview
+ * renders as a broken image. Production's assets are all video, so that link
+ * never worked for the account it was built for.
+ *
+ * The fallbacks matter and are the reason this is not two lines at each call
+ * site: a video has no thumbnail, so `thumb` has to fall through to the poster
+ * or the original rather than 404, and an image has no poster.
+ */
+export function assetVariantKey(
+  asset: {
+    storageKey: string
+    thumbKey: string | null
+    posterKey: string | null
+    mime: string | null
+  },
+  variant: AssetVariant
+): { key: string; mime: string | null } {
+  const key =
+    variant === 'thumb'
+      ? (asset.thumbKey ?? asset.posterKey ?? asset.storageKey)
+      : variant === 'poster'
+        ? (asset.posterKey ?? asset.thumbKey ?? asset.storageKey)
+        : asset.storageKey
+  // A derived variant is always a webp; only the original keeps its own type.
+  return { key, mime: key === asset.storageKey ? asset.mime : 'image/webp' }
+}
 
 mediaRoutes.get('/assets/:id', async (c) => {
   const variant = variantSchema.parse(c.req.query('variant'))
@@ -950,15 +994,7 @@ mediaRoutes.get('/assets/:id', async (c) => {
   )
   if (!asset) return c.json({ error: 'Not found' }, 404)
 
-  const key =
-    variant === 'thumb'
-      ? (asset.thumbKey ?? asset.storageKey)
-      : variant === 'poster'
-        ? (asset.posterKey ?? asset.thumbKey ?? asset.storageKey)
-        : asset.storageKey
-
-  // A derived variant is always a webp; only the original keeps its own type.
-  const mime = key === asset.storageKey ? asset.mime : 'image/webp'
+  const { key, mime } = assetVariantKey(asset, variant)
   return streamKey(c, key, mime)
 })
 
