@@ -51,4 +51,12 @@ server-dist
 # Where production lives — address, account, directory layout. Not secret, but
 # this repository is public and there is no reason to publish the floor plan.
 # See deploy.config.example.sh.
-deploy.config.sh
+#
+# The GLOB, not the exact name. A timestamped backup — deploy.config.sh.bak-…
+# — is the same floor plan under a name the exact-match rule did not cover, and
+# `git add -A` published one to a public repository. Anything that starts with
+# this name is the same file.
+deploy.config.sh*
+
+# Backups of anything, for the same reason. `.env.bak-…` would be far worse.
+*.bak-*
