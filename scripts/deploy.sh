@@ -19,6 +19,26 @@ fi
 . "$CONFIG"
 NODE="$NODE_BIN"
 
+# Fail here, with a sentence, rather than 40 seconds into an rsync.
+#
+# The specific accident: `HOST` is a name zsh already owns — it holds the local
+# machine name — so a config written as `HOST="${HOST:-vps4}"` never falls back
+# and this script tries to deploy to the laptop it is running on. The symptom
+# is "could not resolve hostname <your-mac>" from rsync, which reads like a
+# network problem rather than a config one.
+for required in HOST APP_DIR WEB_DIR NODE_BIN HEALTH_URL; do
+  if [ -z "${!required:-}" ]; then
+    echo "$CONFIG does not set $required." >&2
+    exit 1
+  fi
+done
+if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOST" true 2>/dev/null; then
+  echo "Cannot reach HOST=$HOST over ssh." >&2
+  echo "If that looks like your own machine's name, see the note about zsh and" >&2
+  echo "HOST in deploy.config.example.sh." >&2
+  exit 1
+fi
+
 echo "==> syncing source"
 # .env is excluded: production secrets live only on the server, and the local
 # file points at a tunnel that does not exist there.

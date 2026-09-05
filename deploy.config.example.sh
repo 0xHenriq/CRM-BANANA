@@ -11,6 +11,13 @@
 
 # SSH alias from your ~/.ssh/config. An alias rather than a host, so the
 # address, port and user live in your SSH config and not in this project.
+# The SSH alias or user@host. Set it UNCONDITIONALLY.
+#
+# Do not write `HOST="${HOST:-your-alias}"` to make it overridable: zsh — the
+# default shell on macOS — sets HOST to the local machine name, so the fallback
+# never fires and every script quietly tries to deploy to your laptop. That
+# cost a confused "could not resolve hostname" halfway through an rsync. If you
+# want an override, use a namespaced variable no shell owns.
 HOST="your-ssh-alias"
 
 # Where the application and the built frontend live on the server.
