@@ -237,14 +237,22 @@ export function ContentDetailDialog({
 
   return (
     <Dialog open={!!itemId} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className='max-h-[85vh] overflow-y-auto crate-card sm:max-w-2xl'>
+      {/*
+        `gap-6` overrides the primitive's `gap-4`.
+
+        Everything below is a SECTION — the fields, the assets, the decision,
+        the history, the thread — and at 16px apart they read as one continuous
+        column of controls. The complaint was that it feels crowded, and the
+        first cause is that nothing tells you where one thing ends.
+      */}
+      <DialogContent className='max-h-[85vh] gap-6 overflow-y-auto pt-0 crate-card sm:max-w-2xl'>
         {isLoading || (!data && !isError) ? (
-          <div className='space-y-3 py-4'>
+          <div className='space-y-3 pt-6 pb-4'>
             <Skeleton className='h-8 w-2/3' />
             <Skeleton className='h-32' />
           </div>
         ) : isError || !item ? (
-          <DialogHeader>
+          <DialogHeader className='pt-6'>
             <DialogTitle className='display text-xl'>Unavailable</DialogTitle>
             <DialogDescription>
               This item could not be loaded, or you no longer have access to it.
@@ -252,7 +260,30 @@ export function ContentDetailDialog({
           </DialogHeader>
         ) : (
           <>
-            <DialogHeader>
+            {/*
+              The title stays put while the body scrolls.
+
+              This dialog is long — fields, creative, a decision, its history
+              and a comment thread — and on a phone the heading was gone by the
+              time you reached the approve buttons, so you were deciding on a
+              post you could no longer see the name of. Negative margins pull
+              it out to the panel edges so the backing covers the full width
+              rather than leaving the primitive's padding transparent.
+            */}
+            {/*
+              `pt-0` on the panel and `pt-6` here, rather than `-mt-6` on a
+              header that sticks to `top-0`.
+
+              DialogContent is a GRID, so a sticky child clamps to its GRID
+              AREA — which begins below the panel's 24px padding — not to the
+              scrollport. A negative margin moves the box but not the clamp, so
+              the header parked 25px down (measured) and the caption and
+              hashtag chips scrolled visibly through the strip above it.
+              Removing the padding from the panel and giving it to the header
+              means the grid area starts at the scrollport top and `top-0`
+              means what it says.
+            */}
+            <DialogHeader className='sticky top-0 z-10 -mx-6 border-b border-bd-rule-soft bg-card px-6 pt-6 pb-3 text-start'>
               <DialogTitle className='pe-6 display text-2xl'>
                 {item.title}
               </DialogTitle>
@@ -292,11 +323,32 @@ export function ContentDetailDialog({
             </DialogHeader>
 
             {isStaff && (
-              <div className='grid gap-3 rounded-md border-[1.5px] border-dashed border-bd-rule p-3 sm:grid-cols-3'>
+              /*
+                TWO columns, not three, and no box around them.
+                
+                The box grouped nothing — it contained every field — so it was
+                a border earning no meaning while costing 12px of padding on
+                each side. Removing it gives the grid back the width it was
+                short of and takes one rectangle out of a dialog that already
+                has several.
+                
+                Three columns is what broke it. At the dialog's own design
+                width each column was ~192px, and the schedule column holds a
+                native date input (~150px intrinsic, it renders dd/mm/yyyy and
+                a picker) beside a 112px time input: 268px of content in 192px
+                of space. Inputs do not shrink below their intrinsic width, so
+                the time control hung 42px past the panel edge — measured, at
+                every viewport from 390px to 1440px.
+                
+                `gap-5` between fields against `gap-2` inside one: proximity is
+                what says a label belongs to its input, and at the old 3:1.5
+                the two readings were nearly equal.
+              */
+              <div className='grid gap-5 sm:grid-cols-2'>
                 {/* Title and caption were previously read-only everywhere in
                     the product, so a typo in a post name could not be fixed
                     at all. Saved on blur rather than per keystroke. */}
-                <div className='grid gap-1.5 sm:col-span-3'>
+                <div className='grid gap-2 sm:col-span-2'>
                   <Label htmlFor='cd-title'>Name</Label>
                   <Input
                     id='cd-title'
@@ -311,7 +363,7 @@ export function ContentDetailDialog({
                     }}
                   />
                 </div>
-                <div className='grid gap-1.5'>
+                <div className='grid gap-2'>
                   <Label htmlFor='cd-type'>Type</Label>
                   <Select
                     value={item.type}
@@ -319,7 +371,7 @@ export function ContentDetailDialog({
                       patch.mutate({ type: v as ContentType })
                     }
                   >
-                    <SelectTrigger id='cd-type' className='h-8'>
+                    <SelectTrigger id='cd-type' className='h-9 sm:h-8'>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -331,7 +383,7 @@ export function ContentDetailDialog({
                     </SelectContent>
                   </Select>
                 </div>
-                <div className='grid gap-1.5'>
+                <div className='grid gap-2'>
                   <Label htmlFor='cd-status'>Status</Label>
                   <Select
                     value={item.status}
@@ -339,7 +391,7 @@ export function ContentDetailDialog({
                       patch.mutate({ status: v as ContentStatus })
                     }
                   >
-                    <SelectTrigger id='cd-status' className='h-8'>
+                    <SelectTrigger id='cd-status' className='h-9 sm:h-8'>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -351,13 +403,24 @@ export function ContentDetailDialog({
                     </SelectContent>
                   </Select>
                 </div>
-                <div className='grid gap-1.5'>
+                <div className='grid gap-2'>
                   <Label htmlFor='cd-date'>Scheduled for</Label>
-                  <div className='flex gap-1.5'>
+                  <div className='flex gap-2'>
                     <Input
                       id='cd-date'
                       type='date'
-                      className='h-8 flex-1'
+                      /*
+                        `min-w-0` is the durable half of the fix. A flex item
+                        defaults to `min-width: auto`, which for an input means
+                        its intrinsic width — so it refuses to shrink and
+                        pushes its sibling out of the panel instead. With this
+                        the pair can never overflow whatever the column does
+                        next.
+
+                        Taller on touch, compact on a pointer: 32px is a fine
+                        target for a mouse and a poor one for a thumb.
+                      */
+                      className='h-9 min-w-0 flex-1 sm:h-8'
                       value={item.scheduledAt ?? ''}
                       onChange={(e) =>
                         patch.mutate({ scheduledAt: e.target.value || null })
@@ -372,7 +435,7 @@ export function ContentDetailDialog({
                     */}
                     <Input
                       type='time'
-                      className='h-8 w-28'
+                      className='h-9 w-28 shrink-0 sm:h-8'
                       aria-label='Time of day'
                       disabled={!item.scheduledAt}
                       value={formatTime(item.scheduledTime)}
@@ -381,8 +444,14 @@ export function ContentDetailDialog({
                       }
                     />
                   </div>
+                  {/* Under the control it is about. It used to live at the
+                      bottom of the form, explaining a field three rows up. */}
+                  <p className='text-xs text-muted-foreground'>
+                    A date puts this on the calendar — same record, no separate
+                    entry to keep in step.
+                  </p>
                 </div>
-                <div className='grid gap-1.5 sm:col-span-3'>
+                <div className='grid gap-2 sm:col-span-2'>
                   <Label htmlFor='cd-caption'>Caption</Label>
                   <Textarea
                     id='cd-caption'
@@ -399,7 +468,7 @@ export function ContentDetailDialog({
                     }}
                   />
                 </div>
-                <div className='sm:col-span-3'>
+                <div className='sm:col-span-2'>
                   <HashtagEditor
                     platforms={item.platforms}
                     value={item.hashtags ?? []}
@@ -421,7 +490,7 @@ export function ContentDetailDialog({
                   Saving on each toggle, because the state IS the value — there
                   is nothing to confirm.
                 */}
-                <div className='grid gap-1.5 sm:col-span-3'>
+                <div className='grid gap-2 sm:col-span-2'>
                   <Label>Posting to</Label>
                   <div className='flex flex-wrap gap-1.5'>
                     {PLATFORMS.map((p) => {
@@ -457,13 +526,20 @@ export function ContentDetailDialog({
                       : 'One post, one approval, however many destinations.'}
                   </p>
                 </div>
-                <div className='flex flex-wrap items-center justify-between gap-2 sm:col-span-3'>
-                  <p className='text-xs text-muted-foreground'>
-                    Giving this a date puts it on the calendar. It is the same
-                    record either way — there is no separate calendar entry to
-                    keep in step.
-                  </p>
-                  <div className='flex flex-wrap items-center gap-2'>
+                {/*
+                  ACTIONS, below a rule, not inside the form.
+
+                  They were the last row of the field grid, one 8px gap under a
+                  helper sentence — so "Duplicate" sat at the same visual level
+                  as "Hashtags" and read as another thing to fill in. A rule
+                  and a wider gap say the form has ended; these do something.
+
+                  The calendar sentence that used to sit beside them has moved
+                  up to the date field it is about. It was orphaned down here,
+                  explaining a control three rows above it, and stacked against
+                  a second helper line for a different field entirely.
+                */}
+                <div className='flex flex-wrap items-center gap-2 pt-5 sm:col-span-2 crate-rule'>
                   {/*
                     Only for a post already shared with the client. An
                     internal Ideas Bank row has nothing to show a recipient —
@@ -582,7 +658,6 @@ export function ContentDetailDialog({
                     )}
                     Duplicate
                   </Button>
-                  </div>
                 </div>
               </div>
             )}
