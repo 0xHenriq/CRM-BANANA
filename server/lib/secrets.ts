@@ -46,8 +46,20 @@ export class SecretsUnconfigured extends Error {
   }
 }
 
+/**
+ * The shortest key this will accept, exported so `env.ts` can enforce the
+ * SAME number at boot.
+ *
+ * Two files have to agree about what counts as a configured key: env.ts, which
+ * decides whether the process starts, and this one, which decides whether the
+ * hub works. Written as two literals they drift — relax the boot check to 16
+ * and the app starts happily with a key this module then silently rejects, so
+ * the hub is off and nothing anywhere says why. One constant, imported.
+ */
+export const MIN_SECRET_LENGTH = 32
+
 export function secretsAvailable(secret: string | undefined): secret is string {
-  return typeof secret === 'string' && secret.length >= 32
+  return typeof secret === 'string' && secret.length >= MIN_SECRET_LENGTH
 }
 
 /**

@@ -118,6 +118,8 @@ The database is shared with production. **There is no separate development datab
 
    `task_comments` and `client_credentials` (migrations 0021 and 0022) are the worked example: both are in the RLS migration, the guard list, all three fixture class lists, and both have rows for BOTH clients — including a reply on an INTERNAL to-do, which is the row that makes the parent-visibility test fail when the parent clause is removed.
 
+   Both also carry rights no other tenant table gives a client, and each is pinned in BOTH directions because a one-sided test passes against a table nobody can touch at all: a client may insert a reply and may not delete one, and `client_credentials` is the only tenant table a client may DELETE from — their own row, never another workspace's.
+
 ---
 
 ## Multi-Agent Coordination
@@ -277,7 +279,7 @@ npm run test:coverage
 
 The contract suite also binds the two copies of hashtag normalisation and the `canSeePortal` predicate. See invariant 17.
 
-Current counts: **108 component tests, 340 server tests.** If a change drops either number, you deleted a test — or a suite stopped running. Both have happened; see Failure Mode 25.
+Current counts: **108 component tests, 344 server tests.** If a change drops either number, you deleted a test — or a suite stopped running. Both have happened; see Failure Mode 25.
 
 ### The Isolation Suite Covers Three Distinct Failure Modes
 

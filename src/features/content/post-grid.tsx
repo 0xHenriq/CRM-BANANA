@@ -53,7 +53,10 @@ const MODE_COPY: Record<
   },
   upcoming: {
     title: 'Coming up',
-    empty: 'Nothing approved yet — approved posts appear here.',
+    // Not "nothing approved yet": everything here may have been approved and
+    // then published, and telling a client whose posts all went out that
+    // nothing was approved is a plainly wrong sentence about their own work.
+    empty: 'Nothing coming up — approved posts appear here until they go out.',
     hint: 'Approved and scheduled work, soonest first.',
   },
 }
@@ -110,7 +113,7 @@ export function PostGrid({
       ),
   })
 
-  const { rows, hidden } = useMemo(() => {
+  const { rows, hidden, total } = useMemo(() => {
     const assets = new Map(
       (feed.data?.cells ?? []).map((c) => [
         c.itemId,
@@ -144,6 +147,8 @@ export function PostGrid({
       // Said out loud rather than silently truncated. A grid capped at twelve
       // that shows twelve is indistinguishable from a grid showing everything.
       hidden: Math.max(0, matched.length - limit),
+      /** How many there ACTUALLY are — see the heading count. */
+      total: matched.length,
     }
   }, [items.data, feed.data, mode, limit])
 
@@ -161,9 +166,14 @@ export function PostGrid({
             )}
           />
           <h2 className='display text-lg'>{copy.title}</h2>
-          {rows.length > 0 && (
+          {total > 0 && (
+            /* The real count, not the number of tiles. `rows.length` is capped
+               at `limit`, so with twenty pending posts the heading read "12
+               posts" — an undercount of the exact number this panel exists to
+               tell her, sitting directly above a line saying eight more were
+               hidden. */
             <span className='text-xs text-muted-foreground'>
-              {rows.length} {rows.length === 1 ? 'post' : 'posts'}
+              {total} {total === 1 ? 'post' : 'posts'}
             </span>
           )}
         </div>
@@ -173,11 +183,18 @@ export function PostGrid({
           Error BEFORE empty. "Nothing is waiting on a decision" over a failed
           request is a confident, wrong answer to the one question this panel
           exists to answer, and she would act on it by not looking again.
+
+          Only the ITEMS failing is fatal, though. The feed query supplies
+          thumbnails and nothing else, so losing it costs the pictures and not
+          the answer — blanking a panel that knows perfectly well what needs
+          deciding, because a thumbnail did not arrive, trades a working screen
+          for a tidier failure. The tiles fall back to their type colour and a
+          line below says why, which is the honest version of degrading.
         */}
-        {items.isError || feed.isError ? (
+        {items.isError ? (
           <QueryError
             title='Could not load the posts'
-            error={(items.error ?? feed.error) as Error}
+            error={items.error as Error}
             onRetry={() => {
               items.refetch()
               feed.refetch()
@@ -207,6 +224,7 @@ export function PostGrid({
             <p className='mt-3 text-xs text-muted-foreground italic'>
               {copy.hint}
               {hidden > 0 && ` ${hidden} more not shown.`}
+              {feed.isError && ' Previews are unavailable right now.'}
             </p>
           </>
         )}
@@ -256,7 +274,7 @@ function PostTile({
       type='button'
       onClick={onOpen}
       title={`${TYPE_LABEL[item.type]}: ${item.title} — ${approvalLabel(item)}`}
-      className='group relative block aspect-square w-full overflow-hidden rounded border-2 border-bd-ink bg-bd-sand text-start hover:opacity-90'
+      className='relative block aspect-square w-full overflow-hidden rounded border-2 border-bd-ink bg-bd-sand text-start hover:opacity-90'
     >
       {asset ? (
         <img

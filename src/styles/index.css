@@ -220,8 +220,15 @@
   }
 
   /* Backgrounds are dropped by default in every browser's print path, which
-     would take the paid/overdue pills with them — those carry meaning here. */
-  * {
+     would take the VOID banner and the paid/overdue pills with them — those
+     carry meaning on this document.
+
+     Scoped to the sheet, not `*`. Globally it applies to every page in the
+     app, and the one thing this product has plenty of is a solid black
+     sidebar: printing any other screen would have laid down a full-height
+     block of ink for a navigation bar nobody wanted on paper. */
+  .invoice-sheet,
+  .invoice-sheet * {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }

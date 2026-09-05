@@ -31,10 +31,18 @@ import { QueryError } from '@/components/layout/query-error'
  */
 export function TaskThread({
   taskId,
+  taskTitle,
   canModerate,
   className,
 }: {
   taskId: string
+  /**
+   * Named in every control's accessible label, because more than one of these
+   * can be open at once — the Next Steps panel keeps expansion state per row,
+   * so three threads on screen meant three buttons announcing themselves as
+   * "Write a reply" with nothing to tell them apart.
+   */
+  taskTitle: string
   /** Staff may remove a reply. Nobody may edit one — see migration 0021. */
   canModerate: boolean
   className?: string
@@ -126,7 +134,7 @@ export function TaskThread({
                   size='icon'
                   variant='ghost'
                   className='size-6 shrink-0'
-                  aria-label='Remove this reply'
+                  aria-label={`Remove ${comment.authorName ?? 'someone'}'s reply on "${taskTitle}"`}
                   disabled={remove.isPending}
                   onClick={() => remove.mutate(comment.id)}
                 >
@@ -147,7 +155,7 @@ export function TaskThread({
         }}
       >
         <Textarea
-          aria-label='Write a reply'
+          aria-label={`Write a reply on "${taskTitle}"`}
           placeholder={
             currentUser?.isStaff
               ? 'Reply to your client about this…'
@@ -176,6 +184,10 @@ export function TaskThread({
         <Button
           size='sm'
           className='h-9'
+          /* Starts with the visible word. An accessible name that does not
+             contain the label a sighted user reads breaks voice control —
+             "click Reply" has to match the thing that says Reply. */
+          aria-label={`Reply on "${taskTitle}"`}
           disabled={!draft.trim() || send.isPending}
         >
           {send.isPending ? (

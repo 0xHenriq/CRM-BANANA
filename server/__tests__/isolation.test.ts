@@ -564,6 +564,59 @@ describe('12 — replies on a to-do', () => {
     expect(rows[0].n).toBe(0)
   })
 
+  it('a client cannot delete a reply, not even their own thread', async () => {
+    /*
+     * The asymmetry is the point, and it is unusual enough in this schema to
+     * be worth pinning: a client may INSERT here — that is the whole feature —
+     * and may not DELETE. Removing something already read is a moderation act,
+     * and `task_comments_delete` is `app_is_staff()` alone.
+     *
+     * On its OWN row rather than the shared fixture one. Mutation-testing this
+     * with `USING (true)` showed why: the delete succeeded, and the "nobody
+     * can rewrite a reply" test below then failed too, because the row it
+     * asserts on had been removed by this one. A test that can break a later
+     * test's premise makes a single defect look like two.
+     */
+    const { rows: seeded } = await ownerPool.query(
+      `insert into task_comments(client_id, task_id, author_id, body)
+       values ($1,$2,$3,'the client should not be able to remove this')
+       returning id`,
+      [f.clientA, f.taskAVisible, f.staffUser]
+    )
+
+    await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'delete from task_comments where id = $1',
+      [seeded[0].id]
+    ).catch(() => [])
+
+    const { rows } = await ownerPool.query(
+      'select count(*)::int as n from task_comments where id = $1',
+      [seeded[0].id]
+    )
+    expect(rows[0].n).toBe(1)
+  })
+
+  it('staff can delete a reply', async () => {
+    // The other half, or the test above passes against a table nobody can
+    // delete from at all — which is a different rule with the same symptom.
+    const { rows: seeded } = await ownerPool.query(
+      `insert into task_comments(client_id, task_id, author_id, body)
+       values ($1,$2,$3,'posted in error') returning id`,
+      [f.clientA, f.taskAVisible, f.staffUser]
+    )
+    await asActor(
+      { kind: 'staff', userId: f.staffUser },
+      'delete from task_comments where id = $1',
+      [seeded[0].id]
+    )
+    const { rows } = await ownerPool.query(
+      'select count(*)::int as n from task_comments where id = $1',
+      [seeded[0].id]
+    )
+    expect(rows[0].n).toBe(0)
+  })
+
   it('nobody can rewrite a reply, staff included', async () => {
     await asActor(
       { kind: 'staff', userId: f.staffUser },
@@ -658,6 +711,54 @@ describe('13 — the password hub', () => {
       [f.credentialA]
     )
     expect(rows[0].client_id).toBe(f.clientA)
+  })
+
+  it("a client cannot delete another client's stored login", async () => {
+    /*
+     * `client_credentials` is the ONLY tenant table a client may delete from,
+     * so the boundary on that right is worth asserting rather than assumed.
+     * They can throw away a login they typed in; they cannot reach into
+     * another workspace and destroy one, which — since nothing else in the
+     * product holds a copy — would be unrecoverable.
+     *
+     * TWO gates hold it, and this asserts the property rather than either one.
+     * Mutation-verified: `client_credentials_delete USING (true)` alone does
+     * NOT let it through, because Postgres applies the SELECT policy to a
+     * DELETE whose WHERE reads a column, so the row is never found. Weakening
+     * both is the run that makes this test go red — the same shape as the
+     * UPDATE case above, and the same reason the redundant arm stays.
+     */
+    await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'delete from client_credentials where id = $1',
+      [f.credentialB]
+    ).catch(() => [])
+
+    const { rows } = await ownerPool.query(
+      'select count(*)::int as n from client_credentials where id = $1',
+      [f.credentialB]
+    )
+    expect(rows[0].n).toBe(1)
+  })
+
+  it('a client can delete their own stored login', async () => {
+    // The other half. Without it the test above passes against a policy that
+    // simply forbids DELETE to everyone, which is not the rule being written.
+    const { rows: seeded } = await ownerPool.query(
+      `insert into client_credentials(client_id, label, secret_cipher)
+       values ($1,'Throwaway','v1.a.b.c') returning id`,
+      [f.clientA]
+    )
+    await asActor(
+      { kind: 'client', userId: f.clientUserA },
+      'delete from client_credentials where id = $1',
+      [seeded[0].id]
+    )
+    const { rows } = await ownerPool.query(
+      'select count(*)::int as n from client_credentials where id = $1',
+      [seeded[0].id]
+    )
+    expect(rows[0].n).toBe(0)
   })
 
   it("a client cannot read another client's stored login by its exact id", async () => {

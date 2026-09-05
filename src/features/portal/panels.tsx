@@ -670,7 +670,11 @@ export function TaskList({
               </div>
 
               {threadOpen === task.id && (
-                <TaskThread taskId={task.id} canModerate={canEdit} />
+                <TaskThread
+                  taskId={task.id}
+                  taskTitle={task.title}
+                  canModerate={canEdit}
+                />
               )}
               </li>
             ))}

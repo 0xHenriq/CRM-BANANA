@@ -10,6 +10,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { QueryError } from '@/components/layout/query-error'
 
 /**
@@ -46,6 +47,19 @@ export function CredentialsHub({
   const queryClient = useQueryClient()
   const [adding, setAdding] = useState(false)
   const [form, setForm] = useState({ label: '', username: '', secret: '' })
+  /**
+   * Which login is one click from being destroyed.
+   *
+   * Deleting one is not like deleting a link or a file: once the client has
+   * typed a password in here this row may be the ONLY copy, there is no
+   * archive, no undo and nothing else in the product holds it. A bin icon that
+   * acts immediately is out of step with a codebase that puts a named
+   * confirmation on archiving a client — and this control is on the client's
+   * own phone, where a stray tap is likelier than it is on her laptop.
+   */
+  const [confirmRemove, setConfirmRemove] = useState<ClientCredential | null>(
+    null
+  )
 
   const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: ['credentials', clientId],
@@ -77,7 +91,10 @@ export function CredentialsHub({
 
   const remove = useMutation({
     mutationFn: (id: string) => api.del(`/portal/credentials/${id}`),
-    onSuccess: invalidate,
+    onSuccess: async () => {
+      await invalidate()
+      setConfirmRemove(null)
+    },
     onError: (err: Error) => toast.error(err.message),
   })
 
@@ -136,7 +153,7 @@ export function CredentialsHub({
                     <CredentialRow
                       credential={credential}
                       canReveal={data.configured}
-                      onRemove={() => remove.mutate(credential.id)}
+                      onRemove={() => setConfirmRemove(credential)}
                       removing={
                         remove.isPending && remove.variables === credential.id
                       }
@@ -237,6 +254,43 @@ export function CredentialsHub({
           </>
         )}
       </CardContent>
+
+      {/*
+        Named, and it says what is actually lost.
+
+        "Are you sure?" over a bin icon teaches people to click through. This
+        one names the account and states the part that matters — the password
+        cannot be recovered from anywhere, because the whole point of the hub
+        is that nothing else holds it.
+      */}
+      <ConfirmDialog
+        open={confirmRemove !== null}
+        onOpenChange={(open) => {
+          if (!open) setConfirmRemove(null)
+        }}
+        destructive
+        title={`Remove ${confirmRemove?.label ?? 'this account'}?`}
+        desc={
+          confirmRemove?.hasSecret ? (
+            <>
+              The password saved for{' '}
+              <strong>{confirmRemove.label}</strong> is deleted with it and{' '}
+              <strong>cannot be recovered</strong> — nothing else in here holds
+              a copy, and it is not in any backup you can read.
+            </>
+          ) : (
+            <>
+              This removes <strong>{confirmRemove?.label}</strong> from the hub.
+              No password is saved against it, so there is nothing to lose.
+            </>
+          )
+        }
+        confirmText='Remove'
+        isLoading={remove.isPending}
+        handleConfirm={() => {
+          if (confirmRemove) remove.mutate(confirmRemove.id)
+        }}
+      />
     </Card>
   )
 }

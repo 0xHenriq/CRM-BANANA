@@ -512,7 +512,11 @@ function StepRow({
       )}
 
       {replying && step.kind === 'task' && (
-        <TaskThread taskId={step.id} canModerate={!isClient} />
+        <TaskThread
+          taskId={step.id}
+          taskTitle={step.title}
+          canModerate={!isClient}
+        />
       )}
     </>
   )

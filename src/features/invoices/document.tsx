@@ -456,6 +456,16 @@ function InvoiceSettingsEditor({
 }) {
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
+  /**
+   * Seeded when the editor OPENS, not once at mount.
+   *
+   * `useState(settings)` captures the first render and never looks again, so a
+   * refetch between mounting this page and opening the editor left the form
+   * holding values the server had already replaced — and saving would have
+   * written the stale ones back over them. These three blocks are agency-wide
+   * and appear on every invoice, including past ones, so quietly reverting
+   * them is not a small mistake.
+   */
   const [form, setForm] = useState(settings)
 
   const save = useMutation({
@@ -471,7 +481,14 @@ function InvoiceSettingsEditor({
   if (!open) {
     return (
       <div className='print-hide mx-auto mt-4 max-w-3xl'>
-        <Button variant='ghost' size='sm' onClick={() => setOpen(true)}>
+        <Button
+          variant='ghost'
+          size='sm'
+          onClick={() => {
+            setForm(settings)
+            setOpen(true)
+          }}
+        >
           Edit the payment details on every invoice
         </Button>
       </div>

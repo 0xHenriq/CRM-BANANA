@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { MIN_SECRET_LENGTH } from './lib/secrets.js'
 
 /**
  * Fail loudly at boot rather than at the first request. A missing DATABASE_URL
@@ -51,7 +52,14 @@ const schema = z.object({
    * in a minute; rotating it must not also make every stored password
    * undecryptable, which is not recoverable at all.
    */
-  CREDENTIALS_SECRET: z.string().min(32).optional(),
+  CREDENTIALS_SECRET: z
+    .string()
+    .min(
+      MIN_SECRET_LENGTH,
+      `CREDENTIALS_SECRET must be at least ${MIN_SECRET_LENGTH} characters. ` +
+        'Generate one with: openssl rand -base64 48'
+    )
+    .optional(),
 })
 
 const parsed = schema.safeParse(process.env)
