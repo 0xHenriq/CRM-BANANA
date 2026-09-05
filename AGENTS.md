@@ -1293,6 +1293,47 @@ re-read its `onSuccess`. It was written for the first caller and nothing warns
 you that it now runs for the second.
 
 
+### Failure Mode 30: `git add -A` after making a backup
+
+**The bad behavior:** copying a gitignored config to `deploy.config.sh.bak-…`
+before editing it — sensible — and then staging with `git add -A` without
+reading the untracked list.
+
+**What happened:** the backup was published to a PUBLIC repository. It is the
+same floor plan `deploy.config.sh` is gitignored to keep out: ssh alias, app
+root, web root, data and upload directories, node path. The ignore rule was an
+exact filename, so the rule protecting the file did not protect a copy of the
+file one character longer.
+
+Nothing in it was a credential — ssh is key-only, Postgres is firewalled, the
+domain is already public — but "not a credential" is not a reason to publish
+it, and the same slip against `.env` would have been unrecoverable rather than
+merely embarrassing.
+
+**The correct behavior:** two things, and the second is the durable one.
+
+  * Read what `git add -A` is about to stage. `git status --short` before, not
+    after.
+  * Ignore rules for sensitive files are **globs**, not exact names.
+    `.gitignore` now carries `deploy.config.sh*` and `*.bak-*`.
+
+**On the rewrite, since it was asked for.** `git filter-branch --index-filter`
+over the three affected commits, after `git bundle create --all` so the old
+history stays recoverable. Verified as: the file gone from every object
+reachable from `master`, the working tree at the new HEAD byte-identical to the
+old one (`git diff <old> <new>` empty), all four gates green, then
+`push --force-with-lease`, then `refs/original` dropped, reflogs expired and a
+`gc --prune=now`. A fresh clone contains it nowhere.
+
+**What a rewrite does NOT do, and this is the part worth knowing.** GitHub
+keeps unreachable objects after a force-push: the old commit is still
+retrievable *by its full SHA* through the API until GitHub garbage-collects the
+repository on its own schedule. The branch is clean, a clone is clean, nobody
+who does not already know the 40-character SHA can reach it — but "rewritten"
+and "gone from GitHub" are different claims. Contact GitHub Support to force a
+gc if the difference matters.
+
+
 ## Appendix A: Environment Variables
 
 | Variable | Purpose | Notes |
