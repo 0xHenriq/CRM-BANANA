@@ -657,6 +657,32 @@ export function approvalState(item: {
   return item.lastDecision === 'changes_requested' ? 'declined' : 'draft'
 }
 
+/**
+ * The post as it goes into Instagram: caption, blank line, hashtags.
+ *
+ * One block, in the order she pastes it. The blank line is the part worth
+ * being deliberate about — Instagram runs a caption and its tags together into
+ * one paragraph without it, and separating them afterwards on a phone is
+ * exactly the fiddling the Copy button exists to remove.
+ *
+ * Lives here with the other derived helpers rather than in the dialog: it is a
+ * pure function over a row, and a test should be able to reach it without
+ * mounting a dialog that opens queries and an upload picker.
+ *
+ * Returns '' when there is nothing to copy, so the caller can disable itself
+ * rather than putting an empty clipboard over whatever was there before.
+ */
+export function postText(item: {
+  caption: string | null
+  hashtags: string[] | null
+}): string {
+  const caption = item.caption?.trim() ?? ''
+  const tags = (item.hashtags ?? []).map((t) => `#${t}`).join(' ')
+  if (!caption) return tags
+  if (!tags) return caption
+  return `${caption}\n\n${tags}`
+}
+
 export type ContentComment = {
   id: string
   body: string

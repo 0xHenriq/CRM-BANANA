@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Check,
+  ClipboardCopy,
   Copy,
   ImagePlus,
   Loader2,
@@ -23,7 +24,9 @@ import {
   type ContentType,
   formatShortDate,
   localDayOf,
+  postText,
 } from '@/lib/api'
+import { copyText } from '@/lib/copy-text'
 import { uploadMedia } from '@/lib/upload'
 import { useCurrentUser } from '@/hooks/use-current-user'
 import { Button } from '@/components/ui/button'
@@ -366,10 +369,105 @@ export function ContentDetailDialog({
                     and the mint route refuses it, backed by the
                     `AND visible_to_client` arm on content_items_select.
                   */}
+                  {/*
+                    The two status changes she actually makes, as the acts they
+                    are.
+
+                    Status is a six-item dropdown, and four of those six are
+                    set FOR her: `approved` and `scheduled` come from the
+                    client's decision, `idea` is where a concept starts, and
+                    `in_progress` is where asking for changes puts it back. The
+                    two she chooses are "this is ready, send it to them" and
+                    "this went out" — and both were a scroll through a list
+                    whose other entries do something quite different if you
+                    misread them.
+
+                    Sending is what makes the post visible to the client at
+                    all: `shouldShare` on the server flips `visible_to_client`
+                    when the status reaches ready_for_review, and it is sticky
+                    from then on. That is a big enough consequence to deserve
+                    a button that names it rather than a dropdown entry.
+
+                    Nothing is offered while it is WITH the client, or once it
+                    has gone out: there is no act left for her in either state,
+                    and the dropdown is still there for the unusual case.
+                  */}
+                  {(item.status === 'idea' || item.status === 'in_progress') && (
+                    <Button
+                      size='sm'
+                      onClick={() => patch.mutate({ status: 'ready_for_review' })}
+                      disabled={patch.isPending}
+                      title='Share it with the client and ask them to approve it'
+                    >
+                      {patch.isPending ? (
+                        <Loader2 className='animate-spin' />
+                      ) : (
+                        <Send />
+                      )}
+                      Send to client
+                    </Button>
+                  )}
+                  {(item.status === 'approved' ||
+                    item.status === 'scheduled') && (
+                    <Button
+                      size='sm'
+                      variant='outline'
+                      onClick={() => patch.mutate({ status: 'published' })}
+                      disabled={patch.isPending}
+                      title='Mark this as gone out'
+                    >
+                      {patch.isPending ? (
+                        <Loader2 className='animate-spin' />
+                      ) : (
+                        <Check />
+                      )}
+                      Mark as published
+                    </Button>
+                  )}
                   <ShareLinks
                     contentItemId={item.id}
                     canShare={isStaff && item.visibleToClient}
                   />
+                  {/*
+                    The clipboard button for POSTING DAY.
+
+                    The hashtag editor has had a Copy since phase 3, and it
+                    copies the tags alone — which is half of what she needs at
+                    the moment that matters. Publishing means opening
+                    Instagram and pasting ONE block: the caption, a blank line,
+                    then the tags. Without this she selects the caption by
+                    hand, pastes, comes back, copies the tags, pastes again,
+                    and hopes the blank line survived. It is the single most
+                    repeated action of her week and it was the one thing on
+                    this dialog with no button.
+
+                    `copyText`, never navigator.clipboard: it reports whether
+                    the text actually landed, and a copy button that silently
+                    does nothing is the failure that rule exists to prevent.
+                  */}
+                  <Button
+                    size='sm'
+                    variant='outline'
+                    disabled={!postText(item)}
+                    onClick={async () => {
+                      const text = postText(item)
+                      if (!text) return
+                      const ok = await copyText(text)
+                      toast[ok ? 'success' : 'error'](
+                        ok
+                          ? 'Caption and hashtags copied — ready to paste.'
+                          : 'The copy failed. Select the caption and copy it by hand.'
+                      )
+                    }}
+                    title={
+                      postText(item)
+                        ? 'Copy the caption and hashtags as one block'
+                        : 'Write a caption or add hashtags first'
+                    }
+                  >
+                    <ClipboardCopy />
+                    Copy post
+                  </Button>
                   <Button
                     size='sm'
                     variant='outline'

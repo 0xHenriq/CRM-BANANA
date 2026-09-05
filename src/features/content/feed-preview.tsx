@@ -218,6 +218,18 @@ export function FeedPreview() {
                 {isStaff
                   ? 'Drag to rearrange. Cells come from scheduled content with an uploaded asset — add one from a post to fill the grid.'
                   : 'How the next nine posts will sit together.'}
+                {/*
+                  Say what is not on screen.
+
+                  The grid is nine cells by design — it is a mock-up of a
+                  profile, and she titled it "3×3 grid mock up". But a month of
+                  content is more than nine posts, and a grid that shows nine
+                  of fourteen looks exactly like a grid that shows all
+                  fourteen. Same silent-cap problem the decision grid had:
+                  truncation nobody is told about reads as completeness.
+                */}
+                {cells.length > grid.length &&
+                  ` ${cells.length - grid.length} more with creative are not in the first nine.`}
               </p>
             </CardContent>
           </Card>

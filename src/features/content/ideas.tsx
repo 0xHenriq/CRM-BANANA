@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowUpDown, Plus, Trash2 } from 'lucide-react'
+import { ArrowUpDown, Loader2, Plus, Send, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   api,
@@ -15,6 +15,7 @@ import { WorkspaceSwitcher } from '@/features/portal/workspace-switcher'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -55,8 +56,12 @@ import { STATUS_LABEL, TYPE_LABEL } from './vocabulary'
 
 type SortKey = 'title' | 'type' | 'scheduledAt' | 'status'
 
+/** One frozen empty set, so a stale selection is a stable reference. */
+const EMPTY_IDS: ReadonlySet<string> = new Set()
+
 export function IdeasBank() {
   const { isStaff, clientId, setClientId, workspaces, isReady } = useWorkspace()
+  const queryClient = useQueryClient()
 
   const [openId, setOpenId] = useState<string | null>(null)
   const [typeFilter, setTypeFilter] = useState<ContentType | 'all'>('all')
@@ -65,6 +70,28 @@ export function IdeasBank() {
     key: 'scheduledAt',
     asc: true,
   })
+  /**
+   * A selection belongs to the workspace it was made in — DERIVED, not synced.
+   *
+   * Ticking four of Change of Perspective's concepts and then switching to
+   * Verdant Botanicals must not leave four ids selected that are not on
+   * screen: "Send 4 to client" would then push one client's work into
+   * another's portal. That is Failure Mode 6 with a different noun.
+   *
+   * The workspace is stored WITH the selection and a stale one reads as empty,
+   * rather than an effect that clears it after the fact. Same reasoning as
+   * use-workspace.ts: deriving avoids a set-state-in-effect round trip and the
+   * render flash where the old count is briefly still on screen — and the lint
+   * rule that forbids setState in an effect is enforcing exactly this.
+   */
+  const [selection, setSelection] = useState<{
+    clientId: string | null
+    ids: Set<string>
+  }>({ clientId, ids: new Set() })
+
+  const selected = selection.clientId === clientId ? selection.ids : EMPTY_IDS
+
+  const setSelected = (ids: Set<string>) => setSelection({ clientId, ids })
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     // The workspace is part of the key: without it, switching clients showed
@@ -75,6 +102,54 @@ export function IdeasBank() {
         withClient('/content', clientId)
       ),
     enabled: isReady,
+  })
+
+  /**
+   * Send a batch for approval.
+   *
+   * The unit of work is a MONTH, not a post: she builds out the plan, then
+   * asks the client to look at the lot. Doing that one row at a time meant
+   * opening a dialog, finding "Ready for review" in a six-item dropdown and
+   * closing it again, nine times — and the dropdown is not obviously the thing
+   * that shares a post with the client at all.
+   *
+   * `allSettled`, not `all`. One refusal out of nine must not report the other
+   * eight as failed, and it must not report them as succeeded either: the
+   * toast says exactly how many went and names the shortfall. There is no
+   * bulk endpoint behind this — it is the same PATCH the dialog uses, so the
+   * two cannot disagree about what sending means, and `shouldShare` on the
+   * server is what actually opens each post to the client.
+   */
+  const sendBatch = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const results = await Promise.allSettled(
+        ids.map((id) => api.patch(`/content/${id}`, { status: 'ready_for_review' }))
+      )
+      return {
+        sent: results.filter((r) => r.status === 'fulfilled').length,
+        failed: results.filter((r) => r.status === 'rejected').length,
+      }
+    },
+    onSuccess: async ({ sent, failed }) => {
+      // Every key a status change touches — the same list the detail dialog
+      // invalidates, because this performs the same change.
+      await queryClient.invalidateQueries({ queryKey: ['content'] })
+      await queryClient.invalidateQueries({ queryKey: ['next-steps'] })
+      await queryClient.invalidateQueries({ queryKey: ['clients'] })
+      await queryClient.invalidateQueries({ queryKey: ['client'] })
+      await queryClient.invalidateQueries({ queryKey: ['feed'] })
+      setSelected(new Set())
+      if (failed) {
+        toast.error(
+          `Sent ${sent}. ${failed} could not be sent — reopen those and check them.`
+        )
+      } else {
+        toast.success(
+          `Sent ${sent} ${sent === 1 ? 'post' : 'posts'} to the client for approval.`
+        )
+      }
+    },
+    onError: (err: Error) => toast.error(err.message),
   })
 
   const rows = useMemo(() => {
@@ -108,6 +183,34 @@ export function IdeasBank() {
       return String(a[sort.key]).localeCompare(String(b[sort.key])) * dir
     })
   }, [data, typeFilter, statusFilter, sort])
+
+  /**
+   * Which of the rows on screen can be sent.
+   *
+   * Only a concept that has NOT been shared yet: `idea` and `in_progress`.
+   * Everything else is either with the client already or has had its answer,
+   * and re-sending it would move a decided post back into their queue.
+   *
+   * Rows that cannot be sent get no checkbox at all rather than a disabled
+   * one. A selection that silently drops half of itself when you press the
+   * button is worse than a column with gaps in it — the gap is the
+   * explanation.
+   */
+  const sendable = useMemo(
+    () =>
+      rows.filter((i) => i.status === 'idea' || i.status === 'in_progress'),
+    [rows]
+  )
+  const selectedSendable = sendable.filter((i) => selected.has(i.id))
+  const allSendableSelected =
+    sendable.length > 0 && selectedSendable.length === sendable.length
+
+  function toggleOne(id: string) {
+    const next = new Set(selected)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setSelected(next)
+  }
 
   function toggleSort(key: SortKey) {
     setSort((s) => (s.key === key ? { key, asc: !s.asc } : { key, asc: true }))
@@ -213,6 +316,48 @@ export function IdeasBank() {
           )}
         </div>
 
+        {/*
+          The batch bar, and it only exists once something is ticked.
+
+          Persistent bulk toolbars take a strip of the screen away from the
+          table for the ninety per cent of visits that are not a batch send.
+          This appears when there is a batch and says what will happen to how
+          many, so the button is never a guess.
+        */}
+        {isStaff && selectedSendable.length > 0 && (
+          <div className='mb-4 flex flex-wrap items-center gap-3 rounded-md border-[1.5px] border-bd-ink bg-bd-yellow px-3 py-2'>
+            <span className='text-sm font-bold'>
+              {selectedSendable.length} selected
+            </span>
+            <Button
+              size='sm'
+              onClick={() =>
+                sendBatch.mutate(selectedSendable.map((i) => i.id))
+              }
+              disabled={sendBatch.isPending}
+            >
+              {sendBatch.isPending ? (
+                <Loader2 className='animate-spin' />
+              ) : (
+                <Send className='size-3.5' />
+              )}
+              Send {selectedSendable.length} to client
+            </Button>
+            <Button
+              size='sm'
+              variant='ghost'
+              onClick={() => setSelected(new Set())}
+              disabled={sendBatch.isPending}
+            >
+              Clear
+            </Button>
+            <span className='text-xs'>
+              They appear in the client&rsquo;s portal to approve or ask for
+              changes.
+            </span>
+          </div>
+        )}
+
         {isLoading ? (
           <Skeleton className='h-64' />
         ) : isError ? (
@@ -235,6 +380,27 @@ export function IdeasBank() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    {isStaff && (
+                      <TableHead className='w-10'>
+                        {sendable.length > 0 && (
+                          <Checkbox
+                            checked={allSendableSelected}
+                            aria-label={
+                              allSendableSelected
+                                ? 'Clear the selection'
+                                : `Select all ${sendable.length} concepts that can be sent`
+                            }
+                            onCheckedChange={(v) =>
+                              setSelected(
+                                v === true
+                                  ? new Set(sendable.map((i) => i.id))
+                                  : new Set()
+                              )
+                            }
+                          />
+                        )}
+                      </TableHead>
+                    )}
                     <SortableHead
                       label='Name'
                       onClick={() => toggleSort('title')}
@@ -264,6 +430,12 @@ export function IdeasBank() {
                       key={item.id}
                       item={item}
                       isStaff={isStaff}
+                      selected={selected.has(item.id)}
+                      onSelect={
+                        item.status === 'idea' || item.status === 'in_progress'
+                          ? () => toggleOne(item.id)
+                          : undefined
+                      }
                       onOpen={() => setOpenId(item.id)}
                     />
                   ))}
@@ -308,10 +480,15 @@ function SortableHead({
 function IdeaRow({
   item,
   isStaff,
+  selected,
+  onSelect,
   onOpen,
 }: {
   item: ContentItem
   isStaff: boolean
+  selected: boolean
+  /** Absent when this row cannot be sent — see `sendable`. */
+  onSelect?: () => void
   onOpen: () => void
 }) {
   const queryClient = useQueryClient()
@@ -338,6 +515,19 @@ function IdeaRow({
 
   return (
     <TableRow className='group cursor-pointer' onClick={onOpen}>
+      {isStaff && (
+        // stopPropagation, or ticking the box also opens the dialog — the row
+        // itself is the click target for opening a post.
+        <TableCell onClick={(e) => e.stopPropagation()}>
+          {onSelect && (
+            <Checkbox
+              checked={selected}
+              onCheckedChange={onSelect}
+              aria-label={`Select "${item.title}" to send to the client`}
+            />
+          )}
+        </TableCell>
+      )}
       <TableCell className='font-semibold'>{item.title}</TableCell>
       <TableCell>
         <TypePill type={item.type} />

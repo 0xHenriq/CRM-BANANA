@@ -276,10 +276,11 @@ npm run test:coverage
 | Secrets | `server/__tests__/secrets.test.ts` | The password hub's AES-256-GCM: round trip, tamper detection, wrong key, refusing to run unconfigured. Pure — no database, no server |
 | URL safety | `src/lib/safe-href.test.ts` | `javascript:`/`data:` refused; `//evil.com` is not an internal path |
 | Components | `src/**/*.test.tsx` | Sign-in, config drawer, search palette, client logo, hashtag editor |
+| Post text | `src/lib/post-text.test.ts` | The caption+hashtags block the Copy button puts on the clipboard. Empty is exactly `''`, because the button disables on it |
 
 The contract suite also binds the two copies of hashtag normalisation and the `canSeePortal` predicate. See invariant 17.
 
-Current counts: **108 component tests, 344 server tests.** If a change drops either number, you deleted a test — or a suite stopped running. Both have happened; see Failure Mode 25.
+Current counts: **113 component tests, 344 server tests.** If a change drops either number, you deleted a test — or a suite stopped running. Both have happened; see Failure Mode 25.
 
 ### The Isolation Suite Covers Three Distinct Failure Modes
 
@@ -428,6 +429,8 @@ src/
                               it from the page component makes a cycle that
                               collapses the router's types to `never`.
     content/moodboard-lightbox.tsx  Click a tile to see the full image.
+    content/post-grid.tsx     Posts as square previews — "Needs a decision"
+                              and "Coming up", one component, two filters
     content/share-links.tsx   The Share popover on a post.
     portal/use-workspace.ts   Persisted workspace selection (shared, derived)
     content/                  Ideas Bank, Calendar, Feed, Moodboard,
@@ -492,6 +495,31 @@ scripts/
 - **Hashtags are an array, not a blob of text.** Thirty tags in a textarea cannot be counted, and Instagram rejects a post at thirty-one. Normalised on the way in: no hashes, no punctuation, deduped case-insensitively. Case is PRESERVED — the capitals are what make a long tag readable.
 - **Undated work sorts LAST in Next Steps.** `null` sorts before everything in a naive comparator, which would put a post with no schedule above one due tomorrow and make the panel actively misleading.
 - **The upload picker uses a native `<label for>`.** A scripted `.click()` on a hidden input fails silently on Safari and iOS, and cost a full day. There is no JavaScript in that path now.
+
+### Her Working Week
+
+The product is judged against a social media manager's actual loop, not against
+a feature list. Where each step lives:
+
+| She does this | Here |
+|---|---|
+| Captures an idea | Add concept, Ideas Bank |
+| Adds the creative | Upload on the post, or drag onto the moodboard |
+| Writes caption + hashtags | The post dialog; the 30-tag counter is Instagram's rule |
+| Schedules it | A date puts the same row on the calendar |
+| **Sends a month for approval** | Tick the Ideas Bank rows, "Send N to client" — one action, because the unit of work is a month and not a post |
+| Client approves or asks for changes | Their portal, a share link, or the post dialog |
+| Chases what has gone quiet | Next Steps, and the red "Approval not received" pill |
+| **Posts it** | "Copy post" puts caption + blank line + hashtags on the clipboard in one block — the most repeated action of the week |
+| Marks it gone out | "Mark as published" on the post |
+| Bills and chases | Invoices, the branded document, Stripe |
+
+Two of those are one click BECAUSE they were not. Sending used to mean opening
+a dialog and finding `ready_for_review` in a six-item dropdown, once per post;
+publishing meant the same dropdown; and copying a post meant selecting the
+caption by hand, pasting, coming back for the tags and hoping the blank line
+survived. None of them were missing capabilities — they were capabilities with
+no affordance, which is the same thing on a Tuesday afternoon.
 
 ### Non-Negotiable Invariants
 

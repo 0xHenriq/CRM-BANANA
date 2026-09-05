@@ -40,6 +40,14 @@ import { TypePill } from './pills'
  * why — a lead or a proposal has nothing outstanding by definition, and that
  * was the one place with nowhere to write down what happens next.
  */
+/**
+ * How many rows the panel shows before folding the rest away.
+ *
+ * Six is roughly a screenful above the fold on a laptop, and more than the
+ * number of things anyone acts on in one sitting.
+ */
+const VISIBLE_STEPS = 6
+
 export function NextSteps({
   variant = 'client',
   clientId,
@@ -49,6 +57,7 @@ export function NextSteps({
   clientId?: string
 }) {
   const [openId, setOpenId] = useState<string | null>(null)
+  const [showAll, setShowAll] = useState(false)
   const [adding, setAdding] = useState(false)
   const [draft, setDraft] = useState({ title: '', dueDate: '' })
   const queryClient = useQueryClient()
@@ -150,6 +159,23 @@ export function NextSteps({
   const canAdd = !isClient && Boolean(clientId)
   if (steps.length === 0 && !canAdd) return null
 
+  /*
+   * The panel leads the page, so it cannot BE the page.
+   *
+   * Steps are sorted soonest-first with undated last, so the first few are
+   * always the ones that matter — but there is no natural ceiling on how many
+   * there are. Sending a month of content for approval in one go (which the
+   * Ideas Bank now does in one click) puts a dozen undated review steps in
+   * here at once, and a panel headed "what happens next" that needs scrolling
+   * past to reach the work is a panel people learn to scroll past.
+   *
+   * Capped, never hidden: the heading still counts all of them and the toggle
+   * says how many are folded away. Truncation nobody is told about is the
+   * thing this codebase keeps having to fix.
+   */
+  const visible = showAll ? steps : steps.slice(0, VISIBLE_STEPS)
+  const folded = steps.length - visible.length
+
   return (
     <>
       <Card className='mb-5 crate-card border-bd-yellow-deep bg-bd-cream'>
@@ -169,7 +195,7 @@ export function NextSteps({
           </div>
 
           <ul className='divide-y divide-bd-rule-soft'>
-            {steps.map((step) => (
+            {visible.map((step) => (
               <li key={`${step.kind}-${step.id}`}>
                 <StepRow
                   step={step}
@@ -195,6 +221,19 @@ export function NextSteps({
               </li>
             ))}
           </ul>
+
+          {(folded > 0 || showAll) && (
+            <Button
+              size='sm'
+              variant='ghost'
+              className='mt-2 h-7 px-2 text-xs'
+              onClick={() => setShowAll((open) => !open)}
+            >
+              {showAll
+                ? 'Show fewer'
+                : `Show all ${steps.length} — ${folded} more`}
+            </Button>
+          )}
 
           {/*
             Adding is offered only on a client's own page. On the agency-wide
